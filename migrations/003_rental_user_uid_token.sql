@@ -1,0 +1,38 @@
+-- Nadree app users are independent from the legacy MSP_DRIVER master.
+-- Run against an isolated database first. This migration preserves existing IDs.
+
+ALTER TABLE MSP_RENTAL_USER DROP FOREIGN KEY fk_rental_user_driver;
+ALTER TABLE MSP_RENTAL_USER ADD COLUMN uid_token VARCHAR(36) NULL AFTER driver_id,
+    ADD COLUMN name VARCHAR(100) NULL,
+    ADD COLUMN gender VARCHAR(20) NULL,
+    ADD COLUMN age INT NULL,
+    ADD COLUMN nationality VARCHAR(50) NULL;
+UPDATE MSP_RENTAL_USER SET uid_token = driver_id WHERE uid_token IS NULL;
+-- Do not read or modify MSP_DRIVER. New profile columns are populated by the Nadree app.
+ALTER TABLE MSP_RENTAL_USER DROP PRIMARY KEY;
+ALTER TABLE MSP_RENTAL_USER DROP INDEX uq_rental_user_legacy_code;
+ALTER TABLE MSP_RENTAL_USER DROP COLUMN legacy_user_code;
+ALTER TABLE MSP_RENTAL_USER DROP COLUMN driver_id;
+ALTER TABLE MSP_RENTAL_USER
+    MODIFY COLUMN uid_token VARCHAR(36) NOT NULL,
+    ADD PRIMARY KEY (uid_token);
+
+ALTER TABLE MSP_RESERVATION DROP FOREIGN KEY fk_reservation_driver;
+ALTER TABLE MSP_RESERVATION ADD COLUMN uid_token VARCHAR(36) NULL AFTER reservation_id;
+UPDATE MSP_RESERVATION SET uid_token = driver_id WHERE uid_token IS NULL;
+ALTER TABLE MSP_RESERVATION DROP INDEX idx_reservation_driver;
+ALTER TABLE MSP_RESERVATION DROP COLUMN driver_id;
+ALTER TABLE MSP_RESERVATION MODIFY COLUMN uid_token VARCHAR(36) NOT NULL;
+ALTER TABLE MSP_RESERVATION ADD KEY idx_reservation_uid_token (uid_token);
+ALTER TABLE MSP_RESERVATION ADD CONSTRAINT fk_reservation_user FOREIGN KEY (uid_token)
+    REFERENCES MSP_RENTAL_USER(uid_token);
+
+ALTER TABLE MSP_RENTAL_CONTRACT DROP FOREIGN KEY fk_rental_contract_driver;
+ALTER TABLE MSP_RENTAL_CONTRACT ADD COLUMN uid_token VARCHAR(36) NULL AFTER vehicle_id;
+UPDATE MSP_RENTAL_CONTRACT SET uid_token = driver_id WHERE uid_token IS NULL;
+ALTER TABLE MSP_RENTAL_CONTRACT DROP INDEX idx_rental_contract_driver;
+ALTER TABLE MSP_RENTAL_CONTRACT DROP COLUMN driver_id;
+ALTER TABLE MSP_RENTAL_CONTRACT MODIFY COLUMN uid_token VARCHAR(36) NOT NULL;
+ALTER TABLE MSP_RENTAL_CONTRACT ADD KEY idx_rental_contract_uid_token (uid_token);
+ALTER TABLE MSP_RENTAL_CONTRACT ADD CONSTRAINT fk_rental_contract_user FOREIGN KEY (uid_token)
+    REFERENCES MSP_RENTAL_USER(uid_token);
