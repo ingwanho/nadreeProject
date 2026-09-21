@@ -32,8 +32,8 @@ OPENAPI_TAGS = [
     {"name": "W06 Reservations and rentals", "description": "예약·렌트·인계·반납"},
     {"name": "W07 Dashboard and calendar", "description": "운영 현황과 캘린더 조회"},
     {"name": "W08 PayPal webhook", "description": "PayPal 결제·환불·웹훅"},
-    {"name": "Nadri customer users", "description": "나드리 고객 UID 로그인·프로필·토큰"},
-    {"name": "Nadri customer rentals", "description": "나드리 차량 조회·예약·결제·렌트 이력"},
+    {"name": "Nadree customer users", "description": "나드리 고객 UID 로그인·프로필·토큰"},
+    {"name": "Nadree customer rentals", "description": "나드리 차량 조회·예약·결제·렌트 이력"},
 ]
 
 

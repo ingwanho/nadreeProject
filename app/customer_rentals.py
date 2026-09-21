@@ -21,8 +21,8 @@ from app.rental_inputs import (NadriAvailability, NadriLogin, NadriPaymentCaptur
 from app.responses import Tokens
 from app.security import fingerprint, now, sign_user_access, user_principal
 
-router = APIRouter(prefix="/api/v1/nadree/rental", tags=["Nadri customer rentals"])
-user_router = APIRouter(prefix="/api/v1/nadree/user", tags=["Nadri customer users"])
+router = APIRouter(prefix="/api/v1/nadree/rental", tags=["Nadree customer rentals"])
+user_router = APIRouter(prefix="/api/v1/nadree/user", tags=["Nadree customer users"])
 DB = Depends(transaction, scope="function")
 USER_REFRESH_PREFIX = "nadri.rt."
 
