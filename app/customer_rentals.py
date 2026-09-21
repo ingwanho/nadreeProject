@@ -442,7 +442,7 @@ def _user_view(request, session, user):
 
 
 @user_router.post("/login")
-def nadri_login(body: NadriLogin, request: Request, session: Session = DB):
+def nadree_login(body: NadriLogin, request: Request, session: Session = DB):
     db = _db(request)
     table = db.table("MSP_RENTAL_USER")
     lock_key(session, "nadri-user", body.UID)
@@ -476,7 +476,7 @@ def nadri_login(body: NadriLogin, request: Request, session: Session = DB):
 
 @user_router.post("/refresh", response_model=Tokens, dependencies=[Depends(refresh_header)])
 @user_router.get("/refresh", response_model=Tokens, dependencies=[Depends(refresh_header)])
-def nadri_refresh(request: Request, session: Session = DB):
+def nadree_refresh(request: Request, session: Session = DB):
     raw = _user_refresh_raw(request)
     _, initial = _user_refresh_row(request, session, raw, locked=False)
     lock_key(session, "nadri-user", initial["uid_token"])
@@ -503,7 +503,7 @@ def nadri_refresh(request: Request, session: Session = DB):
 
 
 @user_router.patch("/profile")
-def nadri_profile(body: NadriProfile, request: Request, session: Session = DB):
+def nadree_profile(body: NadriProfile, request: Request, session: Session = DB):
     user = user_principal(request, session)
     fields = body.model_fields_set
     if not fields or any(getattr(body, field) is None for field in fields):
@@ -525,7 +525,7 @@ def nadri_profile(body: NadriProfile, request: Request, session: Session = DB):
 
 @user_router.post("/logout", dependencies=[Depends(refresh_header)])
 @user_router.get("/logout", dependencies=[Depends(refresh_header)])
-def nadri_logout(request: Request, session: Session = DB):
+def nadree_logout(request: Request, session: Session = DB):
     user = user_principal(request, session)
     raw = request.headers.get("X-Refresh-Token")
     refresh_table = _db(request).table("MSP_RENTAL_USER_REFRESH_TOKEN")
@@ -553,13 +553,13 @@ def nadri_logout(request: Request, session: Session = DB):
 
 
 @router.post("/availability")
-def nadri_availability(body: NadriAvailability, request: Request, session: Session = DB):
+def nadree_availability(body: NadriAvailability, request: Request, session: Session = DB):
     items = _availability_for(request, session, body)
     return {"status": "success", "items": [{"spot": item["spot"], "model": item["model"], "price": item["price"]} for item in items]}
 
 
 @router.post("/request")
-def nadri_request(body: NadriRentalRequest, request: Request, session: Session = DB):
+def nadree_request(body: NadriRentalRequest, request: Request, session: Session = DB):
     user = user_principal(request, session)
     db = _db(request)
     # Different users must share the same resource lock. A user-specific lock
@@ -661,7 +661,7 @@ def _payment_result(payment, approval_url=None):
 
 
 @router.post("/payment/order")
-def nadri_payment_order(body: NadriPaymentOrder, request: Request, session: Session = DB):
+def nadree_payment_order(body: NadriPaymentOrder, request: Request, session: Session = DB):
     user = user_principal(request, session)
     reservation = _reservation_for_payment(request, session, user, body.reservationId)
     db = _db(request)
@@ -733,7 +733,7 @@ def nadri_payment_order(body: NadriPaymentOrder, request: Request, session: Sess
 
 
 @router.post("/payment/capture")
-def nadri_payment_capture(body: NadriPaymentCapture, request: Request, session: Session = DB):
+def nadree_payment_capture(body: NadriPaymentCapture, request: Request, session: Session = DB):
     user = user_principal(request, session)
     db = _db(request)
     table = db.table("MSP_RENTAL_PAYMENT")
@@ -773,7 +773,7 @@ def nadri_payment_capture(body: NadriPaymentCapture, request: Request, session: 
 
 
 @router.get("/ongoing")
-def nadri_ongoing(request: Request, page: int = Query(1, ge=1), pageSize: int = Query(20, ge=1, le=100), session: Session = DB):
+def nadree_ongoing(request: Request, page: int = Query(1, ge=1), pageSize: int = Query(20, ge=1, le=100), session: Session = DB):
     user = user_principal(request, session)
     items, total = _customer_records(request, session, user.uid_token, page=page, size=pageSize)
     return {"status": "success", "items": items, "page": page, "pageSize": pageSize, "totalCount": total,
@@ -781,7 +781,7 @@ def nadri_ongoing(request: Request, page: int = Query(1, ge=1), pageSize: int = 
 
 
 @router.get("/completed")
-def nadri_completed(request: Request, page: int = Query(1, ge=1), pageSize: int = Query(20, ge=1, le=100), session: Session = DB):
+def nadree_completed(request: Request, page: int = Query(1, ge=1), pageSize: int = Query(20, ge=1, le=100), session: Session = DB):
     user = user_principal(request, session)
     items, total = _customer_records(request, session, user.uid_token, completed=True, page=page, size=pageSize)
     return {"status": "success", "items": items, "page": page, "pageSize": pageSize, "totalCount": total,
