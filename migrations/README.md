@@ -59,3 +59,7 @@ DB 계획 v2.24는 지점 소개·연락 이메일 2컬럼과 기존 관리자 p
 관리자 phone은 저장용 200자이고 API 원문 입력 상한은 기존 20자다. 호환되는 `NADREE_FIELD_ENCRYPT_KEY` 설정이 필요하며 암호문이 저장 길이를 넘으면 잘라 저장하지 않고 거절한다. 샵 introduction/contact_email은 이번 계획에 추가했으므로 업무 API 사용 전 실제 DB 적용 여부를 확인한다.
 
 ERDCloud SQL 전체를 운영 DB에 실행하지 않는다. `metadata.create_all/drop_all`은 `tests/`의 격리된 테스트에만 있으며 애플리케이션 시작 시 실행되지 않는다.
+
+## 격리 테스트 계정·최상위 조직
+
+별도 테스트 DB에서만 `test_seed_top_level.sql`을 실행하면 최상위 계약·L1 조직·`MSP_SPOT_MASTER`·`MSP_SPOT_RENT`·대표 관리자·렌탈 role/scope가 함께 생성된다. 테스트 계정은 `nadree.test.admin` / `Nadree-Test-123!`이며, 시드 SQL은 `NR_TEST_20260921` 식별자 행만 멱등적으로 갱신하고 기존 행을 삭제하지 않는다. 하위 region/local/spot은 대표 계정으로 로그인한 뒤 `POST /api/v1/organizations/spots`를 호출해 API가 RiderLog 계층 데이터를 생성하는지 검증한다. 운영 DB에서 실행하지 않는다.

@@ -180,11 +180,11 @@ class FcmSender:
                     and_(key == item["id"], table.c.fcm_token == item["token"], updated_condition)).values(
                         fcm_token=None, fcm_token_updated_at=_utc_now()))
 
-    def close(self):
+    def close(self, *, wait=False):
         # firebase-admin owns its process-wide app.  It is intentionally kept
         # alive when a TestClient or an application lifespan is closed.
         self._app = None
-        self._executor.shutdown(wait=False, cancel_futures=True)
+        self._executor.shutdown(wait=wait, cancel_futures=not wait)
 
 
 def _queue(session, *, table, key_column, recipients, event, title, body, data):
@@ -241,11 +241,44 @@ def queue_reservation_decision(db, session, uid_token, reservation_id, status):
                         "updated_at": row.get("fcm_token_updated_at")}],
            event="RESERVATION_APPROVED" if approved else "RESERVATION_REJECTED",
            title="예약 승인 완료" if approved else "예약 거절 안내",
-           body="렌트 예약이 승인되었습니다. 결제를 진행해 주세요." if approved
+           body="렌트 예약이 승인되었습니다. 3일 이내에 결제를 진행해 주세요." if approved
            else "요청하신 렌트 예약이 거절되었습니다.",
            data={"type": "RESERVATION_APPROVED" if approved else "RESERVATION_REJECTED",
                  "reservationId": reservation_id, "bookedNo": "BO" + reservation_id,
                  "reservationStatus": status})
+
+
+def queue_payment_deadline_reminder(db, session, uid_token, reservation_id, days_remaining, deadline_at):
+    users = db.table("MSP_RENTAL_USER")
+    row = session.execute(select(users.c.uid_token, users.c.fcm_token, users.c.fcm_token_updated_at).where(
+        users.c.uid_token == uid_token)).mappings().first()
+    if not row:
+        return
+    event = "PAYMENT_DEADLINE_" + str(days_remaining) + "_DAY"
+    _queue(session, table="MSP_RENTAL_USER", key_column="uid_token",
+           recipients=[{"id": row["uid_token"], "token": row.get("fcm_token"),
+                        "updated_at": row.get("fcm_token_updated_at")}],
+           event=event, title="결제 기한 안내",
+           body=f"예약 결제까지 {days_remaining}일 이내에 결제해 주세요.",
+           data={"type": event, "reservationId": reservation_id, "bookedNo": "BO" + reservation_id,
+                 "reservationStatus": "APPROVED", "daysRemaining": days_remaining,
+                 "paymentDeadlineAt": deadline_at.isoformat()})
+
+
+def queue_payment_deadline_expired(db, session, uid_token, reservation_id):
+    users = db.table("MSP_RENTAL_USER")
+    row = session.execute(select(users.c.uid_token, users.c.fcm_token, users.c.fcm_token_updated_at).where(
+        users.c.uid_token == uid_token)).mappings().first()
+    if not row:
+        return
+    event = "RESERVATION_PAYMENT_EXPIRED"
+    _queue(session, table="MSP_RENTAL_USER", key_column="uid_token",
+           recipients=[{"id": row["uid_token"], "token": row.get("fcm_token"),
+                        "updated_at": row.get("fcm_token_updated_at")}],
+           event=event, title="예약 취소 안내",
+           body="결제 기한이 지나 예약이 취소되었습니다.",
+           data={"type": event, "reservationId": reservation_id, "bookedNo": "BO" + reservation_id,
+                 "reservationStatus": "EXPIRED", "reason": "PAYMENT_DEADLINE_EXCEEDED"})
 
 
 def queue_payment_complete(db, session, uid_token, reservation_id, spot_master_id, payment_id):

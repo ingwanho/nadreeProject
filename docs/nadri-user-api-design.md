@@ -9,19 +9,19 @@
 
 | 번호 | API | 목적 |
 |---:|---|---|
-| 1 | `POST /api/v1/nadri/user/login` | `UID`로 기존 사용자를 찾거나 새 렌탈 사용자를 생성한 뒤 로그인 응답 반환 |
-| 2 | `PATCH /api/v1/nadri/user/profile` | 로그인 사용자의 이름·나이·성별·국적 갱신 |
-| 3 | `POST /api/v1/nadri/rental/availability` | 대여 기간·배기량·배송 조건에 맞는 지점·차량 모델·가격 조회 |
-| 4 | `POST /api/v1/nadri/rental/request` | 선택한 지점·모델·기간·가격·배송정보로 예약 요청 생성 |
-| 5 | `POST /api/v1/nadri/rental/payment/order` | 생성된 예약의 서버 확정 금액으로 PayPal 주문 생성 |
-| 6 | `POST /api/v1/nadri/rental/payment/capture` | 고객 승인 후 PayPal 주문 캡처 요청 및 결제 상태 반환 |
-| 7 | `GET /api/v1/nadri/rental/ongoing` | 현재 진행 중인 렌트·예약 목록 조회 |
-| 8 | `GET /api/v1/nadri/rental/completed` | 반납 완료된 렌트 목록 조회 |
-| 9 | `POST /api/v1/nadri/rental/request/cancel` | 결제 전 예약 요청 취소 |
-| 10 | `POST /api/v1/nadri/user/logout` | 고객 access·refresh token 폐기. GET도 호환 지원 |
-| 11 | `POST /api/v1/nadri/user/refresh` | 고객 refresh token 회전 및 access token 재발급. GET도 호환 지원 |
+| 1 | `POST /api/v1/nadree/user/login` | `UID`로 기존 사용자를 찾거나 새 렌탈 사용자를 생성한 뒤 로그인 응답 반환 |
+| 2 | `PATCH /api/v1/nadree/user/profile` | 로그인 사용자의 이름·나이·성별·국적 갱신 |
+| 3 | `POST /api/v1/nadree/rental/availability` | 대여 기간·배기량·배송 조건에 맞는 지점·차량 모델·가격 조회 |
+| 4 | `POST /api/v1/nadree/rental/request` | 선택한 지점·모델·기간·가격·배송정보로 예약 요청 생성 |
+| 5 | `POST /api/v1/nadree/rental/payment/order` | 생성된 예약의 서버 확정 금액으로 PayPal 주문 생성 |
+| 6 | `POST /api/v1/nadree/rental/payment/capture` | 고객 승인 후 PayPal 주문 캡처 요청 및 결제 상태 반환 |
+| 7 | `GET /api/v1/nadree/rental/ongoing` | 현재 진행 중인 렌트·예약 목록 조회 |
+| 8 | `GET /api/v1/nadree/rental/completed` | 반납 완료된 렌트 목록 조회 |
+| 9 | `POST /api/v1/nadree/rental/request/cancel` | 결제 전 예약 요청 취소 |
+| 10 | `POST /api/v1/nadree/user/logout` | 고객 access·refresh token 폐기. GET도 호환 지원 |
+| 11 | `POST /api/v1/nadree/user/refresh` | 고객 refresh token 회전 및 access token 재발급. GET도 호환 지원 |
 
-URL은 나드리고 관리자 API의 `/nadreego/admin/*`와 충돌하지 않도록 `/nadri/user/*`와 `/nadri/rental/*` 네임스페이스로 분리한다.
+URL은 나드리고 관리자 API의 `/nadreego/admin/*`와 충돌하지 않도록 `/nadree/user/*`와 `/nadree/rental/*` 네임스페이스로 분리한다.
 
 차량 상세 조회 API는 별도로 만들지 않는다. 검색 응답의 `price.pricingTiers`에 해당 모델에 적용된 배기량 요금 티어를 함께 넣어 한 번의 조회로 지점·모델·가격·티어를 확인하도록 한다.
 
@@ -42,7 +42,7 @@ URL은 나드리고 관리자 API의 `/nadreego/admin/*`와 충돌하지 않도�
 
 ### 요청
 
-`POST /api/v1/nadri/user/login`
+`POST /api/v1/nadree/user/login`
 
 ```json
 {
@@ -148,7 +148,7 @@ URL은 나드리고 관리자 API의 `/nadreego/admin/*`와 충돌하지 않도�
 
 ### 요청
 
-`PATCH /api/v1/nadri/user/profile`
+`PATCH /api/v1/nadree/user/profile`
 
 ```http
 Authorization: Bearer <nadri-user-access-token>
@@ -203,7 +203,7 @@ Content-Type: application/json
 
 ### 요청
 
-`POST /api/v1/nadri/rental/availability`
+`POST /api/v1/nadree/rental/availability`
 
 ```json
 {
@@ -330,7 +330,7 @@ Content-Type: application/json
 
 ### 요청
 
-`POST /api/v1/nadri/rental/request`
+`POST /api/v1/nadree/rental/request`
 
 ```http
 Authorization: Bearer <nadri-user-access-token>
@@ -459,7 +459,7 @@ Content-Type: application/json
 
 ### 요청
 
-`POST /api/v1/nadri/rental/payment/order`
+`POST /api/v1/nadree/rental/payment/order`
 
 ```http
 Authorization: Bearer <nadri-user-access-token>
@@ -521,7 +521,7 @@ MVP에서는 차량 조회 화면과 PayPal 청구 통화를 모두 `USD`로 고
 
 ### 요청
 
-`POST /api/v1/nadri/rental/payment/capture`
+`POST /api/v1/nadree/rental/payment/capture`
 
 ```json
 {
@@ -573,7 +573,7 @@ MVP에서는 차량 조회 화면과 PayPal 청구 통화를 모두 `USD`로 고
 
 ### 요청
 
-`GET /api/v1/nadri/rental/ongoing`
+`GET /api/v1/nadree/rental/ongoing`
 
 ```http
 Authorization: Bearer <nadri-user-access-token>
@@ -669,7 +669,7 @@ Authorization: Bearer <nadri-user-access-token>
 
 ### 요청
 
-`GET /api/v1/nadri/rental/completed`
+`GET /api/v1/nadree/rental/completed`
 
 ```http
 Authorization: Bearer <nadri-user-access-token>
@@ -765,7 +765,7 @@ Authorization: Bearer <nadri-user-access-token>
 
 ### API 9 — 결제 전 예약 요청 취소
 
-`POST /api/v1/nadri/rental/request/cancel`
+`POST /api/v1/nadree/rental/request/cancel`
 
 ```json
 {
@@ -796,13 +796,13 @@ PayPal 캡처가 진행 중인 `PENDING` 결제는 환불할 수 없으므로 `P
 
 ## 12. API 10 — 나드리 사용자 로그아웃
 
-`POST /api/v1/nadri/user/logout`을 사용한다. 기존 앱의 호환을 위해 같은 경로의 `GET`도 지원한다. access token은 항상 확인하며, `X-Refresh-Token`을 보낸 경우에는 access token과 쌍을 검증한 뒤 고객 refresh token을 폐기한다. refresh token을 생략한 기존 호출은 해당 UID의 활성 고객 refresh token을 모두 폐기한다. `MSP_RENTAL_USER.user_access_revoked_at`도 갱신해 해당 시각 이전에 발급된 고객 access token을 무효화한다. access token의 기본 유효시간은 1시간이다. 앱이 보낸 FCM 토큰은 `MSP_RENTAL_USER.fcm_token`에 보관하며 로그아웃 때 삭제하거나 변경하지 않는다.
+`POST /api/v1/nadree/user/logout`을 사용한다. 기존 앱의 호환을 위해 같은 경로의 `GET`도 지원한다. access token은 항상 확인하며, `X-Refresh-Token`을 보낸 경우에는 access token과 쌍을 검증한 뒤 고객 refresh token을 폐기한다. refresh token을 생략한 기존 호출은 해당 UID의 활성 고객 refresh token을 모두 폐기한다. `MSP_RENTAL_USER.user_access_revoked_at`도 갱신해 해당 시각 이전에 발급된 고객 access token을 무효화한다. access token의 기본 유효시간은 1시간이다. 앱이 보낸 FCM 토큰은 `MSP_RENTAL_USER.fcm_token`에 보관하며 로그아웃 때 삭제하거나 변경하지 않는다.
 
-프로필 입력은 신규 가입 직후에도 API 2 `PATCH /api/v1/nadri/user/profile`을 그대로 사용한다. 로그아웃 오류 시 사용자 데이터나 FCM 토큰은 변경하지 않는다.
+프로필 입력은 신규 가입 직후에도 API 2 `PATCH /api/v1/nadree/user/profile`을 그대로 사용한다. 로그아웃 오류 시 사용자 데이터나 FCM 토큰은 변경하지 않는다.
 
 ## 13. API 11 — 고객 refresh token 갱신
 
-`POST /api/v1/nadri/user/refresh`를 사용한다. 호환을 위해 같은 경로의 `GET`도 지원하며, `X-Refresh-Token` 헤더만 사용한다. 고객 토큰은 `nadri.rt.` 접두사를 사용하고 `MSP_RENTAL_USER_REFRESH_TOKEN`에서 해시로 조회한다.
+`POST /api/v1/nadree/user/refresh`를 사용한다. 호환을 위해 같은 경로의 `GET`도 지원하며, `X-Refresh-Token` 헤더만 사용한다. 고객 토큰은 `nadri.rt.` 접두사를 사용하고 `MSP_RENTAL_USER_REFRESH_TOKEN`에서 해시로 조회한다.
 
 활성·미만료 토큰만 갱신할 수 있다. UID별 행 잠금으로 같은 토큰의 동시 갱신을 직렬화하고, 성공하면 기존 해시를 새 값으로 교체한다. 원래 `issued_at`을 access token의 인증 시각으로 유지하되, 로그아웃 폐기 시각과 같은 초에 다시 로그인한 경우에는 폐기 시각 다음 초로 보정한다. refresh token의 절대 만료 기간은 갱신하지 않는다. 이미 사용했거나 폐기·만료된 토큰은 `401 INVALID_REFRESH_TOKEN`을 반환한다.
 
@@ -840,11 +840,11 @@ PayPal 캡처가 진행 중인 `PENDING` 결제는 환불할 수 없으므로 `P
 7. MVP 표시·결제 통화와 가격 원본은 `USD`로 고정한다. 환율 스냅샷은 저장하지 않으며, 위치 주소의 정규화·좌표 수집 방식만 구현 전에 확정한다.
 8. 렌트 요청의 `deliveryRequested=true`는 MVP에서 왕복 배송(`START_AND_RETURN`)으로 고정한다. 픽업 주소는 필수이고 반납 주소 입력은 선택이다.
 9. PREMIUM/BASIC 가격은 서버가 계산한 개별 `totalOptions` 중 하나만 접수한다. 화면의 범위 표시는 유지하지만 범위 사이 임의 금액은 거절한다.
-10. MVP에서는 관리자 예약 승인 대기시간을 두지 않는다. 예약 요청은 승인 또는 거절될 때까지 유지하고, 새 요청의 `hold_expires_at`은 `NULL`로 저장한다. 기존 컬럼은 하위 호환을 위해 유지한다.
-11. 관리자·고객 FCM 토큰 저장과 예약 요청·승인/거절·결제 확정 FCM 발송은 구현되어 있다. 새 Firebase 프로젝트 서비스 계정과 운영 앱 토큰을 등록한 뒤 Sandbox에서 수신을 확인한다. 발송은 커밋 후 best-effort이며 일시 오류는 최대 5회·1시간 범위로 제한 재시도하고, 만료 토큰만 자동 삭제한다.
+10. MVP에서는 관리자 예약 승인 대기시간을 두지 않는다. 예약 요청은 승인 또는 거절될 때까지 유지하고, 새 요청의 `hold_expires_at`은 `NULL`로 저장한다. 관리자가 승인하면 승인 시각부터 3일의 결제 기한을 시작하며, 2일·1일 남은 시점에 알림을 보낸다. 기한 내 완료 결제가 없고 진행 중인 PayPal `PENDING` 캡처도 없으면 예약을 `EXPIRED`로 종료하고 고객에게 취소 알림을 보낸다. 기존 컬럼은 하위 호환을 위해 유지한다.
+11. 관리자·고객 FCM 토큰 저장과 예약 요청·승인/거절·결제 기한 알림·결제 확정 FCM 발송은 구현되어 있다. 새 Firebase 프로젝트 서비스 계정과 운영 앱 토큰을 등록한 뒤 Sandbox에서 수신을 확인한다. 발송은 커밋 후 best-effort이며 일시 오류는 최대 5회·1시간 범위로 제한 재시도하고, 만료 토큰만 자동 삭제한다.
 12. PayPal 주문 생성·캡처 API의 Sandbox와 Live 자격증명, Webhook ID, USD 수취 계정 ID를 환경별로 등록한다.
 13. 결제 완료 후에도 관리자 승인을 별도로 유지할지 확인한다. 현재 설계는 결제와 예약 승인을 분리한다.
 14. 완료 목록은 현재 `RETURNED` 렌트만 포함하고, 실제 렌트 없이 종료된 `CANCELED`·`REJECTED`·`EXPIRED` 예약은 제외한다. 종료된 예약 요청도 사용자에게 보여줄 필요가 있으면 별도 범위를 확정한다.
 15. 진행·완료 목록의 기본 페이지 크기(현재 20)와 최대 페이지 크기(현재 100)를 앱 요구사항에 맞춰 확정한다.
 16. 고객 refresh token의 절대 수명은 관리자와 같은 기본 30일이며, 한 UID의 동시 기기 세션을 1개로 제한한다.
-17. `python -m app.jobs maintenance|payments|inventory|all`을 운영 작업 소유자가 실행한다. 발리 현지 종료일 다음 날 정비를 해제하고, 미결제 PayPal 예약과 180일 일별 재고를 재계산한다.
+17. `python -m app.jobs maintenance|payments|inventory|all`을 운영 작업 소유자가 실행한다. 발리 현지 종료일 다음 날 정비를 해제하고, 승인 시각 기준 3일 결제 기한 알림·미결제 예약 만료와 180일 일별 재고를 재계산한다.

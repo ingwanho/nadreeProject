@@ -72,11 +72,11 @@ def test_openapi_has_exact_work_group_routes(client):
     paths = client.get("/openapi.json").json()["paths"]
     assert len([path for path in paths if not path.startswith("/health/")]) == 48
     assert "/nadreego/admin/signup" in paths
-    assert "/api/v1/nadri/rental/request/cancel" in paths
-    for path in ("/api/v1/nadri/user/login", "/api/v1/nadri/user/profile", "/api/v1/nadri/rental/availability",
-                 "/api/v1/nadri/rental/request", "/api/v1/nadri/rental/payment/order",
-                 "/api/v1/nadri/rental/payment/capture", "/api/v1/nadri/rental/ongoing",
-                 "/api/v1/nadri/rental/completed", "/api/v1/nadri/user/refresh", "/api/v1/nadri/user/logout"):
+    assert "/api/v1/nadree/rental/request/cancel" in paths
+    for path in ("/api/v1/nadree/user/login", "/api/v1/nadree/user/profile", "/api/v1/nadree/rental/availability",
+                 "/api/v1/nadree/rental/request", "/api/v1/nadree/rental/payment/order",
+                 "/api/v1/nadree/rental/payment/capture", "/api/v1/nadree/rental/ongoing",
+                 "/api/v1/nadree/rental/completed", "/api/v1/nadree/user/refresh", "/api/v1/nadree/user/logout"):
         assert path in paths
     assert "/nadreego/admin/refresh" in paths
     assert "get" in paths["/nadreego/admin/refresh"]

@@ -21,8 +21,8 @@ from app.rental_inputs import (NadriAvailability, NadriLogin, NadriPaymentCaptur
 from app.responses import Tokens
 from app.security import fingerprint, now, sign_user_access, user_principal
 
-router = APIRouter(prefix="/api/v1/nadri/rental", tags=["Nadri customer rentals"])
-user_router = APIRouter(prefix="/api/v1/nadri/user", tags=["Nadri customer users"])
+router = APIRouter(prefix="/api/v1/nadree/rental", tags=["Nadri customer rentals"])
+user_router = APIRouter(prefix="/api/v1/nadree/user", tags=["Nadri customer users"])
 DB = Depends(transaction, scope="function")
 USER_REFRESH_PREFIX = "nadri.rt."
 
@@ -561,11 +561,11 @@ def nadri_availability(body: NadriAvailability, request: Request, session: Sessi
 @router.post("/request")
 def nadri_request(body: NadriRentalRequest, request: Request, session: Session = DB):
     user = user_principal(request, session)
-    item = _quote_for_request(request, session, body)
-    start, end = _local_period(request, body.startDate, body.returnDate)
     db = _db(request)
-    key = ":".join((user.uid_token, body.spotMasterId, body.modelId, body.startDate.isoformat(), body.returnDate.isoformat(), str(body.deliveryRequested)))
-    lock_key(session, "nadri-request", key)
+    # Different users must share the same resource lock. A user-specific lock
+    # cannot prevent two customers from claiming the last model at a spot.
+    lock_key(session, "nadri-model", body.spotMasterId + ":" + body.modelId)
+    start, end = _local_period(request, body.startDate, body.returnDate)
     table = db.table("MSP_RESERVATION")
     recent = session.execute(select(table.c.reservation_id).where(
         table.c.uid_token == user.uid_token, table.c.spot_master_id == body.spotMasterId, table.c.model_id == body.modelId,
@@ -573,6 +573,7 @@ def nadri_request(body: NadriRentalRequest, request: Request, session: Session =
         table.c.created_at >= now() - timedelta(seconds=60))).first()
     if recent:
         raise Problem(409, "DUPLICATE_RENTAL_REQUEST")
+    item = _quote_for_request(request, session, body)
     delivery = item["delivery"]
     reservation_id = str(uuid.uuid4())
     at = now()

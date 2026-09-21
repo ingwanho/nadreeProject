@@ -100,21 +100,30 @@ def test_nadri_reservation_payment_checkout_and_return(setup, signin):
         admins = setup["db"].table("MSP_ADMIN")
         conn.execute(admins.update().where(admins.c.admin_id == "primary").values(fcm_token="admin-device"))
     client = setup["client"]
-    login = client.post("/api/v1/nadri/user/login", json={"UID": "user-flow", "fcmToken": "customer-device"})
+    login = client.post("/api/v1/nadree/user/login", json={"UID": "user-flow", "fcmToken": "customer-device"})
     assert login.status_code == 200, login.text
     customer_headers = {"Authorization": "Bearer " + login.json()["accessToken"]}
-    availability = client.post("/api/v1/nadri/rental/availability", headers=customer_headers, json={
+    availability = client.post("/api/v1/nadree/rental/availability", headers=customer_headers, json={
         "startDate": start.isoformat(), "returnDate": end.isoformat(), "cc": 125, "deliveryRequested": False})
     assert availability.status_code == 200, availability.text
     assert availability.json()["items"], availability.text
     price = availability.json()["items"][0]["price"]["totalFrom"]
-    request = client.post("/api/v1/nadri/rental/request", headers=customer_headers, json={
+    request = client.post("/api/v1/nadree/rental/request", headers=customer_headers, json={
         "spotMasterId": "root", "modelId": "model-125", "startDate": start.isoformat(),
         "returnDate": end.isoformat(), "totalPrice": price, "currency": "USD", "deliveryRequested": False})
     assert request.status_code == 200, request.text
     reservation_id = request.json()["reservationId"]
     assert any(item["event"] == "RESERVATION_REQUESTED" and item["recipients"][0]["token"] == "admin-device"
                for item in fcm.notifications)
+
+    # A pending request holds the only vehicle for the overlapping period.
+    second_login = client.post("/api/v1/nadree/user/login", json={"UID": "user-flow-second"})
+    assert second_login.status_code == 200, second_login.text
+    second_headers = {"Authorization": "Bearer " + second_login.json()["accessToken"]}
+    blocked = client.post("/api/v1/nadree/rental/request", headers=second_headers, json={
+        "spotMasterId": "root", "modelId": "model-125", "startDate": start.isoformat(),
+        "returnDate": end.isoformat(), "totalPrice": price, "currency": "USD", "deliveryRequested": False})
+    assert blocked.status_code == 409 and blocked.json()["errorCode"] == "RENTAL_UNAVAILABLE"
 
     # A legacy expiry value must not block approval now that approval has no timeout.
     with setup["engine"].begin() as conn:
@@ -125,13 +134,14 @@ def test_nadri_reservation_payment_checkout_and_return(setup, signin):
                            json={"bookedNo": "BO" + reservation_id, "action": "APPROVE"})
     assert approved.status_code == 200, approved.text
     assert any(item["event"] == "RESERVATION_APPROVED" and item["recipients"][0]["token"] == "customer-device"
+               and "3일 이내" in item["body"]
                for item in fcm.notifications)
 
-    order = client.post("/api/v1/nadri/rental/payment/order", headers=customer_headers,
+    order = client.post("/api/v1/nadree/rental/payment/order", headers=customer_headers,
                         json={"reservationId": reservation_id})
     assert order.status_code == 200, order.text
     payment_id = order.json()["paymentId"]
-    captured = client.post("/api/v1/nadri/rental/payment/capture", headers=customer_headers,
+    captured = client.post("/api/v1/nadree/rental/payment/capture", headers=customer_headers,
                            json={"paymentId": payment_id})
     assert captured.status_code == 200, captured.text
     assert captured.json()["paymentStatus"] == "PENDING"
@@ -159,6 +169,6 @@ def test_nadri_reservation_payment_checkout_and_return(setup, signin):
     returned = client.post("/nadreego/vehicle/return", headers=admin_headers, json={"qrCode": raw_qr})
     assert returned.status_code == 200, returned.text
     assert returned.json()["data"]["vehicleStatus"] == "AVAILABLE"
-    completed = client.get("/api/v1/nadri/rental/completed", headers=customer_headers)
+    completed = client.get("/api/v1/nadree/rental/completed", headers=customer_headers)
     assert completed.status_code == 200, completed.text
     assert completed.json()["totalCount"] == 1

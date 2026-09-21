@@ -80,8 +80,10 @@ def compute_assignment(request, session, spot, vehicles, contracts, *, candidate
     if len(models) != 1:
         raise Problem(409, "MODEL_ASSIGNMENT_INCONSISTENT")
     t = request.app.state.db.table("MSP_RESERVATION")
+    # REQUESTED 예약도 승인 전까지는 선착순 용량을 점유한다. 그렇지 않으면
+    # 같은 모델·기간의 동시 요청이 모두 통과한 뒤 승인 순서가 결과를 바꾼다.
     reservations = rows(session, t, t.c.spot_master_id == spot["spot_master_id"],
-                        t.c.model_id.in_(models), t.c.reservation_status == "APPROVED")
+                        t.c.model_id.in_(models), t.c.reservation_status.in_(("REQUESTED", "APPROVED")))
     reservations = [r for r in reservations if r["reservation_id"] != omit_reservation and reservation_end(request, r) > at]
     if candidate:
         reservations.append(candidate)

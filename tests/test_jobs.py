@@ -7,6 +7,14 @@ from app.rental_schema import metadata as rental_metadata
 from app.security import now
 
 
+class RecordingNotifier:
+    def __init__(self):
+        self.notifications = []
+
+    def dispatch(self, db, notifications):
+        self.notifications.extend(notifications)
+
+
 def test_jobs_release_maintenance_and_rebuild_inventory(setup):
     rental_metadata.create_all(setup["engine"])
     db, engine, settings = setup["db"], setup["engine"], setup["settings"]
@@ -47,7 +55,7 @@ def test_unpaid_payment_expiry_releases_approved_reservation(setup):
     db, engine, settings = setup["db"], setup["engine"], setup["settings"]
     reservation = db.table("MSP_RESERVATION")
     payment = db.table("MSP_RENTAL_PAYMENT")
-    old = datetime(2026, 9, 20)
+    old = datetime(2026, 9, 17)
     with engine.begin() as conn:
         conn.execute(reservation.insert().values(
             reservation_id="job-r1", uid_token="job-u1", spot_master_id="root", model_id="job-m1",
@@ -62,3 +70,39 @@ def test_unpaid_payment_expiry_releases_approved_reservation(setup):
     with engine.connect() as conn:
         assert conn.scalar(select(reservation.c.reservation_status).where(reservation.c.reservation_id == "job-r1")) == "EXPIRED"
         assert conn.scalar(select(payment.c.payment_status).where(payment.c.reservation_id == "job-r1")) == "CANCELED"
+
+
+def test_payment_deadline_reminders_and_expiry_notify_once(setup):
+    rental_metadata.create_all(setup["engine"])
+    db, engine, settings = setup["db"], setup["engine"], setup["settings"]
+    user, reservation, history = (db.table(name) for name in
+                                  ("MSP_RENTAL_USER", "MSP_RESERVATION", "MSP_RESERVATION_HISTORY"))
+    approved_at = datetime(2026, 9, 17)
+    with engine.begin() as conn:
+        conn.execute(user.insert().values(uid_token="deadline-user", fcm_token="deadline-device",
+                                          fcm_token_updated_at=approved_at))
+        conn.execute(reservation.insert().values(
+            reservation_id="deadline-r1", uid_token="deadline-user", spot_master_id="root", model_id="job-m1",
+            assigned_vehicle_id="deadline-v1", vehicle_assignment_status="PROVISIONAL",
+            start_datetime=approved_at, end_datetime=approved_at + timedelta(days=3),
+            reservation_status="APPROVED", created_at=approved_at, updated_at=approved_at))
+        conn.execute(history.insert().values(
+            reservation_id="deadline-r1", event_type="APPROVED",
+            previous_reservation_status="REQUESTED", new_reservation_status="APPROVED",
+            previous_vehicle_id=None, new_vehicle_id="deadline-v1",
+            previous_assignment_status="SOFT_HOLD", new_assignment_status="PROVISIONAL",
+            changed_by="admin", created_at=approved_at))
+    notifier = RecordingNotifier()
+    assert expire_unpaid_payments(db, settings, at=datetime(2026, 9, 18), notifier=notifier) == 0
+    assert [item["event"] for item in notifier.notifications] == ["PAYMENT_DEADLINE_2_DAY"]
+    assert expire_unpaid_payments(db, settings, at=datetime(2026, 9, 18), notifier=notifier) == 0
+    assert len(notifier.notifications) == 1
+    assert expire_unpaid_payments(db, settings, at=datetime(2026, 9, 19), notifier=notifier) == 0
+    assert [item["event"] for item in notifier.notifications] == ["PAYMENT_DEADLINE_2_DAY", "PAYMENT_DEADLINE_1_DAY"]
+    assert expire_unpaid_payments(db, settings, at=datetime(2026, 9, 20), notifier=notifier) == 1
+    assert notifier.notifications[-1]["event"] == "RESERVATION_PAYMENT_EXPIRED"
+    with engine.connect() as conn:
+        assert conn.scalar(select(reservation.c.reservation_status).where(
+            reservation.c.reservation_id == "deadline-r1")) == "EXPIRED"
+    assert expire_unpaid_payments(db, settings, at=datetime(2026, 9, 21), notifier=notifier) == 0
+    assert len(notifier.notifications) == 3

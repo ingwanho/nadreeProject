@@ -13,7 +13,7 @@ from app.headers import bearer
 from app.pricing import daily_price, load_tiers
 from app.paypal import execute_refund
 from app.rental_common import (OPEN, action_result, context, contracts_for, day_end, effective_state,
-                               expire_maintenance, fleet, is_open, iso, local_date, rows, verify_qr)
+                               expire_maintenance, fleet, is_open, iso, local_date, lock_key, rows, verify_qr)
 from app.rental_inputs import BookingAction, Qr, RentApprove
 from app.security import now
 
@@ -110,6 +110,10 @@ def booking_action(body: BookingAction, request: Request, background_tasks: Back
     if r["reservation_status"] != expected:
         raise Problem(409, "RESERVATION_STATE_INVALID")
     require_no_contract(request, session, r)
+    if body.action == "APPROVE":
+        # Serialize approval with customer requests for the same spot/model.
+        # The final availability check then uses the same resource lock.
+        lock_key(session, "nadri-model", r["spot_master_id"] + ":" + r["model_id"])
     refund_payment_id, refund_status, refund_ready = (None, None, False)
     if body.action == "CANCEL":
         refund_payment_id, refund_status, refund_ready = prepare_booking_refund(request, session, r, actor, body.reason)
@@ -123,7 +127,10 @@ def booking_action(body: BookingAction, request: Request, background_tasks: Back
             raise Problem(409, "VEHICLE_UNAVAILABLE")
         contracts = contracts_for(request, session, list(vehicles))
         expire_maintenance(request, session, vehicles, contracts)
-        assignment, records = compute_assignment(request, session, root, vehicles, contracts, candidate=r)
+        # The row is still REQUESTED and is already included by
+        # compute_assignment; omit it before adding it back as the candidate.
+        assignment, records = compute_assignment(request, session, root, vehicles, contracts,
+                                                  candidate=r, omit_reservation=r["reservation_id"])
         apply_assignments(request, session, assignment, records, actor.admin["admin_id"], skip=r["reservation_id"])
         values.update(reservation_status="APPROVED", vehicle_assignment_status="PROVISIONAL",
                       assigned_vehicle_id=assignment[r["reservation_id"]], vehicle_assigned_at=now())

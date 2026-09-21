@@ -308,7 +308,7 @@ def process_event(db, client, stored, snapshot, notifier=None):
             refund_status = "PENDING"
         elif event["event_type"] == "PAYMENT.REFUND.FAILED":
             refund_status = "FAILED"
-        elif capture_status == "COMPLETED" and reservation_status == "CANCELED" and refunded < payment["total_price"]:
+        elif capture_status == "COMPLETED" and reservation_status in ("CANCELED", "EXPIRED") and refunded < payment["total_price"]:
             refund_status = "REQUESTED"
             values["refund_requested_at"] = now()
         values["refund_status"] = refund_status
@@ -322,7 +322,7 @@ def process_event(db, client, stored, snapshot, notifier=None):
         session.execute(update(e).where(e.c.webhook_event_id == row["webhook_event_id"]).values(payment_id=payment["payment_id"],
             processing_status="PROCESSED", last_error=None, processed_at=now(), updated_at=now(),
             retry_count=row["retry_count"] + (1 if row["processing_status"] == "FAILED" else 0)))
-        if notifier and event["event_type"] == "PAYMENT.CAPTURE.COMPLETED" and settled and payment["reservation_id"]:
+        if notifier and event["event_type"] == "PAYMENT.CAPTURE.COMPLETED" and settled and payment["reservation_id"] and reservation_status != "EXPIRED":
             reservation = session.execute(select(reservation_table.c.uid_token, reservation_table.c.spot_master_id).where(
                 reservation_table.c.reservation_id == payment["reservation_id"])).mappings().first()
             if reservation:

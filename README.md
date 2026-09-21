@@ -8,11 +8,11 @@
 
 - W00 실행·설정·DB 트랜잭션·인증·권한·테스트 기반 및 이번 범위의 마이그레이션 준비.
 - W01·W02 기존 15개 경로와 관리자 가입 접수 1개 경로의 기본 기능 구현·로컬 검증 완료. API 05 전화번호 암호문 저장을 위한 phone VARCHAR(200), API 23 소개·연락 이메일의 지점 컬럼 추가를 반영했다. 실제 DB 변경은 아직 적용하지 않았다.
-- W03~W08 차량·QR·가격·배송·예약·렌트·조회·PayPal 웹훅 라우터로 기존 관리자 38개 명세를 유지한다. 나드리 고객 API 11개는 별도 네임스페이스로 추가했다. 예약 요청·승인/거절·결제 확정의 FCM 발송을 추가했으며 토큰은 기존 공유 DB에 저장한다. 로컬 테스트는 144개 통과했으며 MySQL 동시성 6개는 별도 DB가 없어 건너뛴다.
+- W03~W08 차량·QR·가격·배송·예약·렌트·조회·PayPal 웹훅 라우터로 기존 관리자 38개 명세를 유지한다. 나드리 고객 API 11개는 별도 네임스페이스로 추가했다. 예약 요청·승인/거절·결제 기한·결제 확정의 FCM 발송을 추가했으며 토큰은 기존 공유 DB에 저장한다. 로컬 테스트는 145개 통과했으며 MySQL 동시성 6개는 별도 DB가 없어 건너뛴다.
 - API 32·33의 신청 조회·승인·거절 구현과 `POST /nadreego/admin/signup` 가입 접수를 완료했다. 가입 API는 RiderLog 호환 `MSP_ADMIN` 계정을 만들고 대표 이메일·초대코드로 지점을 검증한 뒤 REQUESTED 신청만 저장한다. 승인 전에는 렌탈 role/scope를 부여하지 않는다. 하위지점 생성은 `MSP_SPOT_RENT.invite_code`를 발급하고 성공한 가입 신청에서 소비한다.
 - 렌탈 사용자 영역은 MSP_DRIVER와 분리했다. MSP_RENTAL_USER는 uid_token을 기본키로 사용하고 name·gender·age·nationality를 보관하며, MSP_RESERVATION·MSP_RENTAL_CONTRACT도 uid_token으로 연결한다. 기존 legacy_user_code와 렌탈 영역의 driver_id는 003 마이그레이션에서 정리한다.
 - 나드리 고객 앱의 UID 로그인·신규 사용자 생성, 1시간 access token 발급, 프로필 갱신, 렌탈 차량 가용성·가격 조회, 렌트 요청, PayPal 결제 주문·캡처, 진행·완료 렌트 목록 조회와 결제 전 예약 취소·고객 로그아웃 API를 구현했다. 고객 API 명세와 운영 전 확인 항목은 [사용자 API 설계](docs/nadri-user-api-design.md)에 별도로 정리했다. 관리자용 나드리고 API와 기존 RiderLog 운전자 API에는 영향을 주지 않는다.
-- 정비 만료·PayPal 미결제 예약 만료·6개월 일별 재고를 `python -m app.jobs {maintenance|payments|inventory|all}`로 실행할 수 있다. MySQL·Redis·SMTP 실연동, MFA 연동, 앱 연동 및 운영 DB 적용은 미완료다. 테스트 통과를 전체 W01·W02 완료로 보지 않는다.
+- 정비 만료·승인 후 결제 기한 알림·PayPal 미결제 예약 만료·6개월 일별 재고를 `python -m app.jobs {maintenance|payments|inventory|all}`로 실행할 수 있다. MySQL·Redis·SMTP 실연동, MFA 연동, 앱 연동 및 운영 DB 적용은 미완료다. 테스트 통과를 전체 W01·W02 완료로 보지 않는다.
 
 상세 진행표·제한사항·검증 결과: [W00~W02 구현 기록](docs/w00-w02-implementation.md). 전체 범위: [API 작업 구분](docs/api-work-groups.md).
 
