@@ -65,8 +65,13 @@ def test_limiter_fails_closed_and_uses_hashed_keys():
 
 
 def test_openapi_has_exact_work_group_routes(client):
+    docs = client.get("/docs")
+    redoc = client.get("/redoc")
+    assert docs.status_code == 200 and "swagger-ui" in docs.text
+    assert redoc.status_code == 200 and "redoc" in redoc.text.lower()
     paths = client.get("/openapi.json").json()["paths"]
-    assert len([path for path in paths if not path.startswith("/health/")]) == 47
+    assert len([path for path in paths if not path.startswith("/health/")]) == 48
+    assert "/nadreego/admin/signup" in paths
     assert "/api/v1/nadri/rental/request/cancel" in paths
     for path in ("/api/v1/nadri/user/login", "/api/v1/nadri/user/profile", "/api/v1/nadri/rental/availability",
                  "/api/v1/nadri/rental/request", "/api/v1/nadri/rental/payment/order",

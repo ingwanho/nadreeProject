@@ -8,6 +8,7 @@ from app.availability import (apply_assignments, compute_assignment, price_key, 
                               reservation_history, reservation_price)
 from app.db import transaction
 from app.errors import Problem
+from app.fcm import queue_reservation_decision
 from app.headers import bearer
 from app.pricing import daily_price, load_tiers
 from app.paypal import execute_refund
@@ -139,6 +140,9 @@ def booking_action(body: BookingAction, request: Request, background_tasks: Back
     table = request.app.state.db.table("MSP_RESERVATION")
     session.execute(update(table).where(table.c.reservation_id == r["reservation_id"]).values(**values))
     reservation_history(request, session, r, values, event, actor.admin["admin_id"], body.reason)
+    if body.action in ("APPROVE", "REJECT"):
+        queue_reservation_decision(request.app.state.db, session, r["uid_token"],
+                                   r["reservation_id"], values["reservation_status"])
     if refund_payment_id and refund_status == "REQUESTED" and refund_ready:
         background_tasks.add_task(execute_refund, request.app.state.db, request.app.state.paypal, refund_payment_id)
     data = dict(bookedNo=body.bookedNo, reservationStatus=values["reservation_status"],

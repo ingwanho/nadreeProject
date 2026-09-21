@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
 
 from app.errors import Problem
+from app.fcm import queue_payment_complete
 from app.security import now
 
 router = APIRouter(tags=["W08 PayPal webhook"])
@@ -236,8 +237,9 @@ def save_event(db, environment, event, raw, headers):
         return dict(session.execute(select(t).where(where)).mappings().one())
 
 
-def process_event(db, client, stored, snapshot):
+def process_event(db, client, stored, snapshot, notifier=None):
     e, p = db.table("MSP_PAYPAL_WEBHOOK_EVENT"), db.table("MSP_RENTAL_PAYMENT")
+    payment_id = None
     with Session(db.engine) as session, session.begin():
         row = session.execute(select(e).where(e.c.webhook_event_id == stored["webhook_event_id"]).with_for_update()).mappings().one()
         if row["processing_status"] in ("PROCESSED", "IGNORED"):
@@ -259,8 +261,9 @@ def process_event(db, client, stored, snapshot):
             raise Problem(500, "PAYMENT_SUBJECT_INVALID")
         reservation_status = None
         if payment["reservation_id"]:
-            r = db.table("MSP_RESERVATION")
-            reservation_status = session.scalar(select(r.c.reservation_status).where(r.c.reservation_id == payment["reservation_id"]))
+            reservation_table = db.table("MSP_RESERVATION")
+            reservation_status = session.scalar(select(reservation_table.c.reservation_status).where(
+                reservation_table.c.reservation_id == payment["reservation_id"]))
             if reservation_status is None:
                 raise Problem(500, "PAYMENT_SUBJECT_INVALID")
         if payment["rental_contract_id"]:
@@ -319,7 +322,17 @@ def process_event(db, client, stored, snapshot):
         session.execute(update(e).where(e.c.webhook_event_id == row["webhook_event_id"]).values(payment_id=payment["payment_id"],
             processing_status="PROCESSED", last_error=None, processed_at=now(), updated_at=now(),
             retry_count=row["retry_count"] + (1 if row["processing_status"] == "FAILED" else 0)))
-        return payment["payment_id"]
+        if notifier and event["event_type"] == "PAYMENT.CAPTURE.COMPLETED" and settled and payment["reservation_id"]:
+            reservation = session.execute(select(reservation_table.c.uid_token, reservation_table.c.spot_master_id).where(
+                reservation_table.c.reservation_id == payment["reservation_id"])).mappings().first()
+            if reservation:
+                queue_payment_complete(db, session, reservation["uid_token"], payment["reservation_id"],
+                                       reservation["spot_master_id"], payment["payment_id"])
+        payment_id = payment["payment_id"]
+        notifications = session.info.pop("fcm_notifications", [])
+    if notifier and notifications:
+        notifier.dispatch(db, notifications)
+    return payment_id
 
 
 def execute_refund(db, client, payment_id):
@@ -362,7 +375,7 @@ def execute_refund(db, client, payment_id):
     return status == "COMPLETED"
 
 
-def handle_webhook(db, client, raw, event, headers):
+def handle_webhook(db, client, raw, event, headers, notifier=None):
     stored = None
     try:
         if not client.verify(event, headers):
@@ -372,7 +385,7 @@ def handle_webhook(db, client, raw, event, headers):
             return 200
         persisted_event = json.loads(stored["raw_body"])
         snapshot = client.snapshot(persisted_event) if persisted_event["event_type"] in SUPPORTED else None
-        payment_id = process_event(db, client, stored, snapshot)
+        payment_id = process_event(db, client, stored, snapshot, notifier)
         if payment_id and persisted_event["event_type"] == "PAYMENT.CAPTURE.COMPLETED":
             execute_refund(db, client, payment_id)
         return 200
@@ -411,5 +424,6 @@ async def webhook(request: Request):
             raise ValueError
     except (UnicodeDecodeError, ValueError, KeyError, TypeError, Problem):
         return JSONResponse({"status": False}, status_code=400)
-    status = await run_in_threadpool(handle_webhook, request.app.state.db, request.app.state.paypal, raw, event, headers)
+    status = await run_in_threadpool(handle_webhook, request.app.state.db, request.app.state.paypal, raw, event, headers,
+                                     request.app.state.fcm)
     return JSONResponse({"status": status == 200}, status_code=status)

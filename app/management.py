@@ -1,4 +1,5 @@
 import re
+import secrets
 import uuid
 
 from fastapi import APIRouter, Depends, Query, Request
@@ -204,11 +205,15 @@ def create_spot(body: SpotCreate, request: Request, session: Session = DB):
     values = {"spot_master_id": ident, "contract_id": parent["contract_id"], "org_id": parent["org_id"],
               "org_name": parent.get("org_name"), "region_id": parent.get("region_id"), "local_id": parent.get("local_id"),
               "region_name": parent.get("region_name"), "local_name": parent.get("local_name"),
-              "spot_id": None, "unit_code": unit_code, "spot_name": body.spot_name,
+              "unit_code": unit_code, "spot_name": body.spot_name,
               "hierarchy_level": body.unit_type, "phone": body.phone, "biz_reg_num": body.biz_reg_num,
               "address": " ".join(x for x in [body.address, body.address_detail] if x) or None,
               "zip_code": body.zip_code, "lat": body.lat, "lng": body.lng,
               "contract_start": start, "contract_end": end, "is_active": 1}
+    # spot_id is a legacy normalized-key bridge. Newer shared schemas use only
+    # spot_master_id for rental scope, so write it only when the column exists.
+    if "spot_id" in table.c:
+        values["spot_id"] = ident if body.unit_type == "spot" else None
     if "unit_name" in table.c:
         values["unit_name"] = body.spot_name
     if body.unit_type in ["region", "local", "spot"]:
@@ -222,26 +227,43 @@ def create_spot(body: SpotCreate, request: Request, session: Session = DB):
         normal = db.table("MSP_" + body.unit_type.upper())
         normalized = {k: v for k, v in values.items() if k in normal.c}
         normalized[body.unit_type + "_name"] = body.spot_name
+        # RiderLog's normalized hierarchy keeps ancestor keys non-null. A
+        # caller cannot create an L4 spot directly below an org when the
+        # shared schema requires an intermediate region/local row.
+        for ancestor in ("org_id", "region_id", "local_id"):
+            column = normal.c.get(ancestor)
+            if column is not None and not column.nullable and normalized.get(ancestor) is None:
+                raise Problem(422, "PARENT_HIERARCHY_INCOMPLETE")
         require_columns(normal, normalized)
         session.execute(normal.insert().values(**normalized))
     session.execute(table.insert().values(**values))
     rent = db.table("MSP_SPOT_RENT")
-    session.execute(rent.insert().values(spot_master_id=ident, delivery_service_type="NONE"))
+    invite_code = secrets.token_urlsafe(48)[:64] if "invite_code" in rent.c else None
+    rent_values = {"spot_master_id": ident, "delivery_service_type": "NONE"}
+    if invite_code is not None:
+        rent_values["invite_code"] = invite_code
+    require_columns(rent, rent_values)
+    session.execute(rent.insert().values(**rent_values))
     return {"spot_id": ident, "unit_code": unit_code, "spot_name": body.spot_name,
             "hierarchy_level": body.unit_type, "phone": body.phone, "biz_reg_num": body.biz_reg_num,
             "address": values["address"], "zip_code": body.zip_code, "lat": body.lat, "lng": body.lng,
-            "contract_start": start, "contract_end": end, "is_active": True}
+            "contract_start": start, "contract_end": end, "is_active": True, "inviteCode": invite_code}
 
 
 @router.get("/nadreego/shop/adminRequest", response_model=Applicants)
-def admin_requests(request: Request, session: Session = DB):
+def admin_requests(request: Request, includeSubtree: bool = Query(False), session: Session = DB):
     actor = principal(request, session)
     root = active_spot(request, session, actor, representative=True)
     db = request.app.state.db
-    pending, admins = db.table("MSP_RENTAL_ADMIN_REQUEST"), db.table("MSP_ADMIN")
+    pending, admins, spots = db.table("MSP_RENTAL_ADMIN_REQUEST"), db.table("MSP_ADMIN"), db.table("MSP_SPOT_MASTER")
+    target = (spots.c.spot_master_id == root["spot_master_id"])
+    if includeSubtree:
+        target = ((spots.c.contract_id == root["contract_id"]) &
+                  ((spots.c.spot_master_id == root["spot_master_id"]) |
+                   spots.c.unit_code.startswith(root["unit_code"] + "-", autoescape=True)))
     rows = session.execute(select(pending.c.email, admins.c.admin_name)
-        .select_from(pending.outerjoin(admins, admins.c.admin_id == pending.c.admin_id))
-        .where(pending.c.spot_master_id == root["spot_master_id"], pending.c.status == "REQUESTED")
+        .select_from(pending.outerjoin(admins, admins.c.admin_id == pending.c.admin_id).join(spots, spots.c.spot_master_id == pending.c.spot_master_id))
+        .where(target, pending.c.status == "REQUESTED")
         .order_by(pending.c.requested_at, pending.c.request_id)).mappings().all()
     return {"status": "success", "admins": [{"email": row["email"], "name": row["admin_name"]} for row in rows]}
 
@@ -250,11 +272,24 @@ def admin_requests(request: Request, session: Session = DB):
 def admin_request_action(body: RequestAction, request: Request, session: Session = DB):
     actor, root = representative(request, session)
     db = request.app.state.db
-    pending = db.table("MSP_RENTAL_ADMIN_REQUEST")
-    row = session.execute(select(pending).where(pending.c.spot_master_id == root["spot_master_id"],
-        pending.c.email == str(body.email).casefold()).with_for_update()).mappings().first()
-    if not row:
+    pending, spots = db.table("MSP_RENTAL_ADMIN_REQUEST"), db.table("MSP_SPOT_MASTER")
+    if body.spotMasterId:
+        target_condition = ((spots.c.contract_id == root["contract_id"]) &
+                            ((spots.c.spot_master_id == body.spotMasterId) &
+                             (spots.c.unit_code.startswith(root["unit_code"] + "-", autoescape=True) |
+                              (spots.c.spot_master_id == root["spot_master_id"]))))
+    else:
+        target_condition = spots.c.spot_master_id == root["spot_master_id"]
+    rows = session.execute(select(pending, spots.c.contract_id.label("target_contract_id"),
+                                  spots.c.unit_code.label("target_unit_code"), spots.c.is_active.label("target_active"))
+        .join(spots, spots.c.spot_master_id == pending.c.spot_master_id)
+        .where(target_condition, pending.c.email == str(body.email).casefold())
+        .with_for_update()).mappings().all()
+    if len(rows) > 1:
+        raise Problem(409, "ADMIN_REQUEST_AMBIGUOUS")
+    if not rows:
         raise Problem(404, "ADMIN_REQUEST_NOT_FOUND")
+    row = dict(rows[0])
     if row["status"] != "REQUESTED":
         raise Problem(409, "ADMIN_REQUEST_ALREADY_PROCESSED")
     current = now()
@@ -263,12 +298,12 @@ def admin_request_action(body: RequestAction, request: Request, session: Session
         admins = db.table("MSP_ADMIN")
         target = session.execute(select(admins).where(admins.c.admin_id == row["admin_id"])
                                  .with_for_update()).mappings().first()
-        if not target or not target["is_active"]:
+        if not target or not target["is_active"] or not row["target_active"]:
             raise Problem(409, "APPLICANT_ACCOUNT_UNAVAILABLE")
         if not target["email"] or target["email"].casefold() != row["email"]:
             raise Problem(409, "APPLICANT_EMAIL_CHANGED")
-        if (target["primary_spot_master_id"] not in [None, root["spot_master_id"]]
-                or target["contract_id"] not in [None, root["contract_id"]]):
+        if (target["primary_spot_master_id"] not in [None, row["spot_master_id"]]
+                or target["contract_id"] not in [None, row["target_contract_id"]]):
             raise Problem(409, "APPLICANT_MEMBERSHIP_CONFLICT")
         mapping, role = db.table("MSP_ADMIN_ROLE"), db.table("MSP_ROLE")
         if session.execute(select(mapping.c.admin_id).where(mapping.c.admin_id == target["admin_id"],
@@ -278,14 +313,17 @@ def admin_request_action(body: RequestAction, request: Request, session: Session
                 role.c.is_active == 1)).first():
             raise Problem(503, "RENTAL_ROLE_NOT_CONFIGURED")
         session.execute(update(admins).where(admins.c.admin_id == target["admin_id"])
-            .values(primary_spot_master_id=root["spot_master_id"], contract_id=root["contract_id"]))
+            .values(primary_spot_master_id=row["spot_master_id"], contract_id=row["target_contract_id"]))
         session.execute(mapping.insert().values(admin_id=target["admin_id"], role_code=GENERAL, assigned_at=current))
         scope = db.table("MSP_ADMIN_SPOT_SCOPE")
         if not session.execute(select(scope.c.admin_id).where(scope.c.admin_id == target["admin_id"],
-                scope.c.spot_master_id == root["spot_master_id"], scope.c.access_type == "manage")).first():
-            session.execute(scope.insert().values(admin_id=target["admin_id"], spot_master_id=root["spot_master_id"],
-                unit_code=root["unit_code"], access_type="manage",
-                granted_at=current, granted_by=actor.admin["admin_id"]))
+                scope.c.spot_master_id == row["spot_master_id"], scope.c.access_type == "manage")).first():
+            values = {"admin_id": target["admin_id"], "spot_master_id": row["spot_master_id"],
+                "unit_code": row["target_unit_code"], "access_type": "manage",
+                "granted_at": current, "granted_by": actor.admin["admin_id"]}
+            if "spot_id" in scope.c:
+                values["spot_id"] = None
+            session.execute(scope.insert().values(**values))
     result = session.execute(update(pending).where(pending.c.request_id == row["request_id"],
         pending.c.status == "REQUESTED").values(status="APPROVED" if body.action == "APPROVE" else "REJECTED",
             reviewed_at=current, reviewed_by_admin_id=actor.admin["admin_id"]))

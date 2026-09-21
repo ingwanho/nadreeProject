@@ -89,6 +89,7 @@ class CreatedSpot(BaseModel):
     contract_start: date | None
     contract_end: date | None
     is_active: bool
+    inviteCode: str | None = None
 
 
 class Applicant(BaseModel):
@@ -98,3 +99,10 @@ class Applicant(BaseModel):
 
 class Applicants(Status):
     admins: list[Applicant]
+
+
+class AdminSignupResult(Status):
+    adminId: str
+    requestId: str
+    spotMasterId: str
+    requestStatus: Literal["REQUESTED"] = "REQUESTED"

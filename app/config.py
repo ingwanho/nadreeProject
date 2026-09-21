@@ -23,11 +23,25 @@ class Settings(BaseSettings):
     qr_hash_key: SecretStr = SecretStr("")
     availability_timeout_seconds: float = Field(default=2.0, gt=0, le=10)
     firestore_project: str = ""
+    # FCM uses a separate Firebase project from vehicle-location reads.
+    fcm_credential_type: str = "service_account"
+    fcm_project_id: str = ""
+    fcm_private_key_id: str = ""
+    fcm_private_key: SecretStr = SecretStr("")
+    fcm_client_email: str = ""
+    fcm_client_id: str = ""
+    fcm_auth_uri: str = "https://accounts.google.com/o/oauth2/auth"
+    fcm_token_uri: str = "https://oauth2.googleapis.com/token"
+    fcm_auth_provider_x509_cert_url: str = "https://www.googleapis.com/oauth2/v1/certs"
+    fcm_client_x509_cert_url: str = ""
+    fcm_universe_domain: str = "googleapis.com"
     paypal_environment: Literal["SANDBOX", "LIVE"] = "SANDBOX"
     paypal_client_id: SecretStr = SecretStr("")
     paypal_client_secret: SecretStr = SecretStr("")
     paypal_webhook_id: SecretStr = SecretStr("")
     paypal_merchant_id: str = ""
+    paypal_unpaid_minutes: int = Field(default=180, ge=1, le=10080)
+    inventory_horizon_days: int = Field(default=180, ge=1, le=366)
     smtp_host: str = ""
     smtp_port: int = 587
     smtp_user: str = ""

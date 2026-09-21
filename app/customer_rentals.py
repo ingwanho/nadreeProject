@@ -1,7 +1,7 @@
 import secrets
 import uuid
 from datetime import date, timedelta, timezone
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 
 from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy import or_, select, update
@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from app.availability import compute_assignment, reservation_history
 from app.db import require_columns, transaction
 from app.errors import Problem
+from app.fcm import queue_reservation_request
 from app.headers import refresh_header
 from app.paypal import identifier
 from app.pricing import daily_price, load_tiers
@@ -245,6 +246,9 @@ def _price_view(request, groups, start_date, return_date, delivery, requested_to
     return {"currency": currency, "rentalDays": days, "dailyFrom": min(daily), "dailyTo": max(daily),
             "dailyPriceFrom": min(daily), "dailyPriceTo": max(daily),
             "rentalFrom": min(daily) * days, "rentalTo": max(daily) * days,
+            # The client may choose one of the server-calculated price groups,
+            # but may not invent an amount between the displayed bounds.
+            "totalOptions": sorted(set(totals)),
             "pricingTiers": tiers, "deliveryStart": delivery["deliveryStartFee"],
             "deliveryReturn": delivery["deliveryReturnFee"], "deliveryTotal": delivery["deliveryTotalFee"],
             "deliveryStartFee": delivery["deliveryStartFee"], "deliveryReturnFee": delivery["deliveryReturnFee"],
@@ -293,7 +297,7 @@ def _quote_for_request(request, session, body):
         raise Problem(409, "RENTAL_UNAVAILABLE")
     item = items[0]
     price = item["price"]
-    if not price["totalFrom"] <= body.totalPrice <= price["totalTo"]:
+    if body.totalPrice not in set(price.get("totalOptions", [price["totalFrom"], price["totalTo"]])):
         raise Problem(409, "PRICE_QUOTE_MISMATCH")
     return item
 
@@ -574,6 +578,7 @@ def nadri_request(body: NadriRentalRequest, request: Request, session: Session =
     at = now()
     quote = dict(item["price"])
     quote["requestedTotal"] = body.totalPrice
+    quote["finalTotal"] = body.totalPrice
     availability_request = {"startDate": body.startDate.isoformat(), "returnDate": body.returnDate.isoformat(),
                             "cc": item["model"].get("cc"), "deliveryRequested": body.deliveryRequested,
                             "pickupLocation": body.pickupLocation, "returnLocation": body.returnLocation}
@@ -593,6 +598,7 @@ def nadri_request(body: NadriRentalRequest, request: Request, session: Session =
     session.execute(table.insert().values(**values))
     reservation = dict(values)
     reservation_history(request, session, reservation, values, "REQUESTED", user.uid_token)
+    queue_reservation_request(db, session, reservation_id, body.spotMasterId)
     return {"status": "success", "reservationId": reservation_id, "bookedNo": "BO" + reservation_id,
             "reservationStatus": "REQUESTED", "vehicleAssignmentStatus": "SOFT_HOLD", "paymentAvailability": "WAITING_APPROVAL",
             "paymentStatus": "WAITING_APPROVAL",
@@ -632,6 +638,15 @@ def _revalidate_reservation_quote(request, session, reservation):
     if (stored.get("currency") != current["currency"] or stored.get("totalFrom", stored.get("calculatedTotalFrom")) != current["totalFrom"]
             or stored.get("totalTo", stored.get("calculatedTotalTo")) != current["totalTo"]):
         raise Problem(409, "PAYMENT_QUOTE_CHANGED")
+    final_total = stored.get("finalTotal", stored.get("requestedTotal"))
+    try:
+        final_total = Decimal(str(final_total))
+    except (InvalidOperation, TypeError, ValueError):
+        raise Problem(409, "PAYMENT_QUOTE_UNAVAILABLE") from None
+    valid_totals = {Decimal(str(value)) for value in current.get("totalOptions", [])}
+    if final_total <= 0 or final_total not in valid_totals:
+        raise Problem(409, "PAYMENT_QUOTE_CHANGED")
+    stored = dict(stored, finalTotal=final_total)
     return stored
 
 
@@ -656,16 +671,35 @@ def nadri_payment_order(body: NadriPaymentOrder, request: Request, session: Sess
         if existing["payment_status"] in ("PAID", "PARTIALLY_REFUNDED", "REFUNDED"):
             raise Problem(409, "PAYMENT_ALREADY_PAID")
         if existing["payment_status"] in ("CREATED", "PENDING") and existing.get("paypal_order_id"):
-            approval = None
+            approval, provider_order = None, None
             try:
-                approval = request.app.state.paypal.approval_url(request.app.state.paypal.get("orders", existing["paypal_order_id"]))
-            except (Problem, AttributeError, SQLAlchemyError):
-                approval = None
-            return _payment_result(dict(existing), approval)
+                provider_order = request.app.state.paypal.get("orders", existing["paypal_order_id"])
+                provider_status = provider_order.get("status")
+                if provider_status in ("CREATED", "APPROVED"):
+                    approval = request.app.state.paypal.approval_url(provider_order)
+                elif provider_status in ("EXPIRED", "CANCELED", "VOIDED"):
+                    provider_order = None
+                else:
+                    raise Problem(409, "PAYMENT_STATE_INVALID")
+            except (AttributeError, SQLAlchemyError):
+                return _payment_result(dict(existing))
+            except Problem:
+                # A provider read failure is not proof that an order expired;
+                # leave the attempt intact and let the expiry job decide.
+                raise
+            if provider_order is not None:
+                return _payment_result(dict(existing), approval)
+            if existing["payment_status"] == "PENDING":
+                return _payment_result(dict(existing))
+            # The PayPal order can expire independently of this service. Close
+            # the internal attempt and create a fresh order on the next call.
+            session.execute(update(table).where(table.c.payment_id == existing["payment_id"],
+                                                table.c.payment_status.in_(("CREATED", "PENDING")))
+                            .values(payment_status="CANCELED", refund_status="NOT_REQUIRED", updated_at=now()))
     quote = _revalidate_reservation_quote(request, session, reservation)
     if quote.get("requestedTotal") is None:
         raise Problem(409, "PAYMENT_QUOTE_UNAVAILABLE")
-    total = Decimal(str(quote["requestedTotal"]))
+    total = Decimal(str(quote.get("finalTotal", quote.get("requestedTotal"))))
     if total <= 0:
         raise Problem(409, "PAYMENT_QUOTE_UNAVAILABLE")
     payment_values = dict(reservation_id=reservation["reservation_id"], rental_contract_id=None, payment_provider="PAYPAL",

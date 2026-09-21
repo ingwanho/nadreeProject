@@ -1,7 +1,7 @@
 # 나드리 고객 사용자 API 설계 초안
 
 최종 수정일: 2026-09-18  
-상태: **고객 API 1~11·FCM 토큰 저장 구현 완료(로컬 검증), PayPal·새 Firebase 알림 연동 및 운영 DB 적용 대기**
+상태: **고객 API 1~11·FCM 토큰 및 예약 업무 알림 구현 완료(로컬 검증), PayPal·FCM 서비스 계정 실연동 및 운영 DB 적용 대기**
 
 이 문서는 관리자 앱인 나드리고 API와 분리된 **나드리 고객 앱 전용 사용자 API** 설계다. 기존 RiderLog의 운전자 기능과 `MSP_DRIVER` 및 운전자 관련 테이블은 이 API에서 조회하거나 변경하지 않는다. 사용자 프로필은 독립적인 `MSP_RENTAL_USER`에, 인증 세션은 `MSP_RENTAL_USER_REFRESH_TOKEN`에 기록한다.
 
@@ -440,7 +440,7 @@ Content-Type: application/json
 }
 ```
 
-`paymentStatus=WAITING_APPROVAL`은 결제 테이블의 결제 상태가 아니라 결제 가능 조건을 나타낸다. `REQUESTED` 예약 생성 시에는 `MSP_RENTAL_PAYMENT` 행과 PayPal 주문을 만들지 않는다. 관리자가 `APPROVED`로 승인한 뒤 API 5에서 결제 시도를 생성한다. 알림 발송은 새 Firebase 프로젝트 연결 이후 별도로 추가하며, 현재 예약 생성은 알림 큐에 기록하지 않는다.
+`paymentStatus=WAITING_APPROVAL`은 결제 테이블의 결제 상태가 아니라 결제 가능 조건을 나타낸다. `REQUESTED` 예약 생성 시에는 `MSP_RENTAL_PAYMENT` 행과 PayPal 주문을 만들지 않는다. 관리자가 `APPROVED`로 승인한 뒤 API 5에서 결제 시도를 생성한다. 예약 생성이 커밋되면 해당 지점의 활성 대표·일반관리자에게 `RESERVATION_REQUESTED` FCM을 발송하며, 알림 큐에는 기록하지 않는다.
 
 ### 오류
 
@@ -480,11 +480,11 @@ MVP에서는 차량 조회 화면과 PayPal 청구 통화를 모두 `USD`로 고
 
 1. Bearer token의 subject가 해당 예약의 `MSP_RESERVATION.uid_token`과 일치하는지 확인한다.
 2. 예약 상태가 `APPROVED`인지 확인한다. `REQUESTED`, `REJECTED`, `CANCELED`, `EXPIRED`, `HANDED_OVER` 상태에는 주문을 만들지 않는다. 결제 완료만으로 예약을 자동 승인하지 않는다.
-3. API 4에서 저장한 `required_criteria_json`과 현재 지점·모델·기간·배송비를 재검증한다. 가격이 바뀌었으면 주문을 만들지 않고 새 견적을 요구한다.
+3. API 4에서 저장한 `required_criteria_json`과 현재 지점·모델·기간·배송비를 재검증한다. 가격이 바뀌었거나 저장된 `finalTotal`이 서버가 계산한 개별 `totalOptions`에 없으면 주문을 만들지 않고 새 견적을 요구한다.
 4. `MSP_RENTAL_PAYMENT`에 `reservation_id`, `payment_provider=PAYPAL`, 현재 환경, 서버 확정 `total_price`·`currency`, `payment_status=CREATED`를 저장한다. `rental_contract_id`는 NULL이다.
 5. 서버가 PayPal Orders v2의 `POST /v2/checkout/orders`를 `intent=CAPTURE`로 호출하고, 구매 단위 하나와 예약 ID를 reference로 사용한다. PayPal 주문 생성·캡처는 서버가 수행하며 브라우저에서 PayPal 비밀값을 사용하지 않는다.
 6. PayPal 주문 생성 성공 후 `paypal_order_id`를 결제 행에 저장하고 승인 링크를 반환한다. PayPal 주문 생성 실패 시 결제 행을 `FAILED`로 남기고 예약은 유지한다.
-7. 이미 `CREATED`, `PENDING`, `PAID`인 같은 예약 결제 시도가 있으면 새 주문을 만들지 않고 기존 결제 정보를 반환한다. `FAILED` 또는 `CANCELED`만 새 결제 시도를 만들 수 있다.
+7. 이미 유효한 `CREATED`, `PENDING`, `PAID`인 같은 예약 결제 시도가 있으면 새 주문을 만들지 않고 기존 결제 정보를 반환한다. PayPal 주문이 만료됐거나 내부 미결제 만료 작업으로 `CANCELED`가 된 시도만 새 결제 시도를 만들 수 있다.
 8. `PayPal-Request-ID`는 결제 시도별로 고정해 네트워크 재시도에서 중복 주문을 방지한다.
 
 ### 성공 응답
@@ -823,7 +823,7 @@ PayPal 캡처가 진행 중인 `PENDING` 결제는 환불할 수 없으므로 `P
 - 예약 요청은 `MSP_RESERVATION.required_criteria_json`에 최초 가용성 조회 조건과 서버 검증 가격을 함께 저장한다.
 - 결제 API는 기존 `MSP_RENTAL_PAYMENT`에 예약별 결제 시도를 저장하고, PayPal 주문·캡처 ID와 서버 확정 금액·통화를 연결한다. 결제 전용 새 테이블이나 예약 결제 상태 컬럼은 추가하지 않는다.
 - PayPal 웹훅은 기존 `MSP_PAYPAL_WEBHOOK_EVENT`와 `/nadreego/paypal/webhook`을 사용해 결제 상태를 갱신한다.
-- 관리자·고객 FCM 토큰은 앱이 전달한 최신 값을 저장하고 응답·로그에 노출하지 않는다. 알림 발송은 새 Firebase 프로젝트 연결 후 별도로 활성화한다.
+- 관리자·고객 FCM 토큰은 앱이 전달한 최신 값을 저장하고 응답·로그에 노출하지 않는다. 예약 요청은 관리자에게, 승인·거절은 고객에게, 결제 확정은 관리자와 고객에게 커밋 후 FCM으로 전달한다. 알림 큐 테이블이나 Firebase 데이터베이스는 사용하지 않으며, 발송 실패는 업무 트랜잭션을 되돌리지 않는다.
 - 기존 `MSP_DRIVER`, `MSP_DRIVER_SPOT_HISTORY`의 컬럼·인덱스·데이터는 변경하지 않는다.
 - UID와 access token은 평문 로그에 남기지 않으며, 사용자 응답에는 필요한 프로필만 포함한다.
 - 신규 사용자는 로그인 시 UID 행만 생성하고, 프로필 입력은 API 2의 명시적 요청에서만 저장한다.
@@ -839,11 +839,12 @@ PayPal 캡처가 진행 중인 `PENDING` 결제는 환불할 수 없으므로 `P
 6. `cc`를 정확히 일치시킬지 범위 검색으로 확장할지 결정한다. 현재 설계는 정확히 일치시킨다.
 7. MVP 표시·결제 통화와 가격 원본은 `USD`로 고정한다. 환율 스냅샷은 저장하지 않으며, 위치 주소의 정규화·좌표 수집 방식만 구현 전에 확정한다.
 8. 렌트 요청의 `deliveryRequested=true`는 MVP에서 왕복 배송(`START_AND_RETURN`)으로 고정한다. 픽업 주소는 필수이고 반납 주소 입력은 선택이다.
-9. PREMIUM 가격 범위에서 고객이 보낸 `totalPrice`를 범위 내 금액으로 접수할지, 실제 차량 배정 전 단일 금액을 선택하게 할지 결정한다. 현재 설계는 범위 내 접수를 허용한다.
+9. PREMIUM/BASIC 가격은 서버가 계산한 개별 `totalOptions` 중 하나만 접수한다. 화면의 범위 표시는 유지하지만 범위 사이 임의 금액은 거절한다.
 10. MVP에서는 관리자 예약 승인 대기시간을 두지 않는다. 예약 요청은 승인 또는 거절될 때까지 유지하고, 새 요청의 `hold_expires_at`은 `NULL`로 저장한다. 기존 컬럼은 하위 호환을 위해 유지한다.
-11. 관리자·고객 FCM 토큰 저장은 구현되어 있다. 새 Firebase 프로젝트와 발송 방식이 준비되면 알림 발송·재시도 정책을 별도로 확정한다.
+11. 관리자·고객 FCM 토큰 저장과 예약 요청·승인/거절·결제 확정 FCM 발송은 구현되어 있다. 새 Firebase 프로젝트 서비스 계정과 운영 앱 토큰을 등록한 뒤 Sandbox에서 수신을 확인한다. 발송은 커밋 후 best-effort이며 일시 오류는 최대 5회·1시간 범위로 제한 재시도하고, 만료 토큰만 자동 삭제한다.
 12. PayPal 주문 생성·캡처 API의 Sandbox와 Live 자격증명, Webhook ID, USD 수취 계정 ID를 환경별로 등록한다.
 13. 결제 완료 후에도 관리자 승인을 별도로 유지할지 확인한다. 현재 설계는 결제와 예약 승인을 분리한다.
 14. 완료 목록은 현재 `RETURNED` 렌트만 포함하고, 실제 렌트 없이 종료된 `CANCELED`·`REJECTED`·`EXPIRED` 예약은 제외한다. 종료된 예약 요청도 사용자에게 보여줄 필요가 있으면 별도 범위를 확정한다.
 15. 진행·완료 목록의 기본 페이지 크기(현재 20)와 최대 페이지 크기(현재 100)를 앱 요구사항에 맞춰 확정한다.
 16. 고객 refresh token의 절대 수명은 관리자와 같은 기본 30일이며, 한 UID의 동시 기기 세션을 1개로 제한한다.
+17. `python -m app.jobs maintenance|payments|inventory|all`을 운영 작업 소유자가 실행한다. 발리 현지 종료일 다음 날 정비를 해제하고, 미결제 PayPal 예약과 180일 일별 재고를 재계산한다.

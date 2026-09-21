@@ -1,3 +1,4 @@
+import logging
 from threading import RLock
 
 from fastapi import Request
@@ -6,6 +7,8 @@ from sqlalchemy.engine import make_url
 from sqlalchemy.orm import Session
 
 from app.errors import Problem
+
+logger = logging.getLogger(__name__)
 
 
 class Database:
@@ -34,6 +37,7 @@ def transaction(request: Request):
     if db.engine is None:
         raise Problem(503, "DATABASE_NOT_CONFIGURED")
     with db.engine.connect() as connection, Session(connection) as session:
+        notifications = []
         try:
             read_paths = {"/nadreego/vehicle/select", "/nadreego/brand", "/nadreego/booking/select",
                           "/nadreego/main", "/nadreego/main/calendar", "/nadreego/vehicle/location"}
@@ -42,10 +46,18 @@ def transaction(request: Request):
                 connection.execution_options(isolation_level="REPEATABLE READ")
             with session.begin():
                 yield session
+            notifications = session.info.pop("fcm_notifications", [])
         finally:
             # MySQL named locks belong to the connection, not the transaction.
             for name in session.info.get("named_locks", []):
                 connection.execute(text("SELECT RELEASE_LOCK(:name)"), {"name": name})
+        if notifications:
+            try:
+                request.app.state.fcm.dispatch(db, notifications)
+            except Exception:
+                # Notification delivery is deliberately outside the business
+                # transaction and must never change its committed result.
+                logger.exception("FCM dispatch failed")
 
 
 def lock_email(session, email):

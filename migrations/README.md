@@ -27,7 +27,7 @@ DB 계획 v2.24는 지점 소개·연락 이메일 2컬럼과 기존 관리자 p
 
 실행 순서는 도구가 출력하는 계획을 따른다. 사용자 계정의 역할·소속·MFA·초대 코드는 이 마이그레이션에서 변경하지 않는다. 기존 지점 전체에 렌탈 행이나 과거 계정의 신청을 자동 생성하지 않는다. 비밀번호 링크 저장용 테이블은 추가하지 않는다.
 
-신청 테이블은 기존 MSP_ADMIN 계정을 admin_id로 참조하며, 이메일은 가입 접수 서버가 본인 확인 후 casefold 정규화하여 저장해야 한다. 최초 신청 접수 API·계정 생성 경로는 별도 연동 대상이다. 완료된 신청 행을 삭제하거나 REQUESTED로 재설정하지 않는다. 현재 email/action 계약에서 재신청·복수 이력은 후속 설계 대상이다. 상세는 [DB 계획](../../rental-project-master.md#db-msp_rental_admin_request)을 참조한다.
+신청 테이블은 MSP_ADMIN 계정을 admin_id로 참조하며, `POST /nadreego/admin/signup`이 입력 이메일을 casefold 정규화해 RiderLog 호환 계정과 REQUESTED 신청을 함께 저장한다. 완료된 신청 행을 삭제하거나 REQUESTED로 재설정하지 않는다. 현재 email/action 계약에서 재신청·복수 이력은 후속 설계 대상이다. 상세는 [DB 계획](../../rental-project-master.md#db-msp_rental_admin_request)을 참조한다.
 
 ## 계획 확인
 

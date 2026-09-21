@@ -18,6 +18,23 @@ class Login(Body):
     fcmToken: Token | None = None
 
 
+class AdminSignup(Body):
+    """RiderLog 공용 관리자 계정 생성과 렌탈 가입 신청 입력."""
+    loginId: Annotated[str, Field(min_length=3, max_length=100, pattern=r"^[A-Za-z0-9_.@+-]+$")]
+    email: EmailStr = Field(max_length=200)
+    password: SecretStr = Field(min_length=8, max_length=200)
+    name: Text100
+    phone: Annotated[str, Field(min_length=1, max_length=20)] | None = None
+    representativeEmail: EmailStr | None = Field(default=None, max_length=200)
+    inviteCode: Annotated[str, Field(min_length=1, max_length=64)] | None = None
+
+    @model_validator(mode="after")
+    def target(self):
+        if self.representativeEmail is None and self.inviteCode is None:
+            raise ValueError("representativeEmail or inviteCode is required")
+        return self
+
+
 class Profile(Body):
     name: Text100 | None = None
     email: Annotated[str, Field(min_length=3, max_length=200)] | None = None
@@ -53,6 +70,7 @@ class Shop(Body):
 
 class RequestAction(Email):
     action: Literal["APPROVE", "REJECT"]
+    spotMasterId: Identifier | None = None
 
 
 class SpotCreate(Body):

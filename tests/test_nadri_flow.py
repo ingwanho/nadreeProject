@@ -3,8 +3,10 @@ import hashlib
 import hmac
 
 from sqlalchemy import Column, DateTime, Integer, MetaData, String, Table
+from sqlalchemy.orm import Session
 from pydantic import SecretStr
 
+from app.fcm import queue_payment_complete
 from app.rental_schema import metadata as rental_metadata
 from app.security import now
 
@@ -25,6 +27,17 @@ class FakePayPal:
 
     def capture_reference_from_order(self, order):
         return order["purchase_units"][0]["payments"]["captures"][0]["id"]
+
+    def close(self):
+        pass
+
+
+class RecordingFcm:
+    def __init__(self):
+        self.notifications = []
+
+    def dispatch(self, db, notifications):
+        self.notifications.extend(notifications)
 
     def close(self):
         pass
@@ -56,6 +69,8 @@ def prepare_rental_schema(setup):
 def test_nadri_reservation_payment_checkout_and_return(setup, signin):
     tables = prepare_rental_schema(setup)
     settings = setup["settings"]
+    fcm = RecordingFcm()
+    setup["app"].state.fcm = fcm
     settings.qr_hash_key = SecretStr("isolated-qr-signing-key-with-at-least-32-bytes")
     setup["app"].state.paypal = FakePayPal()
     at = date.today()
@@ -82,8 +97,10 @@ def test_nadri_reservation_payment_checkout_and_return(setup, signin):
             spot_master_id="root", price=100, min_cc=0, max_cc=1000, tier_type="BASIC"))
         conn.execute(tables["MSP_RENTAL_TIER"].insert().values(
             spot_master_id=None, price=100, min_cc=0, max_cc=1000, tier_type="BASE"))
+        admins = setup["db"].table("MSP_ADMIN")
+        conn.execute(admins.update().where(admins.c.admin_id == "primary").values(fcm_token="admin-device"))
     client = setup["client"]
-    login = client.post("/api/v1/nadri/user/login", json={"UID": "user-flow"})
+    login = client.post("/api/v1/nadri/user/login", json={"UID": "user-flow", "fcmToken": "customer-device"})
     assert login.status_code == 200, login.text
     customer_headers = {"Authorization": "Bearer " + login.json()["accessToken"]}
     availability = client.post("/api/v1/nadri/rental/availability", headers=customer_headers, json={
@@ -96,6 +113,8 @@ def test_nadri_reservation_payment_checkout_and_return(setup, signin):
         "returnDate": end.isoformat(), "totalPrice": price, "currency": "USD", "deliveryRequested": False})
     assert request.status_code == 200, request.text
     reservation_id = request.json()["reservationId"]
+    assert any(item["event"] == "RESERVATION_REQUESTED" and item["recipients"][0]["token"] == "admin-device"
+               for item in fcm.notifications)
 
     # A legacy expiry value must not block approval now that approval has no timeout.
     with setup["engine"].begin() as conn:
@@ -105,6 +124,8 @@ def test_nadri_reservation_payment_checkout_and_return(setup, signin):
     approved = client.post("/nadreego/booking/action", headers=admin_headers,
                            json={"bookedNo": "BO" + reservation_id, "action": "APPROVE"})
     assert approved.status_code == 200, approved.text
+    assert any(item["event"] == "RESERVATION_APPROVED" and item["recipients"][0]["token"] == "customer-device"
+               for item in fcm.notifications)
 
     order = client.post("/api/v1/nadri/rental/payment/order", headers=customer_headers,
                         json={"reservationId": reservation_id})
@@ -122,6 +143,14 @@ def test_nadri_reservation_payment_checkout_and_return(setup, signin):
         payment = tables["MSP_RENTAL_PAYMENT"]
         conn.execute(payment.update().where(payment.c.payment_id == payment_id).values(
             payment_status="PAID", paypal_capture_id="CAPTURE-1", paid_at=now()))
+    with Session(setup["engine"]) as session, session.begin():
+        queue_payment_complete(setup["db"], session, "user-flow", reservation_id, "root", payment_id)
+        payment_notifications = session.info.pop("fcm_notifications")
+    fcm.dispatch(setup["db"], payment_notifications)
+    assert any(item["event"] == "PAYMENT_COMPLETED" and item["recipients"][0]["token"] == "admin-device"
+               for item in fcm.notifications)
+    assert any(item["event"] == "PAYMENT_COMPLETED" and item["recipients"][0]["token"] == "customer-device"
+               for item in fcm.notifications)
     handed_over = client.post("/nadreego/rent/approve", headers=admin_headers,
                               json={"bookedNo": "BO" + reservation_id, "qrCode": raw_qr})
     assert handed_over.status_code == 200, handed_over.text
