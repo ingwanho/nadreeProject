@@ -284,7 +284,7 @@ def admin_request_action(body: RequestAction, request: Request, session: Session
         if not session.execute(select(scope.c.admin_id).where(scope.c.admin_id == target["admin_id"],
                 scope.c.spot_master_id == root["spot_master_id"], scope.c.access_type == "manage")).first():
             session.execute(scope.insert().values(admin_id=target["admin_id"], spot_master_id=root["spot_master_id"],
-                spot_id=root["spot_id"], unit_code=root["unit_code"], access_type="manage",
+                unit_code=root["unit_code"], access_type="manage",
                 granted_at=current, granted_by=actor.admin["admin_id"]))
     result = session.execute(update(pending).where(pending.c.request_id == row["request_id"],
         pending.c.status == "REQUESTED").values(status="APPROVED" if body.action == "APPROVE" else "REJECTED",
