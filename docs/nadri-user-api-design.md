@@ -1,7 +1,7 @@
-# 나드리 고객 사용자 API 설계 초안
+# 나드리 고객 사용자 API 정본
 
-최종 수정일: 2026-09-18  
-상태: **고객 API 1~11·FCM 토큰 및 예약 업무 알림 구현 완료(로컬 검증), PayPal·FCM 서비스 계정 실연동 및 운영 DB 적용 대기**
+최종 수정일: 2026-09-28
+상태: **고객 API 11개 경로·13개 메서드 구현 및 로컬 검증 완료, 외부 PayPal·FCM 수신과 운영 앱·DB 통합 확인 대기**
 
 이 문서는 관리자 앱인 나드리고 API와 분리된 **나드리 고객 앱 전용 사용자 API** 설계다. 기존 RiderLog의 운전자 기능과 `MSP_DRIVER` 및 운전자 관련 테이블은 이 API에서 조회하거나 변경하지 않는다. 사용자 프로필은 독립적인 `MSP_RENTAL_USER`에, 인증 세션은 `MSP_RENTAL_USER_REFRESH_TOKEN`에 기록한다.
 
@@ -22,6 +22,8 @@
 | 11 | `POST /api/v1/nadree/user/refresh` | 고객 refresh token 회전 및 access token 재발급. GET도 호환 지원 |
 
 URL은 나드리고 관리자 API의 `/nadreego/admin/*`와 충돌하지 않도록 `/nadree/user/*`와 `/nadree/rental/*` 네임스페이스로 분리한다.
+
+현재 코드의 OpenAPI에는 위 11개 경로와 13개 메서드가 등록되어 있다. 로그아웃과 고객 refresh는 신규 앱에서 POST를 사용하고, 기존 앱 호환을 위해 같은 경로의 GET도 허용한다. 외부 전달 기본 URL은 `https://na-dree.com`이며, 실행 중인 명세는 `/docs`, `/redoc`, `/openapi.json`에서 확인한다. PayPal 웹훅 `POST /nadreego/paypal/webhook`은 PayPal 서버가 호출하는 관리자 API 경로이므로 고객 앱이 호출하지 않는다.
 
 차량 상세 조회 API는 별도로 만들지 않는다. 검색 응답의 `price.pricingTiers`에 해당 모델에 적용된 배기량 요금 티어를 함께 넣어 한 번의 조회로 지점·모델·가격·티어를 확인하도록 한다.
 
@@ -823,6 +825,7 @@ PayPal 캡처가 진행 중인 `PENDING` 결제는 환불할 수 없으므로 `P
 - 예약 요청은 `MSP_RESERVATION.required_criteria_json`에 최초 가용성 조회 조건과 서버 검증 가격을 함께 저장한다.
 - 결제 API는 기존 `MSP_RENTAL_PAYMENT`에 예약별 결제 시도를 저장하고, PayPal 주문·캡처 ID와 서버 확정 금액·통화를 연결한다. 결제 전용 새 테이블이나 예약 결제 상태 컬럼은 추가하지 않는다.
 - PayPal 웹훅은 기존 `MSP_PAYPAL_WEBHOOK_EVENT`와 `/nadreego/paypal/webhook`을 사용해 결제 상태를 갱신한다.
+- PayPal 웹훅은 `paypal-transmission-time`이 현재 시각 기준 ±5분 이내인지 먼저 확인하고, PayPal 서명 검증을 통과한 뒤 처리한다. Redis가 설정된 운영 환경에서는 동일한 환경의 처리 중 이벤트를 30초, 검증 완료 payload digest를 15분 동안 잠가 재전송을 빠르게 차단한다. 최종 중복 방지는 `MSP_PAYPAL_WEBHOOK_EVENT.webhook_event_id`의 DB 고유 제약으로 수행하므로 Redis 장애만으로 이벤트를 성공 처리하지 않는다.
 - 관리자·고객 FCM 토큰은 앱이 전달한 최신 값을 저장하고 응답·로그에 노출하지 않는다. 예약 요청은 관리자에게, 승인·거절은 고객에게, 결제 확정은 관리자와 고객에게 커밋 후 FCM으로 전달한다. 알림 큐 테이블이나 Firebase 데이터베이스는 사용하지 않으며, 발송 실패는 업무 트랜잭션을 되돌리지 않는다.
 - 기존 `MSP_DRIVER`, `MSP_DRIVER_SPOT_HISTORY`의 컬럼·인덱스·데이터는 변경하지 않는다.
 - UID와 access token은 평문 로그에 남기지 않으며, 사용자 응답에는 필요한 프로필만 포함한다.
@@ -843,8 +846,9 @@ PayPal 캡처가 진행 중인 `PENDING` 결제는 환불할 수 없으므로 `P
 10. MVP에서는 관리자 예약 승인 대기시간을 두지 않는다. 예약 요청은 승인 또는 거절될 때까지 유지하고, 새 요청의 `hold_expires_at`은 `NULL`로 저장한다. 관리자가 승인하면 승인 시각부터 3일의 결제 기한을 시작하며, 2일·1일 남은 시점에 알림을 보낸다. 기한 내 완료 결제가 없고 진행 중인 PayPal `PENDING` 캡처도 없으면 예약을 `EXPIRED`로 종료하고 고객에게 취소 알림을 보낸다. 기존 컬럼은 하위 호환을 위해 유지한다.
 11. 관리자·고객 FCM 토큰 저장과 예약 요청·승인/거절·결제 기한 알림·결제 확정 FCM 발송은 구현되어 있다. 새 Firebase 프로젝트 서비스 계정과 운영 앱 토큰을 등록한 뒤 Sandbox에서 수신을 확인한다. 발송은 커밋 후 best-effort이며 일시 오류는 최대 5회·1시간 범위로 제한 재시도하고, 만료 토큰만 자동 삭제한다.
 12. PayPal 주문 생성·캡처 API의 Sandbox와 Live 자격증명, Webhook ID, USD 수취 계정 ID를 환경별로 등록한다.
-13. 결제 완료 후에도 관리자 승인을 별도로 유지할지 확인한다. 현재 설계는 결제와 예약 승인을 분리한다.
-14. 완료 목록은 현재 `RETURNED` 렌트만 포함하고, 실제 렌트 없이 종료된 `CANCELED`·`REJECTED`·`EXPIRED` 예약은 제외한다. 종료된 예약 요청도 사용자에게 보여줄 필요가 있으면 별도 범위를 확정한다.
-15. 진행·완료 목록의 기본 페이지 크기(현재 20)와 최대 페이지 크기(현재 100)를 앱 요구사항에 맞춰 확정한다.
-16. 고객 refresh token의 절대 수명은 관리자와 같은 기본 30일이며, 한 UID의 동시 기기 세션을 1개로 제한한다.
-17. `python -m app.jobs maintenance|payments|inventory|all`을 운영 작업 소유자가 실행한다. 발리 현지 종료일 다음 날 정비를 해제하고, 승인 시각 기준 3일 결제 기한 알림·미결제 예약 만료와 180일 일별 재고를 재계산한다.
+13. 관리자 차량 위치 API는 위치용 Firestore의 `driving/{sensor_code}` 문서에서 `g.geopoint`를 읽는다. `NADREE_FIRESTORE_PROJECT` 또는 `NADREE_LOCATION_FIREBASE_*` 서비스 계정 블록을 설정하고, FCM 발송용 `NADREE_FCM_*` 프로젝트와 분리한다. 문서가 없거나 좌표가 유효하지 않으면 위치 오류를 반환한다.
+14. 결제 완료 후에도 관리자 승인을 별도로 유지할지 확인한다. 현재 설계는 결제와 예약 승인을 분리한다.
+15. 완료 목록은 현재 `RETURNED` 렌트만 포함하고, 실제 렌트 없이 종료된 `CANCELED`·`REJECTED`·`EXPIRED` 예약은 제외한다. 종료된 예약 요청도 사용자에게 보여줄 필요가 있으면 별도 범위를 확정한다.
+16. 진행·완료 목록의 기본 페이지 크기(현재 20)와 최대 페이지 크기(현재 100)를 앱 요구사항에 맞춰 확정한다.
+17. 고객 refresh token의 절대 수명은 관리자와 같은 기본 30일이며, 한 UID의 동시 기기 세션을 1개로 제한한다.
+18. `python -m app.jobs maintenance|payments|inventory|all`을 운영 작업 소유자가 실행한다. 발리 현지 종료일 다음 날 정비를 해제하고, 승인 시각 기준 3일 결제 기한 알림·미결제 예약 만료와 180일 일별 재고를 재계산한다.

@@ -2,7 +2,7 @@
 
 작성일: 2026-09-14. 대상: 독립 `nadree api` 서버. 상위 검토 문서 번호가 아니라 구현 작업 그룹 W00~W02다.
 
-최종 수정일: 2026-09-21.
+최종 수정일: 2026-09-28.
 
 ## 완료 표시와 요약
 
@@ -50,7 +50,7 @@
 | DB·날짜 공통 코드 | **완료** | 트랜잭션·롤백·스키마 조회, UTC 저장·발리 영업 날짜의 로컬 검증. 실제 MySQL 연결·행 잠금 검증은 별도 |
 | 인증·권한·오류 공통 코드 | **완료** | JWT·현재 DB 세션·역할·지점 범위 검사와 오류 응답의 로컬 검증. MFA 연동·기존 서버 회귀는 별도 |
 | 이번 범위의 마이그레이션 준비 | **완료** | 관리자 FCM 2컬럼·기존 phone VARCHAR(200) 확장·MSP_SPOT_RENT 8컬럼·MSP_RENTAL_ADMIN_REQUEST 8컬럼·렌탈 역할 행·고객 refresh token 테이블에 대한 적용 도구·SQL·읽기 전용 계획 테스트. 알림 큐 테이블은 제외하며 렌탈 18테이블 전체 마이그레이션 완료를 뜻하지 않음 |
-| 로컬 자동 테스트·명세 대조 | **완료** | 145개 테스트 통과, 기존 15개 API와 관리자 가입 접수 경로의 구현·응답 검증 통과 |
+| 로컬 자동 테스트·명세 대조 | **완료** | 149개 테스트 통과·6개 선택 테스트 건너뜀, 기존 15개 API와 관리자 가입 접수 경로의 구현·응답 검증 통과. PayPal 웹훅 재전송 방어도 포함 |
 | 실제 서비스 연동·운영 준비 | **대기** | MySQL·Redis·SMTP, 마이그레이션 적용/재적용, MFA·앱·기존 서버 연결 및 운영 DB 적용 미완료 |
 
 ## 이번 사용자 결정
@@ -119,7 +119,7 @@
 
 ## 검증 결과
 
-- **완료 (로컬 자동 테스트)**: 2026-09-21 재검증, `python -m pytest -q` 기준 **145 passed, 6 skipped**, SQLite·대역 기반 검증 통과. 관리자 가입 접수·하위지점 초대 소비·정비 만료·승인 후 결제 기한 알림·미결제 예약 만료·일별 재고 재실행을 포함한다. 관리자 3세션 상한·고객 access/refresh token 회전·로그아웃 폐기, 관리자·고객 refresh token 분리, 앱 FCM 토큰 저장·로그아웃 보존, 프로필 코드 검증과 기존 phone·샵 저장도 포함한다.
+- **완료 (로컬 자동 테스트)**: 2026-09-28 재검증, `python -m pytest -q` 기준 **149 passed, 6 skipped**, SQLite·대역 기반 검증 통과. 관리자 가입 접수·하위지점 초대 소비·정비 만료·승인 후 결제 기한 알림·미결제 예약 만료·일별 재고 재실행·PayPal 웹훅 재전송 방어를 포함한다. 관리자 3세션 상한·고객 access/refresh token 회전·로그아웃 폐기, 관리자·고객 refresh token 분리, 앱 FCM 토큰 저장·로그아웃 보존, 프로필 코드 검증과 기존 phone·샵 저장도 포함한다.
 - **완료 (명세 대조)**: `scripts/validate_w02_spec.py`로 W01·W02 15개 경로·Method·응답 예시의 MD·엑셀 일치 및 의존성 33개 버전 고정 확인.
 - MySQL 동시성 6개 테스트는 별도 테스트 DB 미설정으로 skip. 기존 4개에 동일 신청 승인/거절 경합·동일 계정의 서로 다른 지점 동시 승인 2개를 추가했다. 이전 확인 시 로컬 MySQL 9.2 실행 파일은 `libabsl_bad_optional_access.2407.0.0.dylib` 누락으로 실행되지 않았다. 시스템 라이브러리·기존 DB를 임의 변경하지 않았다.
 - 실제 Redis Lua 실행·SMTP 전달·MFA·기존 서버 회귀·운영 앱 연결은 미검증. SQLite 테스트를 MySQL 행 잠금 검증으로 대체하지 않는다.
@@ -141,4 +141,4 @@ MySQL 테스트는 빈 전용 DB에만 실행한다. 아래 환경 변수는 운
 - [SQLAlchemy Session](https://docs.sqlalchemy.org/en/20/orm/session_basics.html): 트랜잭션 경계.
 - [MySQL 격리 수준](https://dev.mysql.com/doc/refman/8.4/en/innodb-transaction-isolation-levels.html), [named lock](https://dev.mysql.com/doc/refman/8.4/en/locking-functions.html): DB 동시성 구현 근거.
 
-업무 입력·응답 정본은 상위 MD·엑셀이며 이 문서는 새 서버의 구현 상태와 제약을 기록한다. W03 이후 기능을 이번에 구현한 것으로 표시하지 않는다.
+업무 입력·응답 정본은 상위 MD·엑셀·[나드리 고객 API 정본](nadri-user-api-design.md)이며 이 문서는 W00~W02 구현 상태와 제약을 기록한다. W03 이후 구현 상태는 [API 작업 구분](api-work-groups.md)을 따른다.

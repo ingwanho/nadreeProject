@@ -11,6 +11,7 @@ from app.errors import Problem, install_handlers
 from app.fcm import FcmSender
 from app.management import router as management_router
 from app.mail import PasswordMailer
+from app.locations import VehicleLocations
 from app.delivery import router as delivery_router
 from app.paypal import PayPalClient, router as paypal_router
 from app.customer_rentals import router as customer_rentals_router, user_router as customer_users_router
@@ -37,7 +38,7 @@ OPENAPI_TAGS = [
 ]
 
 
-def create_app(settings=None, db=None, limiter=None, mailer=None, fcm=None):
+def create_app(settings=None, db=None, limiter=None, mailer=None, fcm=None, locations=None):
     settings = settings or Settings()
     if settings.env == "production" and (len(settings.jwt_secret.get_secret_value().encode()) < 32
                                          or not settings.database_url.get_secret_value()
@@ -56,6 +57,9 @@ def create_app(settings=None, db=None, limiter=None, mailer=None, fcm=None):
         close_fcm = getattr(app.state.fcm, "close", None)
         if close_fcm is not None:
             close_fcm()
+        close_locations = getattr(app.state.locations, "close", None)
+        if close_locations is not None:
+            close_locations()
 
     application = FastAPI(
         title="Nadree API",
@@ -73,6 +77,7 @@ def create_app(settings=None, db=None, limiter=None, mailer=None, fcm=None):
     application.state.limiter = limiter or RateLimiter(settings.redis_url.get_secret_value())
     application.state.mailer = mailer or PasswordMailer(settings)
     application.state.fcm = fcm or FcmSender(settings)
+    application.state.locations = locations or VehicleLocations(settings)
     application.state.paypal = PayPalClient(settings)
     install_handlers(application)
 

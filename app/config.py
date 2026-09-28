@@ -23,7 +23,19 @@ class Settings(BaseSettings):
     qr_hash_key: SecretStr = SecretStr("")
     availability_timeout_seconds: float = Field(default=2.0, gt=0, le=10)
     firestore_project: str = ""
-    # FCM uses a separate Firebase project from vehicle-location reads.
+    # Vehicle-location credentials are separate from the FCM project below.
+    location_firebase_credential_type: str = "service_account"
+    location_firebase_project_id: str = ""
+    location_firebase_private_key_id: str = ""
+    location_firebase_private_key: SecretStr = SecretStr("")
+    location_firebase_client_email: str = ""
+    location_firebase_client_id: str = ""
+    location_firebase_auth_uri: str = "https://accounts.google.com/o/oauth2/auth"
+    location_firebase_token_uri: str = "https://oauth2.googleapis.com/token"
+    location_firebase_auth_provider_x509_cert_url: str = "https://www.googleapis.com/oauth2/v1/certs"
+    location_firebase_client_x509_cert_url: str = ""
+    location_firebase_universe_domain: str = "googleapis.com"
+    location_firebase_database_url: str = ""
     fcm_credential_type: str = "service_account"
     fcm_project_id: str = ""
     fcm_private_key_id: str = ""

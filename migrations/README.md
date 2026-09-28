@@ -17,8 +17,11 @@ DB 계획 v2.24는 지점 소개·연락 이메일 2컬럼과 기존 관리자 p
 | 11 | PayPal 환불 상태 | [004_payment_refund.sql](004_payment_refund.sql)로 결제 행에 환불 요청·환불 ID·환불 상태를 저장 |
 | 13 | 나드리 로그아웃 토큰 폐기 시각 | [006_rental_user_logout.sql](006_rental_user_logout.sql)로 고객 access token 폐기 시각을 저장. FCM 토큰은 보존 |
 | 14 | 나드리 고객 refresh token | [008_rental_user_refresh_token.sql](008_rental_user_refresh_token.sql)로 관리자 토큰과 분리된 고객 세션을 저장. UID별 활성 토큰은 1개이며 로그인·갱신 시 이전 토큰을 폐기 |
+| 15 | 렌탈 조회 복합 인덱스 | `MSP_VEHICLE_SPOT_HISTORY`, `MSP_RESERVATION`, `MSP_RENTAL_CONTRACT`에 캘린더·차량 가용성 조회용 인덱스를 없을 때만 추가 |
 
 기존 001·002 SQL은 수정하지 않는다. `app.migrate`가 신규 생성/이미 생성된 DB 모두를 검사하여 필요한 ALTER만 실행 계획에 추가한다. 소개·이메일 중 하나만 존재해도 나머지만 추가한다. 기존 phone의 NULL 여부·문자셋·collation·설명은 SQLAlchemy MySQL DDL 생성으로 유지하며, 특수 기본값/생성 컬럼 또는 예상과 다른 타입은 수동 검토를 요구한다. 기존 데이터 변환·재암호화·평문 저장은 하지 않는다. 실제 MySQL에서의 적용/재적용은 별도 검증한다.
+
+복합 인덱스는 API 결과나 예약 규칙을 변경하지 않는다. `MSP_VEHICLE_SPOT_HISTORY`에는 현재 지점 차량 조회용 `idx_vehicle_spot_current(spot_master_id, released_at, vehicle_id)`, `MSP_RESERVATION`에는 전체 모델 캘린더용 `idx_reservation_calendar(spot_master_id, reservation_status, start_datetime, model_id)`, `MSP_RENTAL_CONTRACT`에는 지점·차량별 계약 조회용 `idx_rental_contract_calendar(pickup_spot_master_id, vehicle_id, contract_status, actual_start_time, actual_end_time)`를 추가한다. 기존 `ix_reservation_availability(spot_master_id, model_id, reservation_status, start_datetime)`는 모델 지정 가용성 계산용으로 유지한다. 같은 컬럼 순서의 인덱스가 다른 이름으로 이미 있으면 추가하지 않으며, 같은 이름에 다른 컬럼 구성이 있으면 자동 적용을 중단하고 수동 검토를 요구한다.
 
 기존 DB에 `MSP_RENTAL_NOTIFICATION`이 이미 생성되어 있다면 이 계획은 자동 삭제하지 않는다. 백업과 사용 여부를 확인한 뒤 DB 담당자가 별도 `DROP TABLE` 절차로 제거해야 한다.
 

@@ -34,6 +34,72 @@ def test_migration_plan_is_read_only_and_idempotent_after_expected_changes(setup
     assert migration_plan(setup["db"]) == []
 
 
+def test_migration_plan_adds_rental_performance_indexes_once(setup):
+    with setup["engine"].begin() as conn:
+        conn.execute(text("""
+            CREATE TABLE MSP_VEHICLE_SPOT_HISTORY (
+                history_id INTEGER PRIMARY KEY,
+                vehicle_id VARCHAR(36) NOT NULL,
+                spot_master_id VARCHAR(36) NOT NULL,
+                released_at DATETIME
+            )
+        """))
+        conn.execute(text("""
+            CREATE TABLE MSP_RESERVATION (
+                reservation_id VARCHAR(50) PRIMARY KEY,
+                spot_master_id VARCHAR(36) NOT NULL,
+                model_id VARCHAR(50) NOT NULL,
+                reservation_status VARCHAR(20) NOT NULL,
+                start_datetime DATETIME NOT NULL
+            )
+        """))
+        conn.execute(text("""
+            CREATE TABLE MSP_RENTAL_CONTRACT (
+                rental_contract_id VARCHAR(50) PRIMARY KEY,
+                pickup_spot_master_id VARCHAR(36) NOT NULL,
+                vehicle_id VARCHAR(36) NOT NULL,
+                contract_status VARCHAR(20) NOT NULL,
+                actual_start_time DATETIME,
+                actual_end_time DATETIME
+            )
+        """))
+
+    plan = migration_plan(setup["db"])
+    labels = {label for label, _, _ in plan}
+    expected = {
+        "index MSP_VEHICLE_SPOT_HISTORY.idx_vehicle_spot_current",
+        "index MSP_RESERVATION.idx_reservation_calendar",
+        "index MSP_RENTAL_CONTRACT.idx_rental_contract_calendar",
+    }
+    assert expected.issubset(labels)
+
+    with setup["engine"].begin() as conn:
+        conn.execute(text("CREATE INDEX idx_admin_fcm_token ON MSP_ADMIN (fcm_token)"))
+        for label, sql, params in plan:
+            if label in expected:
+                conn.execute(text(sql), params)
+
+    remaining = {label for label, _, _ in migration_plan(setup["db"])}
+    assert not expected & remaining
+
+
+def test_migration_plan_rejects_conflicting_performance_index(setup):
+    with setup["engine"].begin() as conn:
+        conn.execute(text("""
+            CREATE TABLE MSP_VEHICLE_SPOT_HISTORY (
+                history_id INTEGER PRIMARY KEY,
+                vehicle_id VARCHAR(36) NOT NULL,
+                spot_master_id VARCHAR(36) NOT NULL,
+                released_at DATETIME
+            )
+        """))
+        conn.execute(text(
+            "CREATE INDEX idx_vehicle_spot_current ON MSP_VEHICLE_SPOT_HISTORY (vehicle_id)"))
+
+    with pytest.raises(ValueError, match="idx_vehicle_spot_current has an incompatible definition"):
+        migration_plan(setup["db"])
+
+
 def test_missing_role_has_seed_plan_but_is_not_written(setup):
     roles = setup["db"].table("MSP_ROLE")
     with setup["engine"].begin() as conn:

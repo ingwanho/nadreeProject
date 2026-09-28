@@ -72,13 +72,17 @@ def rows(session, table, *where):
     return [dict(r) for r in session.execute(select(table).where(*where)).mappings()]
 
 
-def fleet(request, session, spot, *, model_id=None, lock=False):
+def fleet(request, session, spot, *, model_id=None, vehicle_ids=None, lock=False):
     db = request.app.state.db
     v, rv, h = (db.table(n) for n in ("MSP_VEHICLE", "MSP_RENTAL_VEHICLE", "MSP_VEHICLE_SPOT_HISTORY"))
+    if vehicle_ids is not None and not vehicle_ids:
+        return {}
     q = select(v).join(rv, rv.c.vehicle_id == v.c.vehicle_id).join(h, h.c.vehicle_id == v.c.vehicle_id).where(
         h.c.spot_master_id == spot["spot_master_id"], h.c.released_at.is_(None)).order_by(v.c.vehicle_id)
     if model_id:
         q = q.where(rv.c.model_id == model_id)
+    if vehicle_ids is not None:
+        q = q.where(v.c.vehicle_id.in_(vehicle_ids))
     vehicles = list(session.execute(q.with_for_update() if lock else q).mappings())
     ids = [v["vehicle_id"] for v in vehicles]
     if not ids:

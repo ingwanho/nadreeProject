@@ -172,3 +172,46 @@ def test_nadri_reservation_payment_checkout_and_return(setup, signin):
     completed = client.get("/api/v1/nadree/rental/completed", headers=customer_headers)
     assert completed.status_code == 200, completed.text
     assert completed.json()["totalCount"] == 1
+
+
+def test_calendar_pages_vehicle_details_before_loading_events(setup, signin):
+    tables = prepare_rental_schema(setup)
+    at = now()
+    with setup["engine"].begin() as conn:
+        for model_id, name in [("model-a", "Alpha"), ("model-b", "Beta")]:
+            conn.execute(tables["MSP_VEHICLE_MODEL"].insert().values(
+                model_id=model_id, brand="Nadree", model_name=name, cc=125,
+                vehicle_type="SCOOTER", is_delivery_supported=0, is_active=1,
+                created_at=at, updated_at=at))
+        for vehicle_id, model_id, plate in [
+            ("vehicle-a", "model-a", "A-100"), ("vehicle-b", "model-b", "B-200")]:
+            conn.execute(tables["MSP_RENTAL_VEHICLE"].insert().values(
+                vehicle_id=vehicle_id, model_id=model_id, plate_number_full=plate,
+                price_type="BASIC", rental_enabled=1, created_at=at, updated_at=at))
+            conn.execute(tables["MSP_VEHICLE"].insert().values(
+                vehicle_id=vehicle_id, plate_number=plate, is_active=1))
+            conn.execute(tables["MSP_VEHICLE_SPOT_HISTORY"].insert().values(
+                vehicle_id=vehicle_id, spot_master_id="root"))
+            conn.execute(tables["MSP_VEHICLE_STATUS"].insert().values(
+                vehicle_id=vehicle_id, status="AVAILABLE", status_changed_at=at,
+                created_at=at, updated_at=at))
+
+    headers = signin()
+    period = {"startDate": at.date().isoformat(), "endDate": (at.date() + timedelta(days=1)).isoformat()}
+    first = setup["client"].post("/nadreego/main/calendar", headers=headers,
+                                 json={**period, "page": 1, "pageSize": 1})
+    assert first.status_code == 200, first.text
+    assert first.json()["totalCount"] == 2
+    assert [item["vehicleId"] for item in first.json()["items"]] == ["vehicle-a"]
+
+    keyword = setup["client"].post("/nadreego/main/calendar", headers=headers,
+                                   json={**period, "page": 1, "pageSize": 10, "keyword": "beta"})
+    assert keyword.status_code == 200, keyword.text
+    assert keyword.json()["totalCount"] == 1
+    assert [item["vehicleId"] for item in keyword.json()["items"]] == ["vehicle-b"]
+
+    status = setup["client"].post("/nadreego/main/calendar", headers=headers,
+                                  json={**period, "page": 1, "pageSize": 1, "vehicleStatus": "AVAILABLE"})
+    assert status.status_code == 200, status.text
+    assert status.json()["totalCount"] == 2
+    assert [item["vehicleId"] for item in status.json()["items"]] == ["vehicle-a"]

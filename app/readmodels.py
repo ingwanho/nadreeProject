@@ -241,33 +241,71 @@ def operations(body: Operations, request: Request, session: Session = DB):
     return page_result(operation_details(request, session, root, records), body.page, body.pageSize, total)
 
 
+def calendar_vehicle_page(request, session, spot, body, keyword):
+    db = request.app.state.db
+    v, rv, h, model = (db.table(name) for name in
+                        ("MSP_VEHICLE", "MSP_RENTAL_VEHICLE", "MSP_VEHICLE_SPOT_HISTORY", "MSP_VEHICLE_MODEL"))
+    source = v.join(rv, rv.c.vehicle_id == v.c.vehicle_id).join(h, h.c.vehicle_id == v.c.vehicle_id).join(
+        model, model.c.model_id == rv.c.model_id)
+    query = select(v.c.vehicle_id).select_from(source).where(
+        h.c.spot_master_id == spot["spot_master_id"], h.c.released_at.is_(None))
+    if body.modelId:
+        query = query.where(rv.c.model_id == body.modelId)
+    if keyword:
+        vehicle_no = func.coalesce(func.nullif(rv.c.plate_number_full, ""), v.c.plate_number)
+        query = query.where(or_(func.lower(vehicle_no).contains(keyword, autoescape=True),
+                                func.lower(model.c.model_name).contains(keyword, autoescape=True)))
+    total = session.scalar(select(func.count()).select_from(query.order_by(None).subquery()))
+    offset = (body.page - 1) * body.pageSize
+    page = session.scalars(query.order_by(rv.c.model_id, v.c.vehicle_id).offset(offset).limit(body.pageSize)).all()
+    return total, page
+
+
 @router.post("/nadreego/main/calendar")
 def calendar(body: Calendar, request: Request, session: Session = DB):
     _, root = context(request, session)
     spot = resolve_spot(request, session, root, body.spotCode)
     at = now()
     begin, end = midnight(request, body.startDate), midnight(request, body.endDate)
-    vehicles = fleet(request, session, spot, model_id=body.modelId)
     db = request.app.state.db
-    ct = db.table("MSP_RENTAL_CONTRACT")
-    contracts = rows(session, ct, ct.c.vehicle_id.in_(vehicles), ct.c.pickup_spot_master_id == spot["spot_master_id"]) if vehicles else []
     keyword = (body.keyword or "").strip().casefold()
-    selected = []
-    for ident, item in vehicles.items():
-        view = vehicle_view(request, item, contracts)
-        if body.vehicleStatus and view["vehicleStatus"] != body.vehicleStatus:
-            continue
-        if keyword and not any(keyword in str(view.get(key) or "").casefold() for key in ("vehicleNo", "modelName")):
-            continue
-        selected.append(ident)
-    selected.sort(key=lambda k: (vehicles[k]["rental"]["model_id"], k))
-    total = len(selected)
-    selected = selected[(body.page - 1) * body.pageSize:body.page * body.pageSize]
+    if body.vehicleStatus:
+        # Effective status depends on open contracts and maintenance dates, so retain
+        # the full in-memory evaluation for this filtered path.
+        vehicles = fleet(request, session, spot, model_id=body.modelId)
+        ct = db.table("MSP_RENTAL_CONTRACT")
+        contracts = rows(session, ct, ct.c.vehicle_id.in_(vehicles),
+                         ct.c.pickup_spot_master_id == spot["spot_master_id"]) if vehicles else []
+        selected = []
+        for ident, item in vehicles.items():
+            view = vehicle_view(request, item, contracts)
+            if view["vehicleStatus"] != body.vehicleStatus:
+                continue
+            if keyword and not any(keyword in str(view.get(key) or "").casefold() for key in ("vehicleNo", "modelName")):
+                continue
+            selected.append(ident)
+        selected.sort(key=lambda k: (vehicles[k]["rental"]["model_id"], k))
+        total = len(selected)
+        selected = selected[(body.page - 1) * body.pageSize:body.page * body.pageSize]
+    else:
+        # The common calendar path only needs one page of vehicle details. The
+        # SQL candidate query preserves the existing model/keyword sort and count.
+        total, selected = calendar_vehicle_page(request, session, spot, body, keyword)
+        vehicles = fleet(request, session, spot, model_id=body.modelId, vehicle_ids=selected)
+        ct = db.table("MSP_RENTAL_CONTRACT")
+        contracts = rows(session, ct, ct.c.vehicle_id.in_(vehicles),
+                         ct.c.pickup_spot_master_id == spot["spot_master_id"],
+                         or_(ct.c.actual_end_time.is_(None), ct.c.actual_end_time >= begin),
+                         or_(ct.c.actual_start_time.is_(None), ct.c.actual_start_time < end)) if vehicles else []
     rt = db.table("MSP_RESERVATION")
     conditions = [rt.c.spot_master_id == spot["spot_master_id"], rt.c.start_datetime < end,
+                  rt.c.end_datetime >= begin,
                   rt.c.reservation_status.in_(["REQUESTED", "APPROVED", "HANDED_OVER", "RETURNED"])]
     if body.modelId:
         conditions.append(rt.c.model_id == body.modelId)
+    elif not body.vehicleStatus:
+        page_models = {vehicles[ident]["rental"]["model_id"] for ident in selected}
+        conditions.append(or_(rt.c.assigned_vehicle_id.in_(selected), rt.c.model_id.in_(page_models)))
     reservations = rows(session, rt, *conditions)
     events, warnings = defaultdict(list), []
     by_reservation = {c["reservation_id"]: c for c in contracts if c["reservation_id"]}

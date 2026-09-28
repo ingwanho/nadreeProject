@@ -13,6 +13,23 @@ from app.schema_check import REQUIRED
 from app.security import GENERAL, PRIMARY
 
 
+PERFORMANCE_INDEXES = {
+    # Calendar and vehicle-location reads first narrow to the active spot membership.
+    "MSP_VEHICLE_SPOT_HISTORY": [
+        ("idx_vehicle_spot_current", ("spot_master_id", "released_at", "vehicle_id")),
+    ],
+    # Keep ix_reservation_availability for model-specific assignment. This order serves
+    # the calendar path when all models at a spot are requested.
+    "MSP_RESERVATION": [
+        ("idx_reservation_calendar", ("spot_master_id", "reservation_status", "start_datetime", "model_id")),
+    ],
+    "MSP_RENTAL_CONTRACT": [
+        ("idx_rental_contract_calendar", (
+            "pickup_spot_master_id", "vehicle_id", "contract_status", "actual_start_time", "actual_end_time")),
+    ],
+}
+
+
 def migration_plan(db):
     inspector = inspect(db.engine)
     tables = set(inspector.get_table_names())
@@ -113,6 +130,27 @@ def migration_plan(db):
         if any(index["name"] == "idx_admin_fcm_token" for index in indexes):
             raise ValueError("idx_admin_fcm_token has an incompatible definition")
         operations.append(("index MSP_ADMIN.fcm_token", "CREATE INDEX idx_admin_fcm_token ON MSP_ADMIN (fcm_token)", {}))
+    for table_name, definitions in PERFORMANCE_INDEXES.items():
+        if table_name not in tables:
+            continue
+        table_columns = {column["name"] for column in inspector.get_columns(table_name)}
+        required_columns = {column for _, columns in definitions for column in columns}
+        missing_columns = required_columns - table_columns
+        if missing_columns:
+            raise ValueError(table_name + " missing performance index columns: " + ", ".join(sorted(missing_columns)))
+        reflected = inspector.get_indexes(table_name)
+        by_columns = {tuple(index.get("column_names") or ()): index["name"] for index in reflected}
+        by_name = {index["name"]: tuple(index.get("column_names") or ()) for index in reflected}
+        for index_name, columns in definitions:
+            if columns in by_columns:
+                continue
+            if index_name in by_name:
+                raise ValueError(index_name + " has an incompatible definition")
+            operations.append((
+                "index " + table_name + "." + index_name,
+                "CREATE INDEX " + index_name + " ON " + table_name + " (" + ", ".join(columns) + ")",
+                {},
+            ))
     role_table = db.table("MSP_ROLE")
     with db.engine.connect() as conn:
         rows = {row["role_code"]: row for row in conn.execute(select(role_table)).mappings()}
