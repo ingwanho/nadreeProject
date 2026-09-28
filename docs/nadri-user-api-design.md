@@ -1,7 +1,7 @@
 # 나드리 고객 사용자 API 정본
 
 최종 수정일: 2026-09-28
-상태: **고객 API 11개 경로·13개 메서드 구현 및 로컬 검증 완료, 외부 PayPal·FCM 수신과 운영 앱·DB 통합 확인 대기**
+상태: **고객 API 12개 경로·14개 메서드 구현 및 로컬 검증 완료, 외부 PayPal·FCM 수신과 운영 앱·DB 통합 확인 대기**
 
 이 문서는 관리자 앱인 나드리고 API와 분리된 **나드리 고객 앱 전용 사용자 API** 설계다. 기존 RiderLog의 운전자 기능과 `MSP_DRIVER` 및 운전자 관련 테이블은 이 API에서 조회하거나 변경하지 않는다. 사용자 프로필은 독립적인 `MSP_RENTAL_USER`에, 인증 세션은 `MSP_RENTAL_USER_REFRESH_TOKEN`에 기록한다.
 
@@ -15,15 +15,16 @@
 | 4 | `POST /api/v1/nadree/rental/request` | 선택한 지점·모델·기간·가격·배송정보로 예약 요청 생성 |
 | 5 | `POST /api/v1/nadree/rental/payment/order` | 생성된 예약의 서버 확정 금액으로 PayPal 주문 생성 |
 | 6 | `POST /api/v1/nadree/rental/payment/capture` | 고객 승인 후 PayPal 주문 캡처 요청 및 결제 상태 반환 |
-| 7 | `GET /api/v1/nadree/rental/ongoing` | 현재 진행 중인 렌트·예약 목록 조회 |
-| 8 | `GET /api/v1/nadree/rental/completed` | 반납 완료된 렌트 목록 조회 |
-| 9 | `POST /api/v1/nadree/rental/request/cancel` | 결제 전 예약 요청 취소 |
-| 10 | `POST /api/v1/nadree/user/logout` | 고객 access·refresh token 폐기. GET도 호환 지원 |
-| 11 | `POST /api/v1/nadree/user/refresh` | 고객 refresh token 회전 및 access token 재발급. GET도 호환 지원 |
+| 7 | `GET /api/v1/nadree/rental/payment/{paymentId}` | 응답 유실 후 본인 결제 상태 복구 조회 |
+| 8 | `GET /api/v1/nadree/rental/ongoing` | 현재 진행 중인 렌트·예약 목록 조회 |
+| 9 | `GET /api/v1/nadree/rental/completed` | 반납 완료된 렌트 목록 조회 |
+| 10 | `POST /api/v1/nadree/rental/request/cancel` | 결제 전 예약 요청 취소 |
+| 11 | `POST /api/v1/nadree/user/logout` | 고객 access·refresh token 폐기. GET도 호환 지원 |
+| 12 | `POST /api/v1/nadree/user/refresh` | 고객 refresh token 회전 및 access token 재발급. GET도 호환 지원 |
 
 URL은 나드리고 관리자 API의 `/nadreego/admin/*`와 충돌하지 않도록 `/nadree/user/*`와 `/nadree/rental/*` 네임스페이스로 분리한다.
 
-현재 코드의 OpenAPI에는 위 11개 경로와 13개 메서드가 등록되어 있다. 로그아웃과 고객 refresh는 신규 앱에서 POST를 사용하고, 기존 앱 호환을 위해 같은 경로의 GET도 허용한다. 외부 전달 기본 URL은 `https://na-dree.com`이며, 실행 중인 명세는 `/docs`, `/redoc`, `/openapi.json`에서 확인한다. PayPal 웹훅 `POST /nadreego/paypal/webhook`은 PayPal 서버가 호출하는 관리자 API 경로이므로 고객 앱이 호출하지 않는다.
+현재 코드의 OpenAPI에는 위 12개 경로와 14개 메서드가 등록되어 있다. 로그아웃과 고객 refresh는 신규 앱에서 POST를 사용하고, 기존 앱 호환을 위해 같은 경로의 GET도 허용한다. 외부 전달 기본 URL은 `https://na-dree.com`이며, 실행 중인 명세는 `/docs`, `/redoc`, `/openapi.json`에서 확인한다. PayPal 웹훅 `POST /nadreego/paypal/webhook`은 PayPal 서버가 호출하는 관리자 API 경로이므로 고객 앱이 호출하지 않는다.
 
 차량 상세 조회 API는 별도로 만들지 않는다. 검색 응답의 `price.pricingTiers`에 해당 모델에 적용된 배기량 요금 티어를 함께 넣어 한 번의 조회로 지점·모델·가격·티어를 확인하도록 한다.
 
@@ -36,9 +37,9 @@ URL은 나드리고 관리자 API의 `/nadreego/admin/*`와 충돌하지 않도�
 | `Age` | `MSP_RENTAL_USER.age` | 정수 0~150 |
 | `GENDER` | `MSP_RENTAL_USER.gender` | `M`, `F`, `OTHER` 중 하나 |
 | `NATIONALITY` | `MSP_RENTAL_USER.nationality` | ISO 3166-1 alpha-2 대문자 두 글자(예: `KR`) |
-| `fcmToken` | `MSP_RENTAL_USER.fcm_token` | 앱이 발급한 최신 FCM 토큰. 선택 입력이며 갱신 시각도 저장 |
+| `fcmToken` | `MSP_RENTAL_USER.fcm_token` | 현재 기기의 최신 FCM 토큰 1개. 같은 계정에서 새 토큰을 보내면 이전 값을 교체하며 로그아웃 때 삭제하지 않음 |
 
-요청 필드의 대소문자는 앱 계약에 맞춰 위 표와 같이 유지한다. 응답은 기존 나드리 API 규칙에 맞춰 `uidToken`, `name`, `age`, `gender`, `nationality`를 사용한다.
+요청 필드의 대소문자는 앱 계약에 맞춰 위 표와 같이 유지한다. 응답은 기존 나드리 API 규칙에 맞춰 `uidToken`, `name`, `age`, `gender`, `nationality`를 사용한다. 지점 식별자는 `shopId`와 `spotMasterId`를 같은 영구 값으로 반환하고 `spotCode`는 표시용 `unit_code`다. 예약 식별자는 `bookingId`와 `reservationId`를 같은 값으로 반환하며 `bookedNo`는 화면 표시용 번호다. 예약이 없는 현장 렌트에는 `bookingId`가 `null`이고 `rentalContractId`·`bookedNo`를 사용한다.
 
 ## 3. API 1 — UID 로그인·신규 사용자 생성
 
@@ -53,7 +54,16 @@ URL은 나드리고 관리자 API의 `/nadreego/admin/*`와 충돌하지 않도�
 }
 ```
 
-헤더에는 `Content-Type: application/json`을 사용한다. 신규 생성 시 프로필 값은 함께 받지 않으며, API 2에서 별도로 갱신한다.
+헤더에는 다음을 사용한다.
+
+```http
+Authorization: Bearer <firebase-id-token>
+Content-Type: application/json
+```
+
+백엔드는 FCM과 동일한 Firebase 프로젝트의 Firebase Admin SDK로 ID Token을 검증한 뒤 토큰의 `uid`가 요청 body의 `UID`와 같은지 확인한다. 차량 위치용 Firebase 프로젝트는 사용하지 않는다. 이 검증이 끝난 뒤에만 `MSP_RENTAL_USER`를 조회·생성하고 Nadree 자체 access·refresh token을 발급한다. Firebase ID Token은 DB에 저장하지 않는다.
+
+신규 생성 시 프로필 값은 함께 받지 않으며, API 2에서 별도로 갱신한다. 개발·테스트 환경에서 고객 Firebase 설정이 없을 때만 기존 UID-only 요청을 허용하고, 운영 환경에서는 설정 누락 시 `CUSTOMER_FIREBASE_AUTH_NOT_CONFIGURED`로 로그인하지 않는다.
 
 ### 처리 규칙
 
@@ -571,7 +581,30 @@ MVP에서는 차량 조회 화면과 PayPal 청구 통화를 모두 `USD`로 고
 | 409 | `PAYPAL_ORDER_MISMATCH` | PayPal 주문과 내부 결제 금액·통화·환경 불일치 |
 | 503 | `PAYPAL_SERVICE_UNAVAILABLE` | PayPal 캡처 호출 실패 |
 
-## 9. API 7 — 진행 중 렌트·예약 목록 조회
+## 9. API 7 — 결제 상태 복구 조회
+
+### 요청
+
+`GET /api/v1/nadree/rental/payment/{paymentId}`
+
+```http
+Authorization: Bearer <nadri-user-access-token>
+```
+
+PayPal 주문·캡처 요청 뒤 앱이 종료되거나 네트워크 응답을 받지 못한 경우 호출한다. 서버는 현재 고객에게 연결된 결제 행만 반환한다. 결제 완료 여부는 `PAYMENT.CAPTURE.COMPLETED` 웹훅으로 갱신되므로, `PENDING`을 받은 앱은 잠시 후 이 API 또는 진행 목록을 다시 조회한다. 같은 `paymentId`로 주문·캡처를 임의로 새로 만들지 않는다.
+
+### 성공 응답
+
+응답은 API 5·6과 같은 `CustomerPayment` 형식이며, `paymentStatus`, `paypalOrderId`, `paypalCaptureId`, `refundStatus`, `bookingId`, `shopId`를 포함한다. `bookingId`는 `reservationId`와 동일한 예약 식별자이고 `shopId`는 `spotMasterId`와 동일한 지점 식별자다.
+
+### 오류
+
+| HTTP | 오류 코드 | 조건 |
+|---:|---|---|
+| 401 | `INVALID_NADRI_USER_TOKEN` | 고객 토큰 누락·위조·만료 |
+| 404 | `PAYMENT_NOT_FOUND` | 결제 건이 없거나 다른 고객의 결제 건 |
+
+## 10. API 8 — 진행 중 렌트·예약 목록 조회
 
 ### 요청
 
@@ -667,7 +700,7 @@ Authorization: Bearer <nadri-user-access-token>
 | 422 | `INVALID_PAGE_PARAMETER` | `page`·`pageSize`가 허용 범위를 벗어남 |
 | 503 | `RENTAL_HISTORY_UNAVAILABLE` | 예약·계약 목록 조회 불가 |
 
-## 10. API 8 — 완료된 렌트 목록 조회
+## 11. API 9 — 완료된 렌트 목록 조회
 
 ### 요청
 
@@ -763,9 +796,9 @@ Authorization: Bearer <nadri-user-access-token>
 | 422 | `INVALID_PAGE_PARAMETER` | `page`·`pageSize`가 허용 범위를 벗어남 |
 | 503 | `RENTAL_HISTORY_UNAVAILABLE` | 완료 렌트 목록 조회 불가 |
 
-## 11. 예약 취소와 환불
+## 12. 예약 취소와 환불
 
-### API 9 — 결제 전 예약 요청 취소
+### API 10 — 결제 전 예약 요청 취소
 
 `POST /api/v1/nadree/rental/request/cancel`
 
@@ -796,13 +829,13 @@ PayPal 캡처가 진행 중인 `PENDING` 결제는 환불할 수 없으므로 `P
 
 `MSP_RENTAL_PAYMENT`의 `refund_status`, `paypal_refund_id`, 요청 시각·관리자·사유 컬럼은 `migrations/004_payment_refund.sql`로 추가한다. PayPal 웹훅은 기존 `/nadreego/paypal/webhook`을 계속 사용한다. [PayPal 공식 이벤트 목록](https://developer.paypal.com/api/rest/webhooks/event-names/)
 
-## 12. API 10 — 나드리 사용자 로그아웃
+## 13. API 11 — 나드리 사용자 로그아웃
 
 `POST /api/v1/nadree/user/logout`을 사용한다. 기존 앱의 호환을 위해 같은 경로의 `GET`도 지원한다. access token은 항상 확인하며, `X-Refresh-Token`을 보낸 경우에는 access token과 쌍을 검증한 뒤 고객 refresh token을 폐기한다. refresh token을 생략한 기존 호출은 해당 UID의 활성 고객 refresh token을 모두 폐기한다. `MSP_RENTAL_USER.user_access_revoked_at`도 갱신해 해당 시각 이전에 발급된 고객 access token을 무효화한다. access token의 기본 유효시간은 1시간이다. 앱이 보낸 FCM 토큰은 `MSP_RENTAL_USER.fcm_token`에 보관하며 로그아웃 때 삭제하거나 변경하지 않는다.
 
 프로필 입력은 신규 가입 직후에도 API 2 `PATCH /api/v1/nadree/user/profile`을 그대로 사용한다. 로그아웃 오류 시 사용자 데이터나 FCM 토큰은 변경하지 않는다.
 
-## 13. API 11 — 고객 refresh token 갱신
+## 14. API 12 — 고객 refresh token 갱신
 
 `POST /api/v1/nadree/user/refresh`를 사용한다. 호환을 위해 같은 경로의 `GET`도 지원하며, `X-Refresh-Token` 헤더만 사용한다. 고객 토큰은 `nadri.rt.` 접두사를 사용하고 `MSP_RENTAL_USER_REFRESH_TOKEN`에서 해시로 조회한다.
 
@@ -818,7 +851,7 @@ PayPal 캡처가 진행 중인 `PENDING` 결제는 환불할 수 없으므로 `P
 
 관리자 refresh token은 기존 `MSP_REFRESH_TOKEN`에 저장하되 `user_agent=nadree-api/v1`로 이 서버 세션만 구분한다. 관리자 ID별 활성 세션은 최대 3개이며 네 번째 로그인 시 가장 오래된 활성 세션을 폐기한다. 고객 refresh token은 별도 `MSP_RENTAL_USER_REFRESH_TOKEN`에 저장한다.
 
-## 14. 저장·보안 원칙
+## 15. 저장·보안 원칙
 
 - API 1·2는 `MSP_RENTAL_USER`와 고객 refresh token 테이블을 사용한다. API 3·7·8은 렌탈 조회 테이블을 읽고, API 4는 `MSP_RESERVATION`을 생성한다.
 - `MSP_RENTAL_USER.uid_token`을 예약·계약의 논리 사용자 키로 사용한다.
@@ -826,13 +859,13 @@ PayPal 캡처가 진행 중인 `PENDING` 결제는 환불할 수 없으므로 `P
 - 결제 API는 기존 `MSP_RENTAL_PAYMENT`에 예약별 결제 시도를 저장하고, PayPal 주문·캡처 ID와 서버 확정 금액·통화를 연결한다. 결제 전용 새 테이블이나 예약 결제 상태 컬럼은 추가하지 않는다.
 - PayPal 웹훅은 기존 `MSP_PAYPAL_WEBHOOK_EVENT`와 `/nadreego/paypal/webhook`을 사용해 결제 상태를 갱신한다.
 - PayPal 웹훅은 `paypal-transmission-time`이 현재 시각 기준 ±5분 이내인지 먼저 확인하고, PayPal 서명 검증을 통과한 뒤 처리한다. Redis가 설정된 운영 환경에서는 동일한 환경의 처리 중 이벤트를 30초, 검증 완료 payload digest를 15분 동안 잠가 재전송을 빠르게 차단한다. 최종 중복 방지는 `MSP_PAYPAL_WEBHOOK_EVENT.webhook_event_id`의 DB 고유 제약으로 수행하므로 Redis 장애만으로 이벤트를 성공 처리하지 않는다.
-- 관리자·고객 FCM 토큰은 앱이 전달한 최신 값을 저장하고 응답·로그에 노출하지 않는다. 예약 요청은 관리자에게, 승인·거절은 고객에게, 결제 확정은 관리자와 고객에게 커밋 후 FCM으로 전달한다. 알림 큐 테이블이나 Firebase 데이터베이스는 사용하지 않으며, 발송 실패는 업무 트랜잭션을 되돌리지 않는다.
+- 관리자·고객 FCM 토큰은 앱이 전달한 현재 기기의 최신 값 1개를 저장하고 응답·로그에 노출하지 않는다. 예약 요청과 결제 확정은 해당 `spot_master_id` 지점에 직접 연결되거나 그 상위 지점 범위를 관리하는 활성 대표·일반관리자 전체에게, 승인·거절은 고객에게 커밋 후 FCM으로 전달한다. 같은 토큰이 관리자 수신자 목록에 중복되면 한 번만 발송한다. 알림 큐 테이블이나 Firebase 데이터베이스는 사용하지 않으며, 발송 실패는 업무 트랜잭션을 되돌리지 않는다.
 - 기존 `MSP_DRIVER`, `MSP_DRIVER_SPOT_HISTORY`의 컬럼·인덱스·데이터는 변경하지 않는다.
 - UID와 access token은 평문 로그에 남기지 않으며, 사용자 응답에는 필요한 프로필만 포함한다.
 - 신규 사용자는 로그인 시 UID 행만 생성하고, 프로필 입력은 API 2의 명시적 요청에서만 저장한다.
 - 고객 refresh token은 평문을 저장하지 않고 UID당 활성 토큰 1개만 유지한다. 로그인·갱신·로그아웃은 기존 고객 토큰을 조건부로 폐기한다.
 
-## 15. 운영 전 확인할 항목
+## 16. 운영 전 확인할 항목
 
 1. 앱이 실제로 보내는 필드명을 `UID`로 고정할지 `uid`로 변경할지 확정한다.
 2. MVP는 모든 예약·반납·정비 날짜를 발리 `Asia/Makassar` 시간대로 처리한다. 국가 확장 시 지점별 시간대·영업시간·휴무일을 추가 설계한다.
@@ -844,7 +877,7 @@ PayPal 캡처가 진행 중인 `PENDING` 결제는 환불할 수 없으므로 `P
 8. 렌트 요청의 `deliveryRequested=true`는 MVP에서 왕복 배송(`START_AND_RETURN`)으로 고정한다. 픽업 주소는 필수이고 반납 주소 입력은 선택이다.
 9. PREMIUM/BASIC 가격은 서버가 계산한 개별 `totalOptions` 중 하나만 접수한다. 화면의 범위 표시는 유지하지만 범위 사이 임의 금액은 거절한다.
 10. MVP에서는 관리자 예약 승인 대기시간을 두지 않는다. 예약 요청은 승인 또는 거절될 때까지 유지하고, 새 요청의 `hold_expires_at`은 `NULL`로 저장한다. 관리자가 승인하면 승인 시각부터 3일의 결제 기한을 시작하며, 2일·1일 남은 시점에 알림을 보낸다. 기한 내 완료 결제가 없고 진행 중인 PayPal `PENDING` 캡처도 없으면 예약을 `EXPIRED`로 종료하고 고객에게 취소 알림을 보낸다. 기존 컬럼은 하위 호환을 위해 유지한다.
-11. 관리자·고객 FCM 토큰 저장과 예약 요청·승인/거절·결제 기한 알림·결제 확정 FCM 발송은 구현되어 있다. 새 Firebase 프로젝트 서비스 계정과 운영 앱 토큰을 등록한 뒤 Sandbox에서 수신을 확인한다. 발송은 커밋 후 best-effort이며 일시 오류는 최대 5회·1시간 범위로 제한 재시도하고, 만료 토큰만 자동 삭제한다.
+11. 관리자·고객 FCM 토큰 저장과 예약 요청·승인/거절·결제 기한 알림·결제 확정 FCM 발송은 구현되어 있다. FCM과 고객 인증에 사용하는 Firebase 프로젝트의 서비스 계정과 운영 앱 토큰을 등록한 뒤 Sandbox에서 수신을 확인한다. 발송은 커밋 후 best-effort이며 일시 오류는 최대 5회·1시간 범위로 제한 재시도하고, 만료 토큰만 자동 삭제한다.
 12. PayPal 주문 생성·캡처 API의 Sandbox와 Live 자격증명, Webhook ID, USD 수취 계정 ID를 환경별로 등록한다.
 13. 관리자 차량 위치 API는 위치용 Firestore의 `driving/{sensor_code}` 문서에서 `g.geopoint`를 읽는다. `NADREE_FIRESTORE_PROJECT` 또는 `NADREE_LOCATION_FIREBASE_*` 서비스 계정 블록을 설정하고, FCM 발송용 `NADREE_FCM_*` 프로젝트와 분리한다. 문서가 없거나 좌표가 유효하지 않으면 위치 오류를 반환한다.
 14. 결제 완료 후에도 관리자 승인을 별도로 유지할지 확인한다. 현재 설계는 결제와 예약 승인을 분리한다.

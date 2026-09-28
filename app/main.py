@@ -9,6 +9,7 @@ from app.config import Settings
 from app.db import Database
 from app.errors import Problem, install_handlers
 from app.fcm import FcmSender
+from app.firebase_auth import CustomerFirebaseAuth
 from app.management import router as management_router
 from app.mail import PasswordMailer
 from app.locations import VehicleLocations
@@ -38,7 +39,7 @@ OPENAPI_TAGS = [
 ]
 
 
-def create_app(settings=None, db=None, limiter=None, mailer=None, fcm=None, locations=None):
+def create_app(settings=None, db=None, limiter=None, mailer=None, fcm=None, locations=None, customer_auth=None):
     settings = settings or Settings()
     if settings.env == "production" and (len(settings.jwt_secret.get_secret_value().encode()) < 32
                                          or not settings.database_url.get_secret_value()
@@ -77,6 +78,7 @@ def create_app(settings=None, db=None, limiter=None, mailer=None, fcm=None, loca
     application.state.limiter = limiter or RateLimiter(settings.redis_url.get_secret_value())
     application.state.mailer = mailer or PasswordMailer(settings)
     application.state.fcm = fcm or FcmSender(settings)
+    application.state.customer_auth = customer_auth or CustomerFirebaseAuth(settings)
     application.state.locations = locations or VehicleLocations(settings)
     application.state.paypal = PayPalClient(settings)
     install_handlers(application)
@@ -102,6 +104,8 @@ def create_app(settings=None, db=None, limiter=None, mailer=None, fcm=None, loca
             limitations = check_schema(application.state.db, connection)
         if not getattr(application.state.fcm, "configured", True):
             limitations.append("FCM_NOT_CONFIGURED")
+        if settings.env == "production" and not application.state.customer_auth.configured:
+            raise Problem(503, "CUSTOMER_FIREBASE_AUTH_NOT_CONFIGURED")
         sign_access(settings, "readiness", "readiness", 0)
         application.state.limiter.check_connection()
         application.state.mailer.check_configuration()

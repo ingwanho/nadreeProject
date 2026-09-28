@@ -4,6 +4,7 @@ from datetime import date, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 
 from fastapi import APIRouter, Depends, Query, Request
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import or_, select, update
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
@@ -18,13 +19,19 @@ from app.pricing import daily_price, load_tiers
 from app.rental_common import contracts_for, day_end, fleet, iso, local_date, lock_key, midnight
 from app.rental_inputs import (NadriAvailability, NadriLogin, NadriPaymentCapture,
                                NadriPaymentOrder, NadriProfile, NadriRentalRequest, ReservationCancel)
-from app.responses import Tokens
+from app.responses import (CustomerAvailability, CustomerCancellation, CustomerLogin,
+                           CustomerPage, CustomerPayment, CustomerProfileResult,
+                           CustomerRequest, Status, Tokens)
 from app.security import fingerprint, now, sign_user_access, user_principal
 
 router = APIRouter(prefix="/api/v1/nadree/rental", tags=["Nadree customer rentals"])
 user_router = APIRouter(prefix="/api/v1/nadree/user", tags=["Nadree customer users"])
 DB = Depends(transaction, scope="function")
 USER_REFRESH_PREFIX = "nadri.rt."
+firebase_id_token = HTTPBearer(auto_error=False, scheme_name="FirebaseIDToken",
+                               description="고객 로그인에 사용하는 Firebase ID Token")
+customer_access_token = HTTPBearer(auto_error=False, scheme_name="NadreeUserAccessToken",
+                                   description="로그인 후 Nadree가 발급한 고객 access token")
 
 
 def _db(request):
@@ -124,7 +131,8 @@ def _model(request, session, model_id):
 
 
 def _spot_view(spot):
-    return {"spotMasterId": spot["spot_master_id"], "unitCode": spot.get("unit_code"),
+    return {"shopId": spot["spot_master_id"], "spotMasterId": spot["spot_master_id"],
+            "spotCode": spot.get("unit_code"), "unitCode": spot.get("unit_code"),
             "spotName": spot.get("spot_name"), "phone": spot.get("phone"),
             "location": {"address": spot.get("address"), "zipCode": spot.get("zip_code"),
                          "latitude": float(spot["lat"]) if spot.get("lat") is not None else None,
@@ -357,12 +365,18 @@ def _record_view(request, reservation, contract, payment, spot, model):
     else:
         availability = "PAYMENT_REQUIRED" if reservation_status == "APPROVED" else pstatus
     delivery_type = (reservation or {}).get("delivery_request_type", "PICKUP")
+    reservation_id = (reservation or {}).get("reservation_id")
     return {"recordType": "RENTAL" if contract else "RESERVATION",
             "reservationId": (reservation or {}).get("reservation_id"),
+            # bookingId is the customer-app alias for the server reservation ID.
+            # Walk-in rentals have no booking ID and use bookedNo/rentalContractId.
+            "bookingId": reservation_id,
             "rentalContractId": (contract or {}).get("rental_contract_id"),
             "bookedNo": ("BO" + reservation["reservation_id"]) if reservation else ("RT" + contract["rental_contract_id"]),
             "reservationStatus": reservation_status, "rentalStatus": status,
             "vehicleAssignmentStatus": (reservation or {}).get("vehicle_assignment_status"),
+            "shopId": spot["spot_master_id"], "spotMasterId": spot["spot_master_id"],
+            "modelId": (reservation or {}).get("model_id") or (model or {}).get("model_id"),
             "paymentAvailability": availability, "spot": _spot_view(spot), "model": _model_view(model) if model else None,
             "startDate": local_date(request, start_value).isoformat() if start_value else None,
             "returnDate": return_date.isoformat() if isinstance(return_date, date) else None,
@@ -441,8 +455,11 @@ def _user_view(request, session, user):
             "gender": user.get("gender"), "nationality": user.get("nationality"), "ongoingRequests": items}
 
 
-@user_router.post("/login")
-def nadree_login(body: NadriLogin, request: Request, session: Session = DB):
+@user_router.post("/login", response_model=CustomerLogin)
+def nadree_login(body: NadriLogin, request: Request, session: Session = DB,
+                 credentials: HTTPAuthorizationCredentials | None = Depends(firebase_id_token)):
+    id_token = credentials.credentials if credentials is not None else None
+    request.app.state.customer_auth.verify_uid(body.UID, id_token)
     db = _db(request)
     table = db.table("MSP_RENTAL_USER")
     lock_key(session, "nadri-user", body.UID)
@@ -502,7 +519,8 @@ def nadree_refresh(request: Request, session: Session = DB):
             "refreshToken": new_raw}
 
 
-@user_router.patch("/profile")
+@user_router.patch("/profile", response_model=CustomerProfileResult,
+                   dependencies=[Depends(customer_access_token)])
 def nadree_profile(body: NadriProfile, request: Request, session: Session = DB):
     user = user_principal(request, session)
     fields = body.model_fields_set
@@ -523,8 +541,10 @@ def nadree_profile(body: NadriProfile, request: Request, session: Session = DB):
                                              "gender": row.get("gender"), "nationality": row.get("nationality")}}
 
 
-@user_router.post("/logout", dependencies=[Depends(refresh_header)])
-@user_router.get("/logout", dependencies=[Depends(refresh_header)])
+@user_router.post("/logout", response_model=Status,
+                  dependencies=[Depends(customer_access_token), Depends(refresh_header)])
+@user_router.get("/logout", response_model=Status,
+                 dependencies=[Depends(customer_access_token), Depends(refresh_header)])
 def nadree_logout(request: Request, session: Session = DB):
     user = user_principal(request, session)
     raw = request.headers.get("X-Refresh-Token")
@@ -552,13 +572,17 @@ def nadree_logout(request: Request, session: Session = DB):
     return {"status": "success"}
 
 
-@router.post("/availability")
+@router.post("/availability", response_model=CustomerAvailability)
 def nadree_availability(body: NadriAvailability, request: Request, session: Session = DB):
     items = _availability_for(request, session, body)
-    return {"status": "success", "items": [{"spot": item["spot"], "model": item["model"], "price": item["price"]} for item in items]}
+    return {"status": "success", "items": [
+        {"shopId": item["spot"]["spotMasterId"], "modelId": item["model"]["modelId"],
+         "spot": item["spot"], "model": item["model"], "price": item["price"]}
+        for item in items]}
 
 
-@router.post("/request")
+@router.post("/request", response_model=CustomerRequest,
+             dependencies=[Depends(customer_access_token)])
 def nadree_request(body: NadriRentalRequest, request: Request, session: Session = DB):
     user = user_principal(request, session)
     db = _db(request)
@@ -600,10 +624,12 @@ def nadree_request(body: NadriRentalRequest, request: Request, session: Session 
     reservation = dict(values)
     reservation_history(request, session, reservation, values, "REQUESTED", user.uid_token)
     queue_reservation_request(db, session, reservation_id, body.spotMasterId)
-    return {"status": "success", "reservationId": reservation_id, "bookedNo": "BO" + reservation_id,
+    return {"status": "success", "reservationId": reservation_id, "bookingId": reservation_id,
+            "bookedNo": "BO" + reservation_id,
             "reservationStatus": "REQUESTED", "vehicleAssignmentStatus": "SOFT_HOLD", "paymentAvailability": "WAITING_APPROVAL",
             "paymentStatus": "WAITING_APPROVAL",
-            "spotMasterId": body.spotMasterId, "modelId": body.modelId, "totalPrice": body.totalPrice,
+            "shopId": body.spotMasterId, "spotMasterId": body.spotMasterId, "modelId": body.modelId,
+            "totalPrice": body.totalPrice,
             "currency": body.currency, "deliveryRequestType": delivery["deliveryRequestType"],
             "spot": item["spot"], "model": item["model"], "price": quote}
 
@@ -654,13 +680,16 @@ def _revalidate_reservation_quote(request, session, reservation):
 def _payment_result(payment, approval_url=None):
     view = _payment_view(payment)
     return {"status": "success", "paymentId": payment["payment_id"], "reservationId": payment.get("reservation_id"),
+            "bookingId": payment.get("reservation_id"),
+            "shopId": payment.get("_shop_master_id"),
             "paymentStatus": payment["payment_status"], "paypalOrderId": payment.get("paypal_order_id"),
             "paypalCaptureId": payment.get("paypal_capture_id"), "approvalUrl": approval_url,
             "totalPrice": _number(payment.get("total_price")), "serverTotalPrice": _number(payment.get("total_price")),
             "currency": payment["currency"], "payment": view}
 
 
-@router.post("/payment/order")
+@router.post("/payment/order", response_model=CustomerPayment,
+             dependencies=[Depends(customer_access_token)])
 def nadree_payment_order(body: NadriPaymentOrder, request: Request, session: Session = DB):
     user = user_principal(request, session)
     reservation = _reservation_for_payment(request, session, user, body.reservationId)
@@ -683,15 +712,15 @@ def nadree_payment_order(body: NadriPaymentOrder, request: Request, session: Ses
                 else:
                     raise Problem(409, "PAYMENT_STATE_INVALID")
             except (AttributeError, SQLAlchemyError):
-                return _payment_result(dict(existing))
+                return _payment_result(dict(existing, _shop_master_id=reservation["spot_master_id"]))
             except Problem:
                 # A provider read failure is not proof that an order expired;
                 # leave the attempt intact and let the expiry job decide.
                 raise
             if provider_order is not None:
-                return _payment_result(dict(existing), approval)
+                return _payment_result(dict(existing, _shop_master_id=reservation["spot_master_id"]), approval)
             if existing["payment_status"] == "PENDING":
-                return _payment_result(dict(existing))
+                return _payment_result(dict(existing, _shop_master_id=reservation["spot_master_id"]))
             # The PayPal order can expire independently of this service. Close
             # the internal attempt and create a fresh order on the next call.
             session.execute(update(table).where(table.c.payment_id == existing["payment_id"],
@@ -728,11 +757,12 @@ def nadree_payment_order(body: NadriPaymentOrder, request: Request, session: Ses
             paypal_order_id=order_id, payment_status="FAILED", updated_at=now()))
         raise Problem(503, "PAYPAL_APPROVAL_URL_MISSING")
     session.execute(update(table).where(table.c.payment_id == payment["payment_id"]).values(paypal_order_id=order_id, updated_at=now()))
-    payment = dict(payment, paypal_order_id=order_id)
+    payment = dict(payment, paypal_order_id=order_id, _shop_master_id=reservation["spot_master_id"])
     return _payment_result(payment, approval)
 
 
-@router.post("/payment/capture")
+@router.post("/payment/capture", response_model=CustomerPayment,
+             dependencies=[Depends(customer_access_token)])
 def nadree_payment_capture(body: NadriPaymentCapture, request: Request, session: Session = DB):
     user = user_principal(request, session)
     db = _db(request)
@@ -750,9 +780,9 @@ def nadree_payment_capture(body: NadriPaymentCapture, request: Request, session:
     if not reservation:
         raise Problem(404, "PAYMENT_NOT_FOUND")
     if payment["payment_status"] in ("PAID", "PARTIALLY_REFUNDED", "REFUNDED"):
-        return _payment_result(dict(payment))
+        return _payment_result(dict(payment, _shop_master_id=reservation["spot_master_id"]))
     if payment["payment_status"] == "PENDING" and payment.get("paypal_capture_id"):
-        return _payment_result(dict(payment))
+        return _payment_result(dict(payment, _shop_master_id=reservation["spot_master_id"]))
     if payment["payment_status"] not in ("CREATED", "PENDING") or not payment.get("paypal_order_id"):
         raise Problem(409, "PAYMENT_STATE_INVALID")
     try:
@@ -769,10 +799,45 @@ def nadree_payment_capture(body: NadriPaymentCapture, request: Request, session:
     session.execute(update(table).where(table.c.payment_id == payment["payment_id"]).values(**values))
     payment = dict(payment)
     payment.update(values)
-    return _payment_result(payment)
+    return _payment_result(dict(payment, _shop_master_id=reservation["spot_master_id"]))
 
 
-@router.get("/ongoing")
+def _owned_customer_payment(request, session, user, payment_id):
+    payments = _db(request).table("MSP_RENTAL_PAYMENT")
+    payment = session.execute(select(payments).where(
+        payments.c.payment_id == payment_id,
+        payments.c.payment_environment == request.app.state.settings.paypal_environment)).mappings().first()
+    if not payment:
+        raise Problem(404, "PAYMENT_NOT_FOUND")
+    payment = dict(payment)
+    if payment.get("reservation_id"):
+        reservations = _db(request).table("MSP_RESERVATION")
+        subject = session.execute(select(reservations.c.uid_token,
+                                         reservations.c.spot_master_id).where(
+            reservations.c.reservation_id == payment["reservation_id"])).mappings().first()
+    elif payment.get("rental_contract_id"):
+        contracts = _db(request).table("MSP_RENTAL_CONTRACT")
+        subject = session.execute(select(contracts.c.uid_token,
+                                         contracts.c.pickup_spot_master_id.label("spot_master_id")).where(
+            contracts.c.rental_contract_id == payment["rental_contract_id"])).mappings().first()
+    else:
+        subject = None
+    if not subject or subject["uid_token"] != user.uid_token:
+        raise Problem(404, "PAYMENT_NOT_FOUND")
+    payment["_shop_master_id"] = subject["spot_master_id"]
+    return payment
+
+
+@router.get("/payment/{paymentId}", response_model=CustomerPayment,
+            dependencies=[Depends(customer_access_token)])
+def nadree_payment_status(paymentId: int, request: Request, session: Session = DB):
+    """결제 요청 응답이 유실된 경우 현재 저장된 결제·웹훅 상태를 다시 조회한다."""
+    user = user_principal(request, session)
+    return _payment_result(_owned_customer_payment(request, session, user, paymentId))
+
+
+@router.get("/ongoing", response_model=CustomerPage,
+            dependencies=[Depends(customer_access_token)])
 def nadree_ongoing(request: Request, page: int = Query(1, ge=1), pageSize: int = Query(20, ge=1, le=100), session: Session = DB):
     user = user_principal(request, session)
     items, total = _customer_records(request, session, user.uid_token, page=page, size=pageSize)
@@ -780,7 +845,8 @@ def nadree_ongoing(request: Request, page: int = Query(1, ge=1), pageSize: int =
             "hasNext": page * pageSize < total}
 
 
-@router.get("/completed")
+@router.get("/completed", response_model=CustomerPage,
+            dependencies=[Depends(customer_access_token)])
 def nadree_completed(request: Request, page: int = Query(1, ge=1), pageSize: int = Query(20, ge=1, le=100), session: Session = DB):
     user = user_principal(request, session)
     items, total = _customer_records(request, session, user.uid_token, completed=True, page=page, size=pageSize)
@@ -788,7 +854,8 @@ def nadree_completed(request: Request, page: int = Query(1, ge=1), pageSize: int
             "hasNext": page * pageSize < total}
 
 
-@router.post("/request/cancel")
+@router.post("/request/cancel", response_model=CustomerCancellation,
+             dependencies=[Depends(customer_access_token)])
 def cancel_request(body: ReservationCancel, request: Request, session: Session = DB):
     user = user_principal(request, session)
     db = request.app.state.db
