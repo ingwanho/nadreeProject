@@ -1,3 +1,4 @@
+import hashlib
 import json
 import re
 from datetime import datetime, timezone
@@ -9,6 +10,7 @@ from urllib.parse import urlsplit
 import httpx
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
+from redis import RedisError
 from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
@@ -24,6 +26,9 @@ SUPPORTED = {"CHECKOUT.ORDER.APPROVED", "CHECKOUT.PAYMENT-APPROVAL.REVERSED", "P
     "PAYMENT.CAPTURE.COMPLETED", "PAYMENT.CAPTURE.DECLINED", "PAYMENT.CAPTURE.DENIED", "PAYMENT.CAPTURE.REFUNDED", "PAYMENT.CAPTURE.REVERSED",
     "PAYMENT.REFUND.PENDING", "PAYMENT.REFUND.FAILED"}
 REFUNDS = {"PAYMENT.CAPTURE.REFUNDED", "PAYMENT.REFUND.PENDING", "PAYMENT.REFUND.FAILED"}
+WEBHOOK_MAX_SKEW_SECONDS = 5 * 60
+WEBHOOK_INFLIGHT_TTL_SECONDS = 30
+WEBHOOK_VERIFIED_TTL_SECONDS = 15 * 60
 
 
 def identifier(value):
@@ -55,6 +60,63 @@ def timestamp(value):
         return parsed.astimezone(timezone.utc).replace(tzinfo=None)
     except (AttributeError, ValueError, TypeError):
         raise Problem(500, "PAYPAL_TIME_INVALID") from None
+
+
+def webhook_time_is_fresh(value, at=None):
+    try:
+        parsed = timestamp(value)
+    except Problem:
+        return False
+    current = at or now()
+    return abs((current - parsed).total_seconds()) <= WEBHOOK_MAX_SKEW_SECONDS
+
+
+def webhook_digest(raw, headers):
+    digest = hashlib.sha256()
+    digest.update(raw.encode("utf-8"))
+    for name in HEADERS:
+        digest.update(b"\0")
+        digest.update(name.encode("ascii"))
+        digest.update(b"\0")
+        digest.update(headers.get(name, "").encode("utf-8"))
+    return digest.hexdigest()
+
+
+class WebhookReplayGuard:
+    """Best-effort Redis guard; the webhook DB remains the durable idempotency source."""
+
+    def __init__(self, redis, environment):
+        self.redis = redis
+        self.prefix = "nadree:paypal:webhook:" + str(environment).lower() + ":"
+
+    def begin(self, digest):
+        if self.redis is None:
+            return None
+        try:
+            if self.redis.get(self.prefix + "verified:" + digest):
+                return "verified"
+            if not self.redis.set(self.prefix + "inflight:" + digest, "1", nx=True,
+                                  ex=WEBHOOK_INFLIGHT_TTL_SECONDS):
+                return "busy"
+            return "acquired"
+        except (RedisError, AttributeError, TypeError):
+            return None
+
+    def mark_verified(self, digest):
+        if self.redis is None:
+            return
+        try:
+            self.redis.set(self.prefix + "verified:" + digest, "1", ex=WEBHOOK_VERIFIED_TTL_SECONDS)
+        except (RedisError, AttributeError, TypeError):
+            pass
+
+    def release(self, digest):
+        if self.redis is None:
+            return
+        try:
+            self.redis.delete(self.prefix + "inflight:" + digest)
+        except (RedisError, AttributeError, TypeError):
+            pass
 
 
 class PayPalClient:
@@ -375,11 +437,21 @@ def execute_refund(db, client, payment_id):
     return status == "COMPLETED"
 
 
-def handle_webhook(db, client, raw, event, headers, notifier=None):
+def handle_webhook(db, client, raw, event, headers, notifier=None, replay_store=None):
     stored = None
+    guard = WebhookReplayGuard(replay_store, client.settings.paypal_environment)
+    digest = webhook_digest(raw, headers)
+    guard_state = None
     try:
-        if not client.verify(event, headers):
+        if not webhook_time_is_fresh(headers.get(HEADERS[1], "")):
+            return 400
+        guard_state = guard.begin(digest)
+        if guard_state == "busy":
+            return 503
+        if guard_state != "verified" and not client.verify(event, headers):
             return 401
+        if guard_state != "verified":
+            guard.mark_verified(digest)
         stored = save_event(db, client.settings.paypal_environment, event, raw, headers)
         if stored["processing_status"] in ("PROCESSED", "IGNORED"):
             return 200
@@ -400,12 +472,17 @@ def handle_webhook(db, client, raw, event, headers, notifier=None):
             except (SQLAlchemyError, Problem):
                 pass
         return 500
+    finally:
+        if guard_state == "acquired":
+            guard.release(digest)
 
 
 @router.post("/nadreego/paypal/webhook")
 async def webhook(request: Request):
     headers = {name: request.headers.get(name, "") for name in HEADERS}
     if request.headers.get("content-type", "").split(";")[0].strip().lower() != "application/json" or not all(headers.values()) or any(len(v) > 8192 for v in headers.values()):
+        return JSONResponse({"status": False}, status_code=400)
+    if not webhook_time_is_fresh(headers[HEADERS[1]]):
         return JSONResponse({"status": False}, status_code=400)
     body = bytearray()
     async for chunk in request.stream():
@@ -425,5 +502,5 @@ async def webhook(request: Request):
     except (UnicodeDecodeError, ValueError, KeyError, TypeError, Problem):
         return JSONResponse({"status": False}, status_code=400)
     status = await run_in_threadpool(handle_webhook, request.app.state.db, request.app.state.paypal, raw, event, headers,
-                                     request.app.state.fcm)
+                                     request.app.state.fcm, getattr(request.app.state.limiter, "redis", None))
     return JSONResponse({"status": status == 200}, status_code=status)

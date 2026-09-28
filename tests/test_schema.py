@@ -67,6 +67,19 @@ def test_existing_rental_user_gets_refresh_token_table_plan(setup):
     assert "create MSP_RENTAL_USER_REFRESH_TOKEN (nadri user sessions)" in labels
 
 
+def test_existing_paypal_webhook_table_requires_event_uniqueness(setup):
+    with setup["engine"].begin() as connection:
+        connection.execute(text("""
+            CREATE TABLE MSP_PAYPAL_WEBHOOK_EVENT (
+                webhook_event_id INTEGER PRIMARY KEY,
+                paypal_event_id VARCHAR(100) NOT NULL,
+                payment_environment VARCHAR(10) NOT NULL
+            )
+        """))
+    plan = migration_plan(setup["db"])
+    assert any(label == "unique MSP_PAYPAL_WEBHOOK_EVENT.event_id" for label, _, _ in plan)
+
+
 def test_request_uniqueness_required_in_migration_preflight(setup, monkeypatch):
     from app import migrate
     inspector = inspect(setup["engine"])

@@ -92,6 +92,13 @@ def migration_plan(db):
             operations.append(("constraint MSP_RENTAL_PAYMENT.refund_status",
                 "ALTER TABLE MSP_RENTAL_PAYMENT ADD CONSTRAINT ck_refund_status CHECK "
                 "(refund_status IN ('NONE','NOT_REQUIRED','REQUESTED','PENDING','COMPLETED','FAILED'))", {}))
+    if "MSP_PAYPAL_WEBHOOK_EVENT" in tables:
+        webhook_unique = {tuple(item["column_names"]) for item in inspector.get_unique_constraints("MSP_PAYPAL_WEBHOOK_EVENT")}
+        webhook_unique.update(tuple(item["column_names"]) for item in inspector.get_indexes("MSP_PAYPAL_WEBHOOK_EVENT") if item["unique"])
+        if ("payment_environment", "paypal_event_id") not in webhook_unique:
+            operations.append(("unique MSP_PAYPAL_WEBHOOK_EVENT.event_id",
+                "CREATE UNIQUE INDEX uq_paypal_event ON MSP_PAYPAL_WEBHOOK_EVENT "
+                "(payment_environment, paypal_event_id)", {}))
     if "MSP_RENTAL_USER" in tables:
         user_columns = {row["name"] for row in inspector.get_columns("MSP_RENTAL_USER")}
         if "user_access_revoked_at" not in user_columns:
