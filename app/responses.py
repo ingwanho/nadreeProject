@@ -37,8 +37,105 @@ class CustomerProfile(BaseModel):
     nationality: str | None = None
 
 
+class CustomerLocation(BaseModel):
+    address: str | None = None
+    zipCode: str | None = None
+    latitude: float | None = None
+    longitude: float | None = None
+
+
+class CustomerSpot(BaseModel):
+    shopId: str
+    spotMasterId: str
+    spotCode: str | None = None
+    unitCode: str | None = None
+    spotName: str | None = None
+    phone: str | None = None
+    location: CustomerLocation
+
+
+class CustomerModel(BaseModel):
+    modelId: str
+    brand: str | None = None
+    modelName: str | None = None
+    cc: int | None = None
+    vehicleType: str | None = None
+    modelImageKey: str | None = None
+
+
+class CustomerPricingTier(BaseModel):
+    priceType: str
+    tierType: str | None = None
+    minCc: int | None = None
+    maxCc: int | None = None
+    dailyPriceFrom: int | float | None = None
+    dailyPriceTo: int | float | None = None
+
+
+class CustomerPrice(BaseModel):
+    currency: str
+    rentalDays: int | None = None
+    dailyFrom: int | float | None = None
+    dailyTo: int | float | None = None
+    dailyPriceFrom: int | float | None = None
+    dailyPriceTo: int | float | None = None
+    rentalFrom: int | float | None = None
+    rentalTo: int | float | None = None
+    pricingTiers: list[CustomerPricingTier] = Field(default_factory=list)
+    deliveryStart: int | float | None = None
+    deliveryReturn: int | float | None = None
+    deliveryTotal: int | float | None = None
+    deliveryStartFee: int | float | None = None
+    deliveryReturnFee: int | float | None = None
+    deliveryTotalFee: int | float | None = None
+    totalOptions: list[int | float] = Field(default_factory=list)
+    totalFrom: int | float | None = None
+    totalTo: int | float | None = None
+    requestedTotal: int | float | None = None
+    calculatedTotalFrom: int | float | None = None
+    calculatedTotalTo: int | float | None = None
+    finalTotal: int | float | None = None
+
+
+class CustomerDelivery(BaseModel):
+    deliveryRequestType: str
+    deliveryRegionId: int | None = None
+    pickupLocation: str | None = None
+    returnLocation: str | None = None
+    startDeliveryFee: int | float | None = None
+    returnDeliveryFee: int | float | None = None
+    deliveryTotalFee: int | float | None = None
+
+
+class CustomerRecord(BaseModel):
+    recordType: Literal["RESERVATION", "RENTAL"]
+    reservationId: str | None = None
+    bookingId: str | None = None
+    rentalContractId: str | None = None
+    bookedNo: str
+    reservationStatus: str | None = None
+    rentalStatus: str | None = None
+    vehicleAssignmentStatus: str | None = None
+    shopId: str
+    spotMasterId: str
+    modelId: str | None = None
+    paymentAvailability: str | None = None
+    spot: CustomerSpot
+    model: CustomerModel | None = None
+    startDate: str | None = None
+    returnDate: str | None = None
+    actualStartTime: str | None = None
+    actualEndTime: str | None = None
+    deliveryRequestType: str
+    pickupLocation: str | None = None
+    returnLocation: str | None = None
+    delivery: CustomerDelivery
+    price: CustomerPrice
+    payment: dict[str, Any] | None = None
+
+
 class CustomerUser(CustomerProfile):
-    ongoingRequests: list[dict[str, Any]] = Field(default_factory=list)
+    ongoingRequests: list[CustomerRecord] = Field(default_factory=list)
 
 
 class CustomerLogin(Tokens):
@@ -54,9 +151,9 @@ class CustomerAvailabilityItem(BaseModel):
     # 앱의 shopId는 렌탈 지점의 영구 식별자인 spotMasterId와 같은 값이다.
     shopId: str
     modelId: str
-    spot: dict[str, Any]
-    model: dict[str, Any]
-    price: dict[str, Any]
+    spot: CustomerSpot
+    model: CustomerModel
+    price: CustomerPrice
 
 
 class CustomerAvailability(Status):
@@ -77,13 +174,13 @@ class CustomerRequest(Status):
     totalPrice: int | float
     currency: str
     deliveryRequestType: str
-    spot: dict[str, Any]
-    model: dict[str, Any]
-    price: dict[str, Any]
+    spot: CustomerSpot
+    model: CustomerModel
+    price: CustomerPrice
 
 
 class CustomerPage(Status):
-    items: list[dict[str, Any]]
+    items: list[CustomerRecord]
     page: int
     pageSize: int
     totalCount: int

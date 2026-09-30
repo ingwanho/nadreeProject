@@ -366,6 +366,27 @@ def _record_view(request, reservation, contract, payment, spot, model):
         availability = "PAYMENT_REQUIRED" if reservation_status == "APPROVED" else pstatus
     delivery_type = (reservation or {}).get("delivery_request_type", "PICKUP")
     reservation_id = (reservation or {}).get("reservation_id")
+    start_date = local_date(request, start_value) if start_value else None
+    price_total = _number((payment or {}).get("total_price"))
+    total_from = _number(quote.get("totalFrom", quote.get("calculatedTotalFrom", price_total)))
+    total_to = _number(quote.get("totalTo", quote.get("calculatedTotalTo", price_total)))
+    rental_days = ((return_date - start_date).days if start_date and isinstance(return_date, date) else None)
+    price = {
+        "currency": quote.get("currency") or (payment or {}).get("currency") or request.app.state.settings.rental_currency,
+        "rentalDays": quote.get("rentalDays", rental_days),
+        "dailyFrom": _number(quote.get("dailyFrom")), "dailyTo": _number(quote.get("dailyTo")),
+        "rentalFrom": _number(quote.get("rentalFrom")), "rentalTo": _number(quote.get("rentalTo")),
+        "pricingTiers": quote.get("pricingTiers", []),
+        "deliveryStart": _number(quote.get("deliveryStart", (reservation or {}).get("start_delivery_fee_snapshot", 0))),
+        "deliveryReturn": _number(quote.get("deliveryReturn", (reservation or {}).get("return_delivery_fee_snapshot", 0))),
+        "deliveryTotal": _number(quote.get("deliveryTotal", (reservation or {}).get("delivery_total_fee_snapshot", 0))),
+        "totalOptions": [_number(value) for value in quote.get("totalOptions", [total_from]) if value is not None],
+        "totalFrom": total_from, "totalTo": total_to,
+        "requestedTotal": _number(quote.get("requestedTotal")),
+        "calculatedTotalFrom": _number(quote.get("calculatedTotalFrom", total_from)),
+        "calculatedTotalTo": _number(quote.get("calculatedTotalTo", total_to)),
+        "finalTotal": _number(quote.get("finalTotal", price_total)),
+    }
     return {"recordType": "RENTAL" if contract else "RESERVATION",
             "reservationId": (reservation or {}).get("reservation_id"),
             # bookingId is the customer-app alias for the server reservation ID.
@@ -378,7 +399,7 @@ def _record_view(request, reservation, contract, payment, spot, model):
             "shopId": spot["spot_master_id"], "spotMasterId": spot["spot_master_id"],
             "modelId": (reservation or {}).get("model_id") or (model or {}).get("model_id"),
             "paymentAvailability": availability, "spot": _spot_view(spot), "model": _model_view(model) if model else None,
-            "startDate": local_date(request, start_value).isoformat() if start_value else None,
+            "startDate": start_date.isoformat() if start_date else None,
             "returnDate": return_date.isoformat() if isinstance(return_date, date) else None,
             "actualStartTime": iso(request, (contract or {}).get("actual_start_time")),
             "actualEndTime": iso(request, (contract or {}).get("actual_end_time")),
@@ -386,12 +407,13 @@ def _record_view(request, reservation, contract, payment, spot, model):
             "pickupLocation": (reservation or {}).get("delivery_start_address"),
             "returnLocation": (reservation or {}).get("delivery_return_address"),
             "delivery": {"deliveryRequestType": delivery_type,
+                         "deliveryRegionId": (reservation or {}).get("delivery_region_id"),
                          "pickupLocation": (reservation or {}).get("delivery_start_address"),
                          "returnLocation": (reservation or {}).get("delivery_return_address"),
+                         "startDeliveryFee": int((reservation or {}).get("start_delivery_fee_snapshot") or 0),
+                         "returnDeliveryFee": int((reservation or {}).get("return_delivery_fee_snapshot") or 0),
                          "deliveryTotalFee": int((reservation or {}).get("delivery_total_fee_snapshot") or 0)},
-            "price": {"currency": quote.get("currency") or (payment or {}).get("currency") or request.app.state.settings.rental_currency,
-                      "totalFrom": _number(quote.get("totalFrom", quote.get("calculatedTotalFrom", (payment or {}).get("total_price")))),
-                      "totalTo": _number(quote.get("totalTo", quote.get("calculatedTotalTo", (payment or {}).get("total_price"))))},
+            "price": price,
             "payment": _payment_view(payment)}
 
 

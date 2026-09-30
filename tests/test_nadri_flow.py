@@ -205,6 +205,12 @@ def test_nadri_reservation_payment_checkout_and_return(setup, signin):
     completed = client.get("/api/v1/nadree/rental/completed", headers=customer_headers)
     assert completed.status_code == 200, completed.text
     assert completed.json()["totalCount"] == 1
+    completed_item = completed.json()["items"][0]
+    assert completed_item["price"]["currency"] == "USD"
+    assert completed_item["price"]["totalFrom"] == price
+    assert completed_item["price"]["totalTo"] == price
+    assert completed_item["price"]["rentalDays"] == (end - start).days
+    assert completed_item["delivery"]["startDeliveryFee"] == 0
 
 
 def test_calendar_pages_vehicle_details_before_loading_events(setup, signin):

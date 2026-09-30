@@ -66,3 +66,5 @@ ERDCloud SQL 전체를 운영 DB에 실행하지 않는다. `metadata.create_all
 ## 격리 테스트 계정·최상위 조직
 
 별도 테스트 DB에서만 `test_seed_top_level.sql`을 실행하면 최상위 계약·L1 조직·`MSP_SPOT_MASTER`·`MSP_SPOT_RENT`·대표 관리자·렌탈 role/scope가 함께 생성된다. 테스트 계정은 `nadree.test.admin` / `Nadree-Test-123!`이며, 시드 SQL은 `NR_TEST_20260921` 식별자 행만 멱등적으로 갱신하고 기존 행을 삭제하지 않는다. 하위 region/local/spot은 대표 계정으로 로그인한 뒤 `POST /api/v1/organizations/spots`를 호출해 API가 RiderLog 계층 데이터를 생성하는지 검증한다. 운영 DB에서 실행하지 않는다.
+
+그 다음 `test_seed_rental_scenarios.sql`을 실행하면 기존 테스트 지점을 기준으로 일반관리자·모델·차량·가격·재고·배송지역·관광객·예약 상태별 행·렌트 계약·결제 상태를 추가한다. 이 파일은 `NRTEST_*` 행만 정리 후 재생성하며, QR 해시는 서버의 `NADREE_QR_HASH_KEY`를 사용하므로 SQL에 넣지 않는다. 고객 API 화면 검증에는 이 파일까지 실행하고, QR 인계 테스트에는 관리자 API로 QR을 별도 발급한다.
