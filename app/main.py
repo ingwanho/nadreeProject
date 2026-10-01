@@ -25,18 +25,41 @@ from app.schema_check import check_schema
 from app.security import RateLimiter, sign_access
 
 OPENAPI_TAGS = [
-    {"name": "W00 Health", "description": "서비스 상태와 의존성 확인"},
+    {"name": "W00 Health", "description": "서비스 상태와 의존성 확인. 테스트 시작 시 `/health/live`와 `/health/ready`를 먼저 확인합니다."},
     {"name": "W01 Accounts", "description": "관리자 로그인·가입 신청·토큰·프로필"},
     {"name": "W02 Organizations and admins", "description": "지점 계층과 관리자 권한"},
     {"name": "W03 Vehicles and QR", "description": "차량·QR·센서 관리"},
     {"name": "W04 Pricing", "description": "차량 가격과 렌탈 티어"},
     {"name": "W05 Delivery", "description": "배송 지역과 배송비"},
-    {"name": "W06 Reservations and rentals", "description": "예약·렌트·인계·반납"},
+    {"name": "W06 Reservations and rentals", "description": "예약·렌트·인계·반납. 테스트 시드 예약은 `NRTEST-RES-*`, 차량은 `NRTEST-VEHICLE-*`입니다."},
     {"name": "W07 Dashboard and calendar", "description": "운영 현황과 캘린더 조회"},
     {"name": "W08 PayPal webhook", "description": "PayPal 결제·환불·웹훅"},
-    {"name": "Nadree customer users", "description": "나드리 고객 UID 로그인·프로필·토큰"},
-    {"name": "Nadree customer rentals", "description": "나드리 차량 조회·예약·결제·렌트 이력"},
+    {"name": "Nadree customer users", "description": "나드리 고객 UID 로그인·프로필·토큰. 로그인에는 Firebase ID Token과 body의 UID가 모두 필요합니다."},
+    {"name": "Nadree customer rentals", "description": "나드리 차량 조회·예약·결제·렌트 이력. 테스트 지점은 `00000000-0000-4000-8000-000000000101`, 모델은 `NRTEST-MODEL-125`와 `NRTEST-MODEL-155`입니다."},
 ]
+
+OPENAPI_DESCRIPTION = """
+나드리·나드리고 렌탈 API입니다.
+
+## 문서 사용 순서
+
+1. `/health/live`로 프로세스 상태를 확인합니다.
+2. `/health/ready`가 `status=ok`인지 확인합니다.
+3. 관리자 API는 `/nadreego`, 고객 API는 `/api/v1/nadree` 경로를 사용합니다.
+4. 요청·응답 필드는 각 작업의 Schema를 기준으로 작성합니다.
+
+## 테스트 데이터 표시 규칙
+
+`NRTEST-` 접두사가 붙은 값은 테스트 시드 데이터입니다. 실제 운영 데이터와 섞어 사용하지 않습니다.
+
+- 테스트 지점(`spotMasterId`/`shopId`): `00000000-0000-4000-8000-000000000101`
+- 테스트 모델: `NRTEST-MODEL-125`(Honda Vario 125, 125cc), `NRTEST-MODEL-155`(Yamaha NMAX 155, 155cc)
+- 테스트 차량: `NRTEST-VEHICLE-301`(대여 가능), `NRTEST-VEHICLE-302`(정비), `NRTEST-VEHICLE-303`(진행 중 렌트), `NRTEST-VEHICLE-304`(미래 승인 예약)
+- 예약 상태 샘플: `NRTEST-RES-REQ-001`, `NRTEST-RES-APP-001`, `NRTEST-RES-PENDING-001`, `NRTEST-RES-REJECT-001`, `NRTEST-RES-CANCEL-001`, `NRTEST-RES-EXPIRED-001`, `NRTEST-RES-HAND-001`, `NRTEST-RES-RETURN-001`
+- 테스트 통화: `USD`; 테스트 가격 기준: 125cc 일일 25 USD, 155cc 일일 35 USD
+
+테스트 데이터의 전체 실행 순서와 예상 결과는 저장소의 `docs/nadree-api-test-handoff-2026-10-01.md`를 참고합니다. Firebase ID Token, access token, refresh token, PayPal 자격증명과 실제 FCM 토큰은 Swagger 설명에 기록하지 않습니다.
+"""
 
 
 def create_app(settings=None, db=None, limiter=None, mailer=None, fcm=None, locations=None, customer_auth=None):
@@ -64,7 +87,7 @@ def create_app(settings=None, db=None, limiter=None, mailer=None, fcm=None, loca
 
     application = FastAPI(
         title="Nadree API",
-        description="나드리·나드리고 렌탈 API. `/docs`는 Swagger UI, `/redoc`은 ReDoc 문서입니다.",
+        description=OPENAPI_DESCRIPTION,
         version="0.1.0",
         openapi_url="/openapi.json",
         docs_url="/docs",

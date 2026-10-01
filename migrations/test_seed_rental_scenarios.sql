@@ -20,7 +20,7 @@
 -- QR 행은 QR_HASH_KEY를 모르는 SQL에서 위조할 수 없으므로 넣지 않는다.
 -- 관리자 QR 인계 테스트는 /nadreego/vehicle/create에 qrToken을 보내 생성한다.
 
-SET NAMES utf8mb4;
+SET NAMES utf8mb4 COLLATE utf8mb4_unicode_ci;
 SET @test_now = UTC_TIMESTAMP();
 SET @spot_master_id = '00000000-0000-4000-8000-000000000101';
 SET @primary_admin_id = '00000000-0000-4000-8000-000000000201';
@@ -313,12 +313,14 @@ INSERT INTO MSP_RESERVATION_HISTORY
      previous_vehicle_id, new_vehicle_id, previous_assignment_status,
      new_assignment_status, reason, changed_by, created_at)
 VALUES
-    ('NRTEST-RES-REQ-001', 'REQUESTED', NULL, 'REQUESTED', NULL, NULL, NULL, 'SOFT_HOLD', 'test seed', 'NRTEST-USER-001', @test_now),
+    -- 관광객이 직접 요청한 상태 변경이므로 관리자 FK를 기록하지 않는다.
+    ('NRTEST-RES-REQ-001', 'REQUESTED', NULL, 'REQUESTED', NULL, NULL, NULL, 'SOFT_HOLD', 'test seed', NULL, @test_now),
     ('NRTEST-RES-APP-001', 'APPROVED', 'REQUESTED', 'APPROVED', NULL, 'NRTEST-VEHICLE-304', 'SOFT_HOLD', 'PROVISIONAL', 'test seed', @primary_admin_id, @test_now),
     ('NRTEST-RES-PENDING-001', 'APPROVED', 'REQUESTED', 'APPROVED', NULL, 'NRTEST-VEHICLE-304', 'SOFT_HOLD', 'PROVISIONAL', 'test seed', @primary_admin_id, @test_now),
     ('NRTEST-RES-REJECT-001', 'REJECTED', 'REQUESTED', 'REJECTED', NULL, NULL, 'SOFT_HOLD', 'RELEASED', 'test seed', @primary_admin_id, @test_now),
     ('NRTEST-RES-CANCEL-001', 'CANCELED', 'REQUESTED', 'CANCELED', NULL, NULL, 'SOFT_HOLD', 'RELEASED', 'test seed', @primary_admin_id, @test_now),
-    ('NRTEST-RES-EXPIRED-001', 'EXPIRED', 'APPROVED', 'EXPIRED', NULL, NULL, 'PROVISIONAL', 'RELEASED', 'test seed', 'nadree-job', @test_now),
+    -- 백그라운드 만료 처리도 관리자 행위가 아니므로 changed_by는 NULL이다.
+    ('NRTEST-RES-EXPIRED-001', 'EXPIRED', 'APPROVED', 'EXPIRED', NULL, NULL, 'PROVISIONAL', 'RELEASED', 'test seed', NULL, @test_now),
     ('NRTEST-RES-HAND-001', 'APPROVED', 'REQUESTED', 'APPROVED', NULL, 'NRTEST-VEHICLE-303', 'SOFT_HOLD', 'PROVISIONAL', 'test seed', @primary_admin_id, @test_now),
     ('NRTEST-RES-HAND-001', 'HANDED_OVER', 'APPROVED', 'HANDED_OVER', 'NRTEST-VEHICLE-303', 'NRTEST-VEHICLE-303', 'PROVISIONAL', 'LOCKED', 'test seed', @primary_admin_id, @test_now),
     ('NRTEST-RES-RETURN-001', 'APPROVED', 'REQUESTED', 'APPROVED', NULL, 'NRTEST-VEHICLE-301', 'SOFT_HOLD', 'PROVISIONAL', 'test seed', @primary_admin_id, DATE_SUB(@test_now, INTERVAL 11 DAY)),

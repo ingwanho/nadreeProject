@@ -477,7 +477,9 @@ def _user_view(request, session, user):
             "gender": user.get("gender"), "nationality": user.get("nationality"), "ongoingRequests": items}
 
 
-@user_router.post("/login", response_model=CustomerLogin)
+@user_router.post("/login", response_model=CustomerLogin,
+                  summary="나드리 고객 Firebase UID 로그인·회원 생성",
+                  description="Firebase ID Token의 uid와 body의 UID가 일치해야 합니다. 테스트 고객 UID는 NRTEST-USER-001 또는 NRTEST-USER-002입니다.")
 def nadree_login(body: NadriLogin, request: Request, session: Session = DB,
                  credentials: HTTPAuthorizationCredentials | None = Depends(firebase_id_token)):
     id_token = credentials.credentials if credentials is not None else None
@@ -542,6 +544,7 @@ def nadree_refresh(request: Request, session: Session = DB):
 
 
 @user_router.patch("/profile", response_model=CustomerProfileResult,
+                   summary="나드리 고객 프로필 수정",
                    dependencies=[Depends(customer_access_token)])
 def nadree_profile(body: NadriProfile, request: Request, session: Session = DB):
     user = user_principal(request, session)
@@ -594,7 +597,9 @@ def nadree_logout(request: Request, session: Session = DB):
     return {"status": "success"}
 
 
-@router.post("/availability", response_model=CustomerAvailability)
+@router.post("/availability", response_model=CustomerAvailability,
+             summary="지점·차량 모델·USD 가격·배송비 조회",
+             description="테스트 시 spotMasterId/shopId는 00000000-0000-4000-8000-000000000101, 모델은 NRTEST-MODEL-125 또는 NRTEST-MODEL-155를 기준으로 확인합니다.")
 def nadree_availability(body: NadriAvailability, request: Request, session: Session = DB):
     items = _availability_for(request, session, body)
     return {"status": "success", "items": [
@@ -604,6 +609,8 @@ def nadree_availability(body: NadriAvailability, request: Request, session: Sess
 
 
 @router.post("/request", response_model=CustomerRequest,
+             summary="렌탈 예약 요청",
+             description="예약은 REQUESTED로 생성되고 관리자 승인 전에는 결제할 수 없습니다. 동일 기간의 마지막 차량은 먼저 잠금을 획득한 요청만 성공합니다.",
              dependencies=[Depends(customer_access_token)])
 def nadree_request(body: NadriRentalRequest, request: Request, session: Session = DB):
     user = user_principal(request, session)
@@ -711,6 +718,8 @@ def _payment_result(payment, approval_url=None):
 
 
 @router.post("/payment/order", response_model=CustomerPayment,
+             summary="승인 예약의 PayPal Sandbox 주문 생성",
+             description="APPROVED 예약만 호출할 수 있습니다. 테스트 결제 통화는 USD이며 응답의 approvalUrl을 사용합니다.",
              dependencies=[Depends(customer_access_token)])
 def nadree_payment_order(body: NadriPaymentOrder, request: Request, session: Session = DB):
     user = user_principal(request, session)
@@ -784,6 +793,8 @@ def nadree_payment_order(body: NadriPaymentOrder, request: Request, session: Ses
 
 
 @router.post("/payment/capture", response_model=CustomerPayment,
+             summary="PayPal 결제 캡처",
+             description="캡처 직후 PENDING이면 반복 호출하지 말고 결제 상태 조회 API를 사용합니다.",
              dependencies=[Depends(customer_access_token)])
 def nadree_payment_capture(body: NadriPaymentCapture, request: Request, session: Session = DB):
     user = user_principal(request, session)
@@ -851,6 +862,7 @@ def _owned_customer_payment(request, session, user, payment_id):
 
 
 @router.get("/payment/{paymentId}", response_model=CustomerPayment,
+            summary="PayPal 결제 상태 조회·복구",
             dependencies=[Depends(customer_access_token)])
 def nadree_payment_status(paymentId: int, request: Request, session: Session = DB):
     """결제 요청 응답이 유실된 경우 현재 저장된 결제·웹훅 상태를 다시 조회한다."""
@@ -859,6 +871,7 @@ def nadree_payment_status(paymentId: int, request: Request, session: Session = D
 
 
 @router.get("/ongoing", response_model=CustomerPage,
+            summary="진행 중 예약·렌트 목록",
             dependencies=[Depends(customer_access_token)])
 def nadree_ongoing(request: Request, page: int = Query(1, ge=1), pageSize: int = Query(20, ge=1, le=100), session: Session = DB):
     user = user_principal(request, session)
@@ -868,6 +881,7 @@ def nadree_ongoing(request: Request, page: int = Query(1, ge=1), pageSize: int =
 
 
 @router.get("/completed", response_model=CustomerPage,
+            summary="완료 렌트 목록",
             dependencies=[Depends(customer_access_token)])
 def nadree_completed(request: Request, page: int = Query(1, ge=1), pageSize: int = Query(20, ge=1, le=100), session: Session = DB):
     user = user_principal(request, session)
@@ -877,6 +891,8 @@ def nadree_completed(request: Request, page: int = Query(1, ge=1), pageSize: int
 
 
 @router.post("/request/cancel", response_model=CustomerCancellation,
+             summary="결제 전 예약 취소",
+             description="REQUESTED 또는 APPROVED 상태에서 결제 전 취소할 수 있습니다. 결제 완료 건은 관리자 환불 절차를 사용합니다.",
              dependencies=[Depends(customer_access_token)])
 def cancel_request(body: ReservationCancel, request: Request, session: Session = DB):
     user = user_principal(request, session)

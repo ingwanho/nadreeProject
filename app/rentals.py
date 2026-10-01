@@ -102,7 +102,9 @@ def contract_history(request, session, ident, previous, new, actor, event):
         previous_contract_status=previous, new_contract_status=new, changed_by=actor, created_at=now()))
 
 
-@router.post("/nadreego/booking/action")
+@router.post("/nadreego/booking/action",
+             summary="관리자 예약 승인·거절·취소",
+             description="테스트 예약은 NRTEST-RES-*입니다. APPROVE 후에만 고객 PayPal 주문 생성이 가능합니다.")
 def booking_action(body: BookingAction, request: Request, background_tasks: BackgroundTasks, session: Session = DB):
     actor, root = context(request, session, write=True)
     r = booking(request, session, root, body.bookedNo)
