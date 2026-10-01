@@ -1,6 +1,7 @@
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
+from fastapi.openapi.utils import get_openapi
 from sqlalchemy import text
 
 from app.auth import router as auth_router
@@ -13,6 +14,7 @@ from app.firebase_auth import CustomerFirebaseAuth
 from app.management import router as management_router
 from app.mail import PasswordMailer
 from app.locations import VehicleLocations
+from app.openapi_examples import OPENAPI_EXAMPLES
 from app.delivery import router as delivery_router
 from app.paypal import PayPalClient, router as paypal_router
 from app.customer_rentals import router as customer_rentals_router, user_router as customer_users_router
@@ -145,6 +147,25 @@ def create_app(settings=None, db=None, limiter=None, mailer=None, fcm=None, loca
     application.include_router(paypal_router)
     application.include_router(customer_rentals_router)
     application.include_router(customer_users_router)
+
+    def custom_openapi():
+        if application.openapi_schema:
+            return application.openapi_schema
+        schema = get_openapi(
+            title=application.title,
+            version=application.version,
+            description=application.description,
+            routes=application.routes,
+            tags=OPENAPI_TAGS,
+        )
+        components = schema.get("components", {}).get("schemas", {})
+        for name, example in OPENAPI_EXAMPLES.items():
+            if name in components:
+                components[name]["example"] = example
+        application.openapi_schema = schema
+        return schema
+
+    application.openapi = custom_openapi
     return application
 
 
