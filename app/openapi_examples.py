@@ -353,3 +353,123 @@ OPENAPI_EXAMPLES.update({
         "spotMasterId": TEST_SPOT["spotMasterId"], "requestStatus": "REQUESTED",
     },
 })
+
+
+OPENAPI_RESPONSE_EXAMPLES = {
+    ("GET", "/health/live"): {"status": "ok", "service": "nadree-api"},
+    ("GET", "/health/ready"): {"status": "ok", "limitations": ["MFA_FLOW_NOT_IMPLEMENTED"]},
+    ("POST", "/nadreego/shop/delivery"): {
+        "status": True, "spotDeliveryRegionId": 990000001, "deliveryRegionId": 990000001,
+        "isDeliveryEnabled": True, "startDeliveryFee": 10, "returnDeliveryFee": 10,
+    },
+    ("GET", "/nadreego/shop/delivery/regions"): {
+        "status": True, "items": [{
+            "deliveryRegionId": 990000001, "countryCode": "ID", "regionName": "Kuta Test Area",
+            "parentRegionId": None, "regionLevel": "CITY", "regionCode": "NRTEST-KUTA",
+            "sortOrder": 1, "isActive": True,
+        }], "page": 1, "pageSize": 100, "totalCount": 1,
+    },
+    ("GET", "/nadreego/shop/delivery"): {
+        "status": True, "items": [{
+            "spotDeliveryRegionId": 990000001, "deliveryRegionId": 990000001,
+            "regionName": "Kuta Test Area", "regionCode": "NRTEST-KUTA",
+            "isDeliveryEnabled": True, "startDeliveryFee": 10,
+            "returnDeliveryFee": 10, "memo": "Nadree 테스트 배송 지역",
+        }], "page": 1, "pageSize": 100, "totalCount": 1,
+    },
+    ("POST", "/nadreego/shop/deliveryDelete"): {"status": True},
+    ("POST", "/nadreego/shop/tierCreate"): {
+        "status": "success", "tier": {
+            "minCc": 0, "maxCc": 125, "price": 25, "type": "BASIC",
+            "spotCode": TEST_SPOT["spotCode"], "action": "UPDATED",
+        },
+    },
+    ("GET", "/nadreego/shop/tierCreate"): {
+        "status": "success", "tiers": [
+            {"minCc": 0, "maxCc": 125, "price": 25, "type": "BASE", "spotCode": None},
+            {"minCc": 126, "maxCc": 200, "price": 35, "type": "BASE", "spotCode": None},
+            {"minCc": 0, "maxCc": 125, "price": 25, "type": "BASIC", "spotCode": TEST_SPOT["spotCode"]},
+        ],
+    },
+    ("POST", "/nadreego/shop/tierDelete"): {"status": "success"},
+    ("POST", "/nadreego/vehicle/create"): {
+        "status": "success", "vehicleId": "<created-vehicle-uuid>", "iot": {},
+        "brand": "Honda", "vehicleName": "Vario 125",
+    },
+    ("POST", "/nadreego/vehicle/qr/validate"): {
+        "status": True, "errorCode": None,
+        "data": {"vehicleId": "NRTEST-VEHICLE-301", "qrId": "<qr-id>", "qrStatus": "ACTIVE"},
+    },
+    ("POST", "/nadreego/vehicle/location"): {
+        "status": "success", "geopoint": {"latitude": -8.65, "longitude": 115.216},
+    },
+    ("POST", "/nadreego/vehicle/repair"): {
+        "status": True, "errorCode": None, "message": "success", "currentState": "MAINTENANCE",
+        "changedAt": "2026-10-01T08:00:00+08:00", "changedBy": "00000000-0000-4000-8000-000000000201",
+        "data": {"vehicleId": "NRTEST-VEHICLE-302", "vehicleStatus": "MAINTENANCE", "maintenanceUntil": "2026-10-03"},
+    },
+    ("POST", "/nadreego/vehicle/spotChange"): {
+        "status": "success", "spotMasterId": TEST_SPOT["spotMasterId"],
+    },
+    ("POST", "/nadreego/brand"): {
+        "brand": ["Honda", "Yamaha"], "vehicle": [
+            {"modelId": TEST_MODEL_125["modelId"], "brand": "Honda", "modelName": "Vario 125",
+             "cc": 125, "modelImageKey": "models/test-vario-125.jpg", "vehicleCount": 3, "price": 25},
+            {"modelId": TEST_MODEL_155["modelId"], "brand": "Yamaha", "modelName": "NMAX 155",
+             "cc": 155, "modelImageKey": "models/test-nmax-155.jpg", "vehicleCount": 1, "price": 35},
+        ], "tier": [], "price": None, "page": 1, "pageSize": 20, "totalCount": 2, "hasNext": False,
+    },
+    ("POST", "/nadreego/vehicle/select"): {
+        "status": True, "items": [{
+            "vehicleId": "NRTEST-VEHICLE-301", "vehicleNo": "DK-TEST-301",
+            "modelId": TEST_MODEL_125["modelId"], "modelName": "Vario 125", "vehicleStatus": "AVAILABLE",
+        }], "page": 1, "pageSize": 20, "totalCount": 4, "hasNext": False,
+    },
+    ("POST", "/nadreego/booking/action"): {
+        "status": True, "errorCode": None, "message": "success", "currentState": "APPROVED",
+        "changedAt": "2026-10-01T08:00:00+08:00", "changedBy": "00000000-0000-4000-8000-000000000201",
+        "data": {"bookedNo": "BONRTEST-RES-REQ-001", "reservationStatus": "APPROVED", "vehicleAssignmentStatus": "PROVISIONAL"},
+    },
+    ("POST", "/nadreego/rent/approve"): {
+        "status": True, "errorCode": None, "message": "success", "currentState": "ON_RENT",
+        "changedAt": "2026-10-01T08:00:00+08:00", "changedBy": "00000000-0000-4000-8000-000000000201",
+        "data": {"bookedNo": "BONRTEST-RES-APP-001", "rentalContractId": "<rental-contract-uuid>",
+                 "contractStatus": "ON_RENT", "vehicleStatus": "ON_RENT", "plannedEndDate": "2026-10-13",
+                 "reservationStatus": "HANDED_OVER", "vehicleAssignmentStatus": "LOCKED"},
+    },
+    ("POST", "/nadreego/vehicle/return"): {
+        "status": True, "errorCode": None, "message": "success", "currentState": "RETURNED",
+        "changedAt": "2026-10-01T08:00:00+08:00", "changedBy": "00000000-0000-4000-8000-000000000201",
+        "data": {"rentalContractId": "NRTEST-CONTRACT-ONRENT", "actualEndTime": "2026-10-01T08:00:00+08:00",
+                 "vehicleStatus": "AVAILABLE", "reservationStatus": "RETURNED", "vehicleAssignmentStatus": "RELEASED"},
+    },
+    ("POST", "/nadreego/booking/select"): {
+        "status": True, "items": [{"bookedNo": "BONRTEST-RES-APP-001", "recordType": "RESERVATION",
+                                     "reservationStatus": "APPROVED", "rentalStatus": None,
+                                     "user": {"userId": "NRTEST-USER-001", "name": "Nadree Test Customer"}}],
+        "page": 1, "pageSize": 20, "totalCount": 8, "hasNext": False,
+    },
+    ("POST", "/nadreego/main/calendar"): {
+        "status": True, "items": [{"vehicleId": "NRTEST-VEHICLE-301", "vehicleNo": "DK-TEST-301",
+                                     "modelId": TEST_MODEL_125["modelId"], "modelName": "Vario 125",
+                                     "vehicleStatus": "AVAILABLE", "events": []}],
+        "page": 1, "pageSize": 20, "totalCount": 4, "hasNext": False,
+        "startDate": "2026-10-10", "endDate": "2026-10-13", "timeZone": "Asia/Makassar",
+        "fetchedAt": "2026-10-01T08:00:00+08:00", "warnings": [],
+    },
+    ("GET", "/nadreego/main"): {
+        "status": "success", "group": {"spotMasterId": TEST_SPOT["spotMasterId"],
+        "spotCode": TEST_SPOT["spotCode"], "name": TEST_SPOT["spotName"]},
+        "name": "Nadree 테스트 대표관리자", "totalVehicles": 4, "totalReservations": 2,
+        "pending": 1, "chat": 0, "todayWork": [],
+    },
+    ("POST", "/nadreego/paypal/webhook"): {"status": True},
+}
+
+OPENAPI_REQUEST_EXAMPLES = {
+    ("POST", "/nadreego/paypal/webhook"): {
+        "id": "WH-TEST-EVENT-001", "event_version": "1.0", "create_time": "2026-10-01T00:00:00Z",
+        "resource_type": "capture", "event_type": "PAYMENT.CAPTURE.COMPLETED",
+        "summary": "Test capture completed", "resource": {"id": "NRTEST-CAPTURE-PAID-001", "status": "COMPLETED"},
+    },
+}

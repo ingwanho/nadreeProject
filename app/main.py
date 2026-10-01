@@ -14,7 +14,8 @@ from app.firebase_auth import CustomerFirebaseAuth
 from app.management import router as management_router
 from app.mail import PasswordMailer
 from app.locations import VehicleLocations
-from app.openapi_examples import OPENAPI_EXAMPLES
+from app.openapi_examples import (OPENAPI_EXAMPLES, OPENAPI_REQUEST_EXAMPLES,
+                                   OPENAPI_RESPONSE_EXAMPLES)
 from app.delivery import router as delivery_router
 from app.paypal import PayPalClient, router as paypal_router
 from app.customer_rentals import router as customer_rentals_router, user_router as customer_users_router
@@ -162,6 +163,32 @@ def create_app(settings=None, db=None, limiter=None, mailer=None, fcm=None, loca
         for name, example in OPENAPI_EXAMPLES.items():
             if name in components:
                 components[name]["example"] = example
+        for path, operations in schema.get("paths", {}).items():
+            for method, operation in operations.items():
+                if method not in {"get", "post", "put", "patch", "delete"}:
+                    continue
+                key = (method.upper(), path)
+                request = operation.get("requestBody")
+                if request:
+                    content = request.get("content", {}).get("application/json")
+                    if content:
+                        ref = content.get("schema", {}).get("$ref", "").rsplit("/", 1)[-1]
+                        example = components.get(ref, {}).get("example")
+                        if example is not None:
+                            content["example"] = example
+                if key in OPENAPI_REQUEST_EXAMPLES:
+                    operation["requestBody"] = {
+                        "required": True,
+                        "content": {"application/json": {
+                            "schema": {"type": "object"},
+                            "example": OPENAPI_REQUEST_EXAMPLES[key],
+                        }},
+                    }
+                response_example = OPENAPI_RESPONSE_EXAMPLES.get(key)
+                if response_example is not None:
+                    response = operation.get("responses", {}).get("200")
+                    if response is not None:
+                        response.setdefault("content", {}).setdefault("application/json", {})["example"] = response_example
         application.openapi_schema = schema
         return schema
 
