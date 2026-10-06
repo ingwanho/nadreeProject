@@ -28,7 +28,7 @@ def test_nadri_login_issues_a_separate_refresh_token(setup):
     assert row["token_hash"] == fingerprint(headers["X-Refresh-Token"])
 
 
-def test_nadri_app_fcm_token_is_stored_and_preserved_on_logout(setup):
+def test_nadri_app_fcm_token_is_preserved_when_logout_header_is_omitted(setup):
     tables = rental_tables(setup)
     response = setup["client"].post("/api/v1/nadree/user/login", json={
         "UID": "user-fcm", "fcmToken": "customer-device-token"})
@@ -48,6 +48,27 @@ def test_nadri_app_fcm_token_is_stored_and_preserved_on_logout(setup):
     with setup["engine"].connect() as connection:
         row = connection.execute(select(tables["MSP_RENTAL_USER"])).mappings().one()
     assert row["fcm_token"] == "customer-device-token-2"
+
+
+def test_nadri_profile_get_and_logout_clears_matching_device_token(setup):
+    tables = rental_tables(setup)
+    response = setup["client"].post("/api/v1/nadree/user/login", json={
+        "UID": "user-fcm-get", "fcmToken": "customer-device-token"})
+    assert response.status_code == 200, response.text
+    data = response.json()
+    headers = {"Authorization": "Bearer " + data["accessToken"],
+               "X-Refresh-Token": data["refreshToken"]}
+
+    profile = setup["client"].get("/api/v1/nadree/user/profile", headers=headers)
+    assert profile.status_code == 200
+    assert profile.json()["user"]["uidToken"] == "user-fcm-get"
+
+    logout = setup["client"].post("/api/v1/nadree/user/logout",
+                                   headers={**headers, "X-FCM-Token": "customer-device-token"})
+    assert logout.status_code == 200, logout.text
+    with setup["engine"].connect() as connection:
+        row = connection.execute(select(tables["MSP_RENTAL_USER"])).mappings().one()
+    assert row["fcm_token"] is None
 
 
 def test_nadri_refresh_rotates_and_rejects_the_previous_token(setup):

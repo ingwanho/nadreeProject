@@ -130,6 +130,7 @@ def test_existing_rental_user_gets_refresh_token_table_plan(setup):
     plan = migration_plan(setup["db"])
     labels = {label for label, _, _ in plan}
     assert "add MSP_RENTAL_USER.user_access_revoked_at" in labels
+    assert "add MSP_RENTAL_USER.passport_img_key" in labels
     assert "create MSP_RENTAL_USER_REFRESH_TOKEN (nadri user sessions)" in labels
 
 

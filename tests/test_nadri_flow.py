@@ -43,7 +43,7 @@ class RecordingFcm:
         pass
 
 
-def test_manager_fcm_recipients_include_parent_and_child_scope(setup):
+def test_manager_fcm_recipients_use_direct_spot_scope(setup):
     admins = setup["db"].table("MSP_ADMIN")
     roles = setup["db"].table("MSP_ADMIN_ROLE")
     scopes = setup["db"].table("MSP_ADMIN_SPOT_SCOPE")
@@ -60,7 +60,7 @@ def test_manager_fcm_recipients_include_parent_and_child_scope(setup):
         conn.execute(admins.update().where(admins.c.admin_id == "primary").values(fcm_token="parent-device"))
     with Session(setup["engine"]) as session:
         recipients = _manager_recipients(setup["db"], session, "child")
-    assert {item["token"] for item in recipients} == {"parent-device", "child-device"}
+    assert {item["token"] for item in recipients} == {"child-device"}
 
 
 def prepare_rental_schema(setup):
@@ -177,6 +177,8 @@ def test_nadri_reservation_payment_checkout_and_return(setup, signin):
     assert recovered.json()["paymentStatus"] == "PENDING"
     assert recovered.json()["bookingId"] == reservation_id
     assert recovered.json()["shopId"] == "root"
+    assert recovered.json()["refundStatus"] == "NONE"
+    assert recovered.json()["refundedAmount"] == 0
     blocked = client.post("/nadreego/rent/approve", headers=admin_headers,
                           json={"bookedNo": "BO" + reservation_id, "qrCode": raw_qr})
     assert blocked.status_code == 409 and blocked.json()["errorCode"] == "PAYMENT_REQUIRED"

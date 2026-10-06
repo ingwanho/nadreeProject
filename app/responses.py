@@ -147,6 +147,15 @@ class CustomerProfileResult(Status):
     user: CustomerProfile
 
 
+class PassportUploadResult(Status):
+    bookedNo: str
+    available: bool
+    contentType: str
+    sizeBytes: int
+    uploadedAt: str
+    downloadPath: str
+
+
 class CustomerAvailabilityItem(BaseModel):
     # 앱의 shopId는 렌탈 지점의 영구 식별자인 spotMasterId와 같은 값이다.
     shopId: str
@@ -193,6 +202,8 @@ class CustomerPayment(Status):
     bookingId: str | None = None
     shopId: str | None = None
     paymentStatus: str
+    refundStatus: str = "NONE"
+    refundedAmount: int | float | None = None
     paypalOrderId: str | None = None
     paypalCaptureId: str | None = None
     approvalUrl: str | None = None

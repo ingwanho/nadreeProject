@@ -115,21 +115,22 @@ Firebase ID Token이 없거나 만료됐으면 `CUSTOMER_FIREBASE_AUTH_NOT_CONFI
 - 관리자 예약 승인·거절 결과는 관광객에게 FCM으로 전달합니다.
 - 관리자 앱에서 QR 인계와 반납 처리를 수행합니다. 관광객 앱에는 QR 처리 기능이 없습니다.
 - 캘린더는 해당 지점이 보유한 모델/차량의 기간별 예약·렌트·정비 가능 여부를 조회합니다.
+- 활성 렌탈 중에는 `PUT /nadreego/rent/passport`로 앱에서 식별정보를 마스킹한 JPEG/PNG를 업로드하고, `GET /nadreego/rent/passport/{bookedNo}`로 같은 지점의 활성 관리자만 조회합니다. 반납 후에는 API 접근을 차단합니다. 원본 이미지나 저장소 키를 응답하지 않습니다.
 
 ## 8. FCM 정책
 
-FCM 토큰은 앱이 전달한 값을 계정의 최신 토큰으로 저장합니다. 이번 정책은 계정당 기기 하나이며, 로그아웃해도 토큰을 삭제하지 않습니다.
+FCM 토큰은 앱이 전달한 값을 계정의 최신 토큰으로 저장합니다. 이번 정책은 계정당 기기 하나이며, 로그아웃 요청에 현재 기기의 `X-FCM-Token`을 보내 저장된 값과 일치하면 토큰을 삭제합니다. 헤더를 보내지 않으면 토큰을 유지합니다.
 
 | 이벤트 | 수신자 |
 |---|---|
-| 예약 요청 | 해당 지점과 상위 지점 범위의 활성 관리자 전체 |
+| 예약 요청 | 해당 지점에 직접 연결된 활성 관리자 |
 | 예약 승인 | 관광객 |
 | 예약 거절 | 관광객 |
 | 결제 기한 2일/1일 전 | 관광객 |
 | 결제 기한 만료 | 관광객 |
 | 결제 완료 | 관광객 및 해당 지점 관리자 전체 |
 
-관리자 수신자는 대상 지점과 상위 scope의 활성 `rental_primary_admin`/`rental_manager`를 조회합니다. 같은 토큰이 여러 계정에 있으면 한 번만 발송합니다. FCM 발송 실패가 예약·결제 트랜잭션 자체를 실패시키지 않도록 비즈니스 처리와 알림 결과를 분리합니다.
+관리자 수신자는 대상 지점에 직접 연결된 활성 `rental_primary_admin`/`rental_manager`를 조회합니다. 같은 토큰이 여러 계정에 있으면 한 번만 발송합니다. FCM 발송 실패가 예약·결제 트랜잭션 자체를 실패시키지 않도록 비즈니스 처리와 알림 결과를 분리합니다.
 
 FCM과 Firebase ID Token 검증은 같은 Firebase 프로젝트의 서비스 계정 설정을 사용합니다. 위치 정보 Firebase는 별도 프로젝트/환경 변수로 구분합니다.
 
@@ -188,7 +189,7 @@ sudo -u ec2-user -H bash -lc 'cd /srv/nadree-api && .venv/bin/python -m app.migr
 - PayPal 주문 생성 응답의 승인 URL로 이동하고, 앱 복귀 후 결제 상태 API와 웹훅 반영 상태를 확인합니다.
 - 결제 완료 전 `REQUESTED`·`APPROVED` 예약 취소를 허용하고, 결제 진행 중·완료 후에는 상태 API 또는 관리자 환불 절차를 안내합니다.
 - 결제 완료·승인·거절·만료 FCM을 받으면 예약 목록을 다시 조회합니다.
-- 로그아웃 시 FCM 토큰을 삭제하지 않습니다.
+- 로그아웃 요청에 일치하는 `X-FCM-Token`을 보내면 현재 FCM 토큰을 삭제하고, 헤더를 보내지 않으면 토큰을 유지합니다.
 - 오류 응답의 `errorCode`를 기준으로 사용자 메시지를 표시하고 원문 DB 오류를 노출하지 않습니다.
 
 ### 관리자 앱
@@ -217,6 +218,7 @@ sudo chmod 600 /srv/nadree-api/.env
 - `NADREE_LOCATION_FIREBASE_*` 위치 Firebase 값
 - `NADREE_PAYPAL_*` 및 Webhook 설정
 - `NADREE_SMTP_*` 이메일 설정
+- `NADREE_PASSPORT_STORAGE_ROOT` (현재 개발용 로컬 저장소 설정; 운영 S3 어댑터·보관/삭제 정책 별도)
 
 서비스는 systemd의 `User=ec2-user`, `WorkingDirectory=/srv/nadree-api`로 실행해야 합니다. `.env`를 읽을 수 없는 `ssm-user`로 마이그레이션이나 수동 실행을 하면 `PermissionError`가 발생하므로 다음처럼 실행합니다.
 
@@ -245,7 +247,7 @@ curl -sS https://na-dree.com/health/ready
 
 ## 14. 테스트 현황과 남은 운영 확인
 
-- 전체 자동 테스트: 156 passed, 6 skipped, 3 warnings 기준으로 통과했습니다.
+- 전체 자동 테스트: 160 passed, 6 skipped, 2 warnings 기준으로 통과했습니다.
 - 스킵 항목은 외부 Firebase, PayPal, 실제 DB/Redis 같은 운영 의존성이 필요한 통합 테스트입니다.
 - 실제 운영 전 Firebase ID Token 검증, FCM 발송, PayPal Sandbox 주문·캡처·웹훅·환불, Redis 연결을 각각 확인해야 합니다.
 - PayPal 웹훅은 Sandbox 콘솔의 Webhook URL과 이벤트 구독이 실제 도메인으로 저장되어 있어야 합니다.
@@ -258,3 +260,4 @@ curl -sS https://na-dree.com/health/ready
 - FCM 토큰은 계정당 최신 1개 정책입니다. 한 계정의 여러 기기 동시 수신이 필요해지면 별도 기기 토큰 테이블과 토큰별 폐기 정책을 추가해야 합니다.
 - MVP는 발리 기준 고정 시간과 USD 결제를 전제로 합니다. 여러 국가를 지원할 때는 지점 타임존, 영업시간, 환율 스냅샷을 별도로 도입해야 합니다.
 - 채팅은 백엔드 범위가 아니며 프론트에서 처리합니다.
+- 여권 업로드는 현재 파일시스템 어댑터와 클라이언트의 마스킹 확인 플래그를 사용합니다. 운영 S3/암호화 저장소, 시각적 마스킹 검증, 반납 후 실제 자동 삭제 배치의 승인은 아직 필요합니다.

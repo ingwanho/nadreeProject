@@ -1,6 +1,6 @@
 import uuid
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, Request, Response
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
@@ -10,11 +10,13 @@ from app.db import transaction
 from app.errors import Problem
 from app.fcm import queue_reservation_decision
 from app.headers import bearer
+from app.passport import decode_masked_image, passport_key
 from app.pricing import daily_price, load_tiers
 from app.paypal import execute_refund
 from app.rental_common import (OPEN, action_result, context, contracts_for, day_end, effective_state,
                                expire_maintenance, fleet, is_open, iso, local_date, lock_key, rows, verify_qr)
-from app.rental_inputs import BookingAction, Qr, RentApprove
+from app.rental_inputs import BookingAction, PassportUpload, Qr, RentApprove
+from app.responses import PassportUploadResult
 from app.security import now
 
 router = APIRouter(tags=["W06 Reservations and rentals"], dependencies=[bearer])
@@ -43,6 +45,96 @@ def customer(request, session, ident):
     if row is None:
         raise Problem(404, "RENTAL_CUSTOMER_NOT_FOUND")
     return row
+
+
+def passport_contract(request, session, root, booked_no, *, lock=False):
+    if not booked_no or not (booked_no.startswith("BO") or booked_no.startswith("RT")):
+        raise Problem(404, "PASSPORT_RENTAL_NOT_FOUND")
+    contracts = request.app.state.db.table("MSP_RENTAL_CONTRACT")
+    query = select(contracts).where(contracts.c.pickup_spot_master_id == root["spot_master_id"])
+    if booked_no.startswith("BO"):
+        query = query.where(contracts.c.reservation_id == booked_no[2:])
+    else:
+        query = query.where(contracts.c.rental_contract_id == booked_no[2:])
+    if lock:
+        query = query.with_for_update()
+    contract = session.execute(query).mappings().first()
+    if not contract or contract["contract_status"] not in OPEN or contract["actual_end_time"] is not None:
+        raise Problem(404, "PASSPORT_RENTAL_NOT_ACTIVE")
+    user = customer(request, session, contract["uid_token"])
+    users = request.app.state.db.table("MSP_RENTAL_USER")
+    if "passport_img_key" not in users.c:
+        raise Problem(503, "PASSPORT_SCHEMA_REQUIRED")
+    return dict(contract), dict(user)
+
+
+def passport_storage(request):
+    storage = request.app.state.passport_storage
+    if not storage.configured:
+        raise Problem(503, "PASSPORT_STORAGE_NOT_CONFIGURED")
+    return storage
+
+
+@router.put(
+    "/nadreego/rent/passport",
+    response_model=PassportUploadResult,
+    summary="활성 렌탈의 비식별 여권 이미지 업로드",
+    description=(
+        "진행 중인 렌탈(`ON_RENT` 또는 `OVERDUE`)에 한해 이미 마스킹된 JPEG/PNG를 업로드합니다. "
+        "`imageBase64`는 data URL 접두사 없이 보내며, 여권번호와 개인정보가 보이지 않는 이미지일 때만 "
+        "`masked=true`로 요청해야 합니다. 반납된 렌탈은 업로드할 수 없습니다."
+    ),
+)
+def upload_passport(body: PassportUpload, request: Request, session: Session = DB):
+    _, root = context(request, session, write=True)
+    contract, user = passport_contract(request, session, root, body.bookedNo, lock=True)
+    image = decode_masked_image(body.imageBase64, body.contentType, body.masked)
+    storage = passport_storage(request)
+    key = passport_key(root["spot_master_id"], contract["rental_contract_id"], body.contentType)
+    storage.write(key, image)
+    at = now()
+    users = request.app.state.db.table("MSP_RENTAL_USER")
+    try:
+        session.execute(update(users).where(users.c.uid_token == user["uid_token"]).values(
+            passport_img_key=key, updated_at=at))
+    except Exception:
+        storage.delete(key)
+        raise
+    if user.get("passport_img_key") and user["passport_img_key"] != key:
+        storage.delete(user["passport_img_key"])
+    return {"status": "success", "bookedNo": body.bookedNo, "available": True,
+            "contentType": body.contentType, "sizeBytes": len(image), "uploadedAt": iso(request, at),
+            "downloadPath": "/nadreego/rent/passport/" + body.bookedNo}
+
+
+@router.get(
+    "/nadreego/rent/passport/{booked_no}",
+    response_class=Response,
+    summary="활성 렌탈의 비식별 여권 이미지 조회",
+    description=(
+        "활성 렌탈의 비식별 여권 이미지를 원본 바이트로 반환합니다. 응답 Content-Type은 업로드 형식에 따라 "
+        "`image/jpeg` 또는 `image/png`이며, 반납된 렌탈은 조회할 수 없습니다."
+    ),
+    responses={
+        200: {
+            "description": "비식별 여권 이미지 바이너리",
+            "content": {
+                "image/jpeg": {"schema": {"type": "string", "format": "binary"}},
+                "image/png": {"schema": {"type": "string", "format": "binary"}},
+            },
+        },
+    },
+)
+def view_passport(booked_no: str, request: Request, session: Session = DB):
+    _, root = context(request, session)
+    _, user = passport_contract(request, session, root, booked_no)
+    key = user.get("passport_img_key")
+    if not key:
+        raise Problem(404, "PASSPORT_NOT_FOUND")
+    data = passport_storage(request).read(key)
+    content_type = "image/png" if key.lower().endswith(".png") else "image/jpeg"
+    return Response(content=data, media_type=content_type,
+                    headers={"Cache-Control": "no-store", "Content-Disposition": "inline"})
 
 
 def paid_booking(request, session, reservation):

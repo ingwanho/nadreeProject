@@ -10,5 +10,5 @@ def refresh_header(x_refresh_token: str | None = Header(default=None, alias="X-R
 
 
 def fcm_header(x_fcm_token: str | None = Header(default=None, alias="X-FCM-Token", max_length=512,
-              description="Optional current device token; logout does not delete the stored token.")):
+              description="Optional current device token; when it matches the stored token, logout clears it.")):
     return x_fcm_token

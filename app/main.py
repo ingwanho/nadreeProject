@@ -18,6 +18,7 @@ from app.openapi_examples import (OPENAPI_EXAMPLES, OPENAPI_REQUEST_EXAMPLES,
                                    OPENAPI_RESPONSE_EXAMPLES)
 from app.delivery import router as delivery_router
 from app.paypal import PayPalClient, router as paypal_router
+from app.passport import PassportStorage
 from app.customer_rentals import router as customer_rentals_router, user_router as customer_users_router
 from app.pricing import router as pricing_router
 from app.readmodels import router as readmodels_router
@@ -34,7 +35,7 @@ OPENAPI_TAGS = [
     {"name": "W03 Vehicles and QR", "description": "차량·QR·센서 관리"},
     {"name": "W04 Pricing", "description": "차량 가격과 렌탈 티어"},
     {"name": "W05 Delivery", "description": "배송 지역과 배송비"},
-    {"name": "W06 Reservations and rentals", "description": "예약·렌트·인계·반납. 테스트 시드 예약은 `NRTEST-RES-*`, 차량은 `NRTEST-VEHICLE-*`입니다."},
+    {"name": "W06 Reservations and rentals", "description": "예약·렌트·인계·반납·활성 렌탈의 비식별 여권 이미지. 테스트 시드 예약은 `NRTEST-RES-*`, 차량은 `NRTEST-VEHICLE-*`입니다."},
     {"name": "W07 Dashboard and calendar", "description": "운영 현황과 캘린더 조회"},
     {"name": "W08 PayPal webhook", "description": "PayPal 결제·환불·웹훅"},
     {"name": "Nadree customer users", "description": "나드리 고객 UID 로그인·프로필·토큰. 로그인에는 Firebase ID Token과 body의 UID가 모두 필요합니다."},
@@ -65,7 +66,8 @@ OPENAPI_DESCRIPTION = """
 """
 
 
-def create_app(settings=None, db=None, limiter=None, mailer=None, fcm=None, locations=None, customer_auth=None):
+def create_app(settings=None, db=None, limiter=None, mailer=None, fcm=None, locations=None, customer_auth=None,
+               passport_storage=None):
     settings = settings or Settings()
     if settings.env == "production" and (len(settings.jwt_secret.get_secret_value().encode()) < 32
                                          or not settings.database_url.get_secret_value()
@@ -106,6 +108,7 @@ def create_app(settings=None, db=None, limiter=None, mailer=None, fcm=None, loca
     application.state.fcm = fcm or FcmSender(settings)
     application.state.customer_auth = customer_auth or CustomerFirebaseAuth(settings)
     application.state.locations = locations or VehicleLocations(settings)
+    application.state.passport_storage = passport_storage or PassportStorage(settings.passport_storage_root)
     application.state.paypal = PayPalClient(settings)
     install_handlers(application)
 

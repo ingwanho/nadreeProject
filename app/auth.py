@@ -58,8 +58,8 @@ def login(body: Login, request: Request, session: Session = DB):
         tokens.c.admin_id == row["admin_id"], tokens.c.user_agent == SESSION_MARKER,
         tokens.c.revoked_at.is_(None), tokens.c.expires_at > current)
         .order_by(tokens.c.issued_at.asc(), tokens.c.token_id.asc()).with_for_update()).mappings().all()
-    # 관리자 계정은 최대 3대의 활성 기기를 허용한다. 네 번째 로그인 시 가장 오래된 세션을 폐기한다.
-    for old in active_sessions[:max(0, len(active_sessions) - 2)]:
+    # 한 계정은 현재 로그인 기기 하나만 사용한다. 새 로그인은 이전 세션을 폐기한다.
+    for old in active_sessions:
         session.execute(update(tokens).where(tokens.c.token_id == old["token_id"],
             tokens.c.revoked_at.is_(None)).values(revoked_at=current))
     session.execute(tokens.insert().values(token_id=token_id, admin_id=row["admin_id"],
@@ -108,14 +108,20 @@ def refresh(request: Request, session: Session = DB):
 
 
 @router.get("/logout", response_model=Status, dependencies=[bearer, Depends(refresh_header), Depends(fcm_header)])
-def logout(request: Request, session: Session = DB):
+def logout(request: Request, session: Session = DB, current_fcm_token: str | None = Depends(fcm_header)):
     actor = principal(request, session)
-    lock_account(request, session, actor.admin["admin_id"], actor.session_id)
+    account = lock_account(request, session, actor.admin["admin_id"], actor.session_id)
     table, row = refresh_row(request, session)
     if row["token_id"] != actor.session_id or row["admin_id"] != actor.admin["admin_id"]:
         raise Problem(401, "TOKEN_PAIR_MISMATCH")
-    # 로그아웃은 현재 세션만 폐기한다. FCM 토큰은 다음 로그인·알림에 재사용할 수 있도록 보관한다.
-    session.execute(update(table).where(table.c.token_id == actor.session_id).values(revoked_at=now()))
+    current = now()
+    session.execute(update(table).where(table.c.token_id == actor.session_id).values(revoked_at=current))
+    # 지연된 이전 기기의 로그아웃이 최신 기기 토큰을 지우지 않도록 현재 값과 비교한다.
+    if current_fcm_token and account.get("fcm_token") == current_fcm_token:
+        admins = request.app.state.db.table("MSP_ADMIN")
+        session.execute(update(admins).where(admins.c.admin_id == actor.admin["admin_id"],
+                                             admins.c.fcm_token == current_fcm_token)
+                        .values(fcm_token=None, fcm_token_updated_at=current))
     return {"status": "success"}
 
 

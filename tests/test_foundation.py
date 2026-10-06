@@ -69,16 +69,25 @@ def test_openapi_has_exact_work_group_routes(client):
     redoc = client.get("/redoc")
     assert docs.status_code == 200 and "swagger-ui" in docs.text
     assert redoc.status_code == 200 and "redoc" in redoc.text.lower()
-    paths = client.get("/openapi.json").json()["paths"]
-    assert len([path for path in paths if not path.startswith("/health/")]) == 49
+    openapi = client.get("/openapi.json").json()
+    paths = openapi["paths"]
+    assert len([path for path in paths if not path.startswith("/health/")]) == 51
     assert "/nadreego/admin/signup" in paths
     assert "/api/v1/nadree/rental/request/cancel" in paths
     for path in ("/api/v1/nadree/user/login", "/api/v1/nadree/user/profile", "/api/v1/nadree/rental/availability",
                  "/api/v1/nadree/rental/request", "/api/v1/nadree/rental/payment/order",
                  "/api/v1/nadree/rental/payment/capture", "/api/v1/nadree/rental/payment/{paymentId}",
                  "/api/v1/nadree/rental/ongoing",
-                 "/api/v1/nadree/rental/completed", "/api/v1/nadree/user/refresh", "/api/v1/nadree/user/logout"):
+                 "/api/v1/nadree/rental/completed", "/api/v1/nadree/user/refresh", "/api/v1/nadree/user/logout",
+                 "/nadreego/rent/passport", "/nadreego/rent/passport/{booked_no}"):
         assert path in paths
     assert "/nadreego/admin/refresh" in paths
     assert "get" in paths["/nadreego/admin/refresh"]
     assert "post" in paths["/nadreego/admin/fcmToken"]
+    passport_request = paths["/nadreego/rent/passport"]["put"]["requestBody"]["content"]["application/json"]
+    assert passport_request["example"]["masked"] is True
+    assert passport_request["example"]["contentType"] == "image/jpeg"
+    assert paths["/nadreego/rent/passport"]["put"]["responses"]["200"]["content"]["application/json"]["example"]["available"] is True
+    passport_response = paths["/nadreego/rent/passport/{booked_no}"]["get"]["responses"]["200"]["content"]
+    assert passport_response["image/jpeg"]["schema"] == {"type": "string", "format": "binary"}
+    assert passport_response["image/png"]["schema"] == {"type": "string", "format": "binary"}

@@ -205,6 +205,12 @@ OPENAPI_EXAMPLES = {
     "BookingAction": {"bookedNo": "BONRTEST-RES-REQ-001", "action": "APPROVE"},
     "ReservationCancel": {"reservationId": "NRTEST-RES-REQ-001", "reason": "테스트 취소"},
     "RentApprove": {"qrCode": "<server-issued-qr-code>", "bookedNo": "BONRTEST-RES-APP-001"},
+    "PassportUpload": {
+        "bookedNo": "BONRTEST-RES-HAND-001",
+        "contentType": "image/jpeg",
+        "imageBase64": "<base64-of-already-masked-jpeg>",
+        "masked": True,
+    },
     "TierRange": {"minCc": 0, "maxCc": 125},
     "TierCreate": {"minCc": 0, "maxCc": 125, "price": 25, "type": "BASIC", "spotCode": TEST_SPOT["spotCode"]},
     "Delivery": {
@@ -352,6 +358,12 @@ OPENAPI_EXAMPLES.update({
         "status": "success", "adminId": "<created-admin-uuid>", "requestId": "<request-uuid>",
         "spotMasterId": TEST_SPOT["spotMasterId"], "requestStatus": "REQUESTED",
     },
+    "PassportUploadResult": {
+        "status": "success", "bookedNo": "BONRTEST-RES-HAND-001", "available": True,
+        "contentType": "image/jpeg", "sizeBytes": 184320,
+        "uploadedAt": "2026-10-07T09:00:00+08:00",
+        "downloadPath": "/nadreego/rent/passport/BONRTEST-RES-HAND-001",
+    },
 })
 
 
@@ -436,6 +448,12 @@ OPENAPI_RESPONSE_EXAMPLES = {
         "data": {"bookedNo": "BONRTEST-RES-APP-001", "rentalContractId": "<rental-contract-uuid>",
                  "contractStatus": "ON_RENT", "vehicleStatus": "ON_RENT", "plannedEndDate": "2026-10-13",
                  "reservationStatus": "HANDED_OVER", "vehicleAssignmentStatus": "LOCKED"},
+    },
+    ("PUT", "/nadreego/rent/passport"): {
+        "status": "success", "bookedNo": "BONRTEST-RES-HAND-001", "available": True,
+        "contentType": "image/jpeg", "sizeBytes": 184320,
+        "uploadedAt": "2026-10-07T09:00:00+08:00",
+        "downloadPath": "/nadreego/rent/passport/BONRTEST-RES-HAND-001",
     },
     ("POST", "/nadreego/vehicle/return"): {
         "status": True, "errorCode": None, "message": "success", "currentState": "RETURNED",

@@ -388,14 +388,14 @@ QR 인계·반납은 관광객 앱에서 호출하지 않습니다. 시드 SQL�
 
 | 이벤트 | 수신자 |
 |---|---|
-| `RESERVATION_REQUESTED` | 해당 지점과 상위 범위의 활성 관리자 전체 |
+| `RESERVATION_REQUESTED` | 해당 지점에 직접 연결된 활성 관리자 |
 | `RESERVATION_APPROVED` | 관광객 |
 | `RESERVATION_REJECTED` | 관광객 |
 | `PAYMENT_DEADLINE_2_DAY`, `PAYMENT_DEADLINE_1_DAY` | 관광객 |
 | `RESERVATION_PAYMENT_EXPIRED` | 관광객 |
 | `PAYMENT_COMPLETED` | 관광객과 해당 지점 관리자 전체 |
 
-푸시가 도착하지 않아도 데이터 상태가 변경되었는지는 목록·결제 조회 API로 재확인합니다. 로그아웃 후에도 FCM 토큰은 삭제되지 않아 다음 로그인·알림에 사용할 수 있어야 합니다.
+푸시가 도착하지 않아도 데이터 상태가 변경되었는지는 목록·결제 조회 API로 재확인합니다. 로그아웃 요청에 현재 기기의 `X-FCM-Token`을 보내 저장된 값과 일치하면 토큰이 삭제되며, 헤더를 생략하면 토큰은 유지됩니다.
 
 ## 8. 테스트 완료 기준
 
@@ -404,6 +404,7 @@ QR 인계·반납은 관광객 앱에서 호출하지 않습니다. 시드 SQL�
 - [ ] 테스트 모델·지점·가격·배송 정보 조회 성공
 - [ ] 예약 요청과 관리자 FCM 수신 확인
 - [ ] 승인·거절·결제 전 취소 확인
+- [ ] 활성 렌탈에서 마스킹된 여권 JPEG/PNG 업로드·조회 및 반납 후 접근 차단 확인
 - [ ] PayPal Sandbox 주문·캡처·웹훅·중복 이벤트 확인
 - [ ] 진행 중·완료 목록의 가격·배송·결제 정보 확인
 - [ ] QR 인계 후 `HANDED_OVER`/`ON_RENT`, 반납 후 `RETURNED` 확인

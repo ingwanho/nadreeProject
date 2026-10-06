@@ -121,6 +121,9 @@ def migration_plan(db):
         if "user_access_revoked_at" not in user_columns:
             operations.append(("add MSP_RENTAL_USER.user_access_revoked_at",
                 "ALTER TABLE MSP_RENTAL_USER ADD COLUMN user_access_revoked_at DATETIME DEFAULT NULL", {}))
+        if "passport_img_key" not in user_columns:
+            operations.append(("add MSP_RENTAL_USER.passport_img_key",
+                "ALTER TABLE MSP_RENTAL_USER ADD COLUMN passport_img_key VARCHAR(500) DEFAULT NULL", {}))
         if "MSP_RENTAL_USER_REFRESH_TOKEN" not in tables:
             sql = (Path(__file__).resolve().parent.parent / "migrations" / "008_rental_user_refresh_token.sql").read_text()
             operations.append(("create MSP_RENTAL_USER_REFRESH_TOKEN (nadri user sessions)", sql, {}))

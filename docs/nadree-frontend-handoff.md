@@ -49,10 +49,10 @@ Authorization: Bearer <nadree-access-token>
 
 ### FCM 수신자
 
-- 예약 요청·결제 완료 알림은 해당 지점에 직접 연결된 관리자와 상위 지점 범위를 관리하는 활성 대표·일반관리자 전체에게 전송합니다.
+- 예약 요청·결제 완료 알림은 해당 지점에 직접 연결된 활성 대표·일반관리자에게 전송합니다.
 - 동일 FCM 토큰이 수신자 목록에 중복되면 한 번만 전송합니다.
 - 고객 승인·거절·결제 기한·결제 완료 알림은 고객 토큰으로 전송합니다.
-- 로그아웃 시 FCM 토큰은 삭제하지 않습니다.
+- 로그아웃 요청에 현재 기기의 `X-FCM-Token`을 함께 보내고 저장된 값과 일치하면 FCM 토큰을 삭제합니다. 헤더를 보내지 않으면 세션만 로그아웃합니다.
 - 현재 DB 구조는 계정 행마다 최신 FCM 토큰 1개를 보관합니다. 한 계정의 여러 기기에서 동시에 수신해야 하면 별도 기기 토큰 테이블이 필요하므로 별도 협의가 필요합니다.
 
 ## 3. 인증 흐름
@@ -119,7 +119,7 @@ Authorization: Bearer <nadree-access-token>
 X-Refresh-Token: <nadree-refresh-token>
 ```
 
-로그아웃 성공 후 저장된 access·refresh token을 삭제합니다. FCM 토큰은 삭제하지 않습니다.
+로그아웃 성공 후 저장된 access·refresh token을 삭제합니다. 현재 기기의 `X-FCM-Token`을 보내 저장된 토큰과 일치하면 FCM 토큰도 삭제합니다. 헤더를 보내지 않으면 FCM 토큰은 유지됩니다.
 
 ## 4. 고객 API 호출표
 
@@ -127,6 +127,7 @@ X-Refresh-Token: <nadree-refresh-token>
 |---|---|---|---|---|
 | 로그인·회원 생성 | POST | `/api/v1/nadree/user/login` | Firebase ID Token | body 필드는 `UID` 대문자 유지 |
 | 프로필 수정 | PATCH | `/api/v1/nadree/user/profile` | Nadree access | `NAME`, `Age`, `GENDER`, `NATIONALITY` 대소문자 유지 |
+| 프로필 조회 | GET | `/api/v1/nadree/user/profile` | Nadree access | 로그인한 사용자의 최신 프로필 조회 |
 | 차량·지점·가격 조회 | POST | `/api/v1/nadree/rental/availability` | 없음 | 로그인 전 호출 가능, 서버 가격을 그대로 사용 |
 | 예약 요청 | POST | `/api/v1/nadree/rental/request` | Nadree access | `spotMasterId`와 `modelId`를 사용 |
 | PayPal 주문 생성 | POST | `/api/v1/nadree/rental/payment/order` | Nadree access | 관리자 승인 후에만 호출 |
@@ -135,7 +136,7 @@ X-Refresh-Token: <nadree-refresh-token>
 | 진행 중 목록 | GET | `/api/v1/nadree/rental/ongoing` | Nadree access | `page`, `pageSize` 사용 |
 | 완료 목록 | GET | `/api/v1/nadree/rental/completed` | Nadree access | `page`, `pageSize` 사용 |
 | 결제 전 예약 취소 | POST | `/api/v1/nadree/rental/request/cancel` | Nadree access | body에 `reservationId` 사용 |
-| 로그아웃 | POST | `/api/v1/nadree/user/logout` | access + refresh | FCM 토큰을 삭제하지 않음 |
+| 로그아웃 | POST | `/api/v1/nadree/user/logout` | access + refresh | 일치하는 `X-FCM-Token`을 보내면 현재 FCM 토큰 삭제 |
 | 토큰 갱신 | POST | `/api/v1/nadree/user/refresh` | refresh | 새 access·refresh로 교체 |
 
 ## 5. 차량 조회·예약 요청
@@ -168,7 +169,7 @@ POST /api/v1/nadree/rental/availability
 }
 ```
 
-날짜는 날짜만 보내며, 반납일은 시작일보다 늦어야 하고 최대 42일 범위입니다. 총액·배송비를 프론트에서 재계산하지 말고 응답의 `price`를 사용합니다.
+날짜는 날짜만 보내며, 반납일은 시작일보다 늦어야 하고 최대 30일 범위입니다. 총액·배송비를 프론트에서 재계산하지 말고 응답의 `price`를 사용합니다.
 
 응답 항목에는 다음 값이 포함됩니다.
 

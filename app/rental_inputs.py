@@ -141,7 +141,7 @@ class NadriAvailability(Body):
 
     @model_validator(mode="after")
     def dates(self):
-        if self.returnDate <= self.startDate or (self.returnDate - self.startDate).days > 42:
+        if self.returnDate <= self.startDate or (self.returnDate - self.startDate).days > 30:
             raise ValueError("invalid rental date range")
         if self.deliveryRequested and not self.pickupLocation:
             raise ValueError("pickup location required")
@@ -161,7 +161,7 @@ class NadriRentalRequest(Body):
 
     @model_validator(mode="after")
     def dates_and_delivery(self):
-        if self.returnDate <= self.startDate or (self.returnDate - self.startDate).days > 42:
+        if self.returnDate <= self.startDate or (self.returnDate - self.startDate).days > 30:
             raise ValueError("invalid rental date range")
         if self.deliveryRequested and not self.pickupLocation:
             raise ValueError("pickup location required")
@@ -189,6 +189,19 @@ class RentApprove(Qr):
         elif self.uidToken is None or self.plannedEndDate is None:
             raise ValueError("walk-in requires uid token and end date")
         return self
+
+
+class PassportUpload(Body):
+    bookedNo: Annotated[str, Field(
+        min_length=3, max_length=52, pattern=r"^(BO|RT)\S+$",
+        description="예약번호 BO... 또는 렌탈계약번호 RT...",
+    )]
+    contentType: Literal["image/jpeg", "image/png"]
+    imageBase64: Annotated[str, Field(
+        min_length=4, max_length=7000000,
+        description="data URL 접두사 없이 전송하는 비식별 이미지의 base64 문자열",
+    )]
+    masked: StrictBool = Field(description="이미지에 여권번호·개인정보가 보이지 않으면 true")
 
 
 class TierRange(Body):

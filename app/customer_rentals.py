@@ -13,7 +13,7 @@ from app.availability import compute_assignment, reservation_history
 from app.db import require_columns, transaction
 from app.errors import Problem
 from app.fcm import queue_reservation_request
-from app.headers import refresh_header
+from app.headers import fcm_header, refresh_header
 from app.paypal import identifier
 from app.pricing import daily_price, load_tiers
 from app.rental_common import contracts_for, day_end, fleet, iso, local_date, lock_key, midnight
@@ -566,11 +566,26 @@ def nadree_profile(body: NadriProfile, request: Request, session: Session = DB):
                                              "gender": row.get("gender"), "nationality": row.get("nationality")}}
 
 
+@user_router.get("/profile", response_model=CustomerProfileResult,
+                 summary="나드리 고객 최신 프로필 조회",
+                 dependencies=[Depends(customer_access_token)])
+def nadree_profile_view(request: Request, session: Session = DB):
+    user = user_principal(request, session)
+    table = _db(request).table("MSP_RENTAL_USER")
+    row = session.execute(select(table).where(table.c.uid_token == user.uid_token)).mappings().first()
+    if not row:
+        raise Problem(401, "INVALID_NADRI_USER_TOKEN")
+    return {"status": "success", "user": {"uidToken": row["uid_token"], "name": row.get("name"),
+                                             "age": row.get("age"), "gender": row.get("gender"),
+                                             "nationality": row.get("nationality")}}
+
+
 @user_router.post("/logout", response_model=Status,
-                  dependencies=[Depends(customer_access_token), Depends(refresh_header)])
+                  dependencies=[Depends(customer_access_token), Depends(refresh_header), Depends(fcm_header)])
 @user_router.get("/logout", response_model=Status,
-                 dependencies=[Depends(customer_access_token), Depends(refresh_header)])
-def nadree_logout(request: Request, session: Session = DB):
+                 dependencies=[Depends(customer_access_token), Depends(refresh_header), Depends(fcm_header)])
+def nadree_logout(request: Request, session: Session = DB,
+                  current_fcm_token: str | None = Depends(fcm_header)):
     user = user_principal(request, session)
     raw = request.headers.get("X-Refresh-Token")
     refresh_table = _db(request).table("MSP_RENTAL_USER_REFRESH_TOKEN")
@@ -591,6 +606,10 @@ def nadree_logout(request: Request, session: Session = DB):
     if "user_access_revoked_at" not in table.c:
         raise Problem(503, "RENTAL_USER_SCHEMA_UPDATE_REQUIRED")
     revoked_at = now()
+    if current_fcm_token and fresh.get("fcm_token") == current_fcm_token:
+        session.execute(update(table).where(table.c.uid_token == user.uid_token,
+                                             table.c.fcm_token == current_fcm_token)
+                        .values(fcm_token=None, fcm_token_updated_at=revoked_at))
     session.execute(update(table).where(table.c.uid_token == user.uid_token).values(user_access_revoked_at=revoked_at, updated_at=revoked_at))
     session.execute(update(refresh_table).where(refresh_table.c.uid_token == user.uid_token,
                                                 refresh_table.c.revoked_at.is_(None)).values(revoked_at=revoked_at))
@@ -713,6 +732,8 @@ def _payment_result(payment, approval_url=None):
             "shopId": payment.get("_shop_master_id"),
             "paymentStatus": payment["payment_status"], "paypalOrderId": payment.get("paypal_order_id"),
             "paypalCaptureId": payment.get("paypal_capture_id"), "approvalUrl": approval_url,
+            "refundStatus": payment.get("refund_status", "NONE"),
+            "refundedAmount": _number(payment.get("refunded_amount")),
             "totalPrice": _number(payment.get("total_price")), "serverTotalPrice": _number(payment.get("total_price")),
             "currency": payment["currency"], "payment": view}
 

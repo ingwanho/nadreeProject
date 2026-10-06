@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from concurrent.futures import ThreadPoolExecutor
 from threading import Lock
 
-from sqlalchemy import and_, literal, or_, select, update
+from sqlalchemy import and_, select, update
 
 from app.security import GENERAL, PRIMARY
 
@@ -210,22 +210,14 @@ def _queue(session, *, table, key_column, recipients, event, title, body, data):
 
 
 def _manager_recipients(db, session, spot_master_id):
-    admins, mapping, roles, scopes, spots = (db.table(name) for name in (
-        "MSP_ADMIN", "MSP_ADMIN_ROLE", "MSP_ROLE", "MSP_ADMIN_SPOT_SCOPE", "MSP_SPOT_MASTER"))
-    target = session.execute(select(spots.c.contract_id, spots.c.unit_code).where(
-        spots.c.spot_master_id == spot_master_id)).mappings().first()
-    if not target:
-        return []
-    scoped_spots = spots.alias("scoped_spot")
+    admins, mapping, roles, scopes = (db.table(name) for name in (
+        "MSP_ADMIN", "MSP_ADMIN_ROLE", "MSP_ROLE", "MSP_ADMIN_SPOT_SCOPE"))
     query = (select(admins.c.admin_id, admins.c.fcm_token, admins.c.fcm_token_updated_at)
              .select_from(admins.join(mapping, mapping.c.admin_id == admins.c.admin_id)
                           .join(roles, roles.c.role_code == mapping.c.role_code)
                           .join(scopes, and_(scopes.c.admin_id == admins.c.admin_id,
-                                             scopes.c.access_type == "manage"))
-                          .join(scoped_spots, scoped_spots.c.spot_master_id == scopes.c.spot_master_id))
-             .where(scoped_spots.c.contract_id == target["contract_id"],
-                    or_(scoped_spots.c.spot_master_id == spot_master_id,
-                        literal(target["unit_code"]).like(scoped_spots.c.unit_code + "-%")),
+                                             scopes.c.access_type == "manage")))
+             .where(scopes.c.spot_master_id == spot_master_id,
                     admins.c.is_active == 1, admins.c.fcm_token.is_not(None),
                     mapping.c.role_code.in_([PRIMARY, GENERAL]), roles.c.is_active == 1,
                     (mapping.c.expires_at.is_(None) | (mapping.c.expires_at > _utc_now())))

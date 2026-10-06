@@ -66,7 +66,7 @@ def test_refresh_rotates_and_rejects_previous_token(client, signin):
     assert client.get("/nadreego/admin/refresh", headers={"X-Refresh-Token": result.json()["refreshToken"]}).status_code == 200
 
 
-def test_admin_refresh_sessions_are_capped_at_three(client, signin, setup):
+def test_admin_refresh_sessions_are_limited_to_one(client, signin, setup):
     first = signin()
     table = setup["db"].table("MSP_REFRESH_TOKEN")
     with setup["engine"].begin() as conn:
@@ -77,10 +77,12 @@ def test_admin_refresh_sessions_are_capped_at_three(client, signin, setup):
         rows = conn.execute(select(table).where(table.c.admin_id == "primary",
             table.c.user_agent == SESSION_MARKER)).mappings().all()
     active = [row for row in rows if row["revoked_at"] is None]
-    assert len(active) == 3
+    assert len(active) == 1
     old = next(row for row in rows if row["token_hash"] == fingerprint(first["X-Refresh-Token"]))
     assert old["revoked_at"] is not None
     assert client.get("/nadreego/admin/refresh", headers=first).status_code == 401
+    assert client.get("/nadreego/admin/refresh", headers=second).status_code == 401
+    assert client.get("/nadreego/admin/refresh", headers=third).status_code == 401
     assert client.get("/nadreego/admin/refresh", headers=fourth).status_code == 200
 
 
@@ -103,14 +105,14 @@ def test_access_claims_are_checked(client, signin, setup, change):
     assert client.post("/nadreego/admin/fcmToken", headers=headers, json={"fcmToken": "x"}).status_code == 401
 
 
-def test_logout_old_device_preserves_latest_fcm(client, signin, setup):
+def test_logout_old_device_cannot_revoke_latest_session_or_fcm(client, signin, setup):
     old = signin(fcmToken="old-device")
     latest = signin(fcmToken="latest-device")
-    assert client.get("/nadreego/admin/logout", headers={**old, "X-FCM-Token": "old-device"}).status_code == 200
+    assert client.get("/nadreego/admin/logout", headers={**old, "X-FCM-Token": "old-device"}).status_code == 401
     assert admin_row(setup)["fcm_token"] == "latest-device"
     assert client.post("/nadreego/admin/fcmToken", headers=old, json={"fcmToken": "x"}).status_code == 401
     assert client.get("/nadreego/admin/logout", headers={**latest, "X-FCM-Token": "latest-device"}).status_code == 200
-    assert admin_row(setup)["fcm_token"] == "latest-device"
+    assert admin_row(setup)["fcm_token"] is None
 
 
 def test_logout_without_fcm_and_token_pair_mismatch(client, signin, setup):

@@ -18,6 +18,7 @@ DB 계획 v2.24는 지점 소개·연락 이메일 2컬럼과 기존 관리자 p
 | 13 | 나드리 로그아웃 토큰 폐기 시각 | [006_rental_user_logout.sql](006_rental_user_logout.sql)로 고객 access token 폐기 시각을 저장. FCM 토큰은 보존 |
 | 14 | 나드리 고객 refresh token | [008_rental_user_refresh_token.sql](008_rental_user_refresh_token.sql)로 관리자 토큰과 분리된 고객 세션을 저장. UID별 활성 토큰은 1개이며 로그인·갱신 시 이전 토큰을 폐기 |
 | 15 | 렌탈 조회 복합 인덱스 | `MSP_VEHICLE_SPOT_HISTORY`, `MSP_RESERVATION`, `MSP_RENTAL_CONTRACT`에 캘린더·차량 가용성 조회용 인덱스를 없을 때만 추가 |
+| 16 | 마스킹 여권 이미지 키 | `MSP_RENTAL_USER.passport_img_key VARCHAR(500) NULL`을 없을 때만 추가. 이미지 원문은 DB에 저장하지 않음 |
 
 기존 001·002 SQL은 수정하지 않는다. `app.migrate`가 신규 생성/이미 생성된 DB 모두를 검사하여 필요한 ALTER만 실행 계획에 추가한다. 소개·이메일 중 하나만 존재해도 나머지만 추가한다. 기존 phone의 NULL 여부·문자셋·collation·설명은 SQLAlchemy MySQL DDL 생성으로 유지하며, 특수 기본값/생성 컬럼 또는 예상과 다른 타입은 수동 검토를 요구한다. 기존 데이터 변환·재암호화·평문 저장은 하지 않는다. 실제 MySQL에서의 적용/재적용은 별도 검증한다.
 
