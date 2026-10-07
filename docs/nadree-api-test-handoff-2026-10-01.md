@@ -22,6 +22,8 @@ Swagger의 `Try it out`을 사용하거나 같은 요청을 Postman·앱에서 �
 
 `NRTEST-` 접두사가 붙은 행만 테스트 데이터입니다. 운영 데이터와 섞이지 않도록 테스트 요청에는 아래 값을 사용합니다.
 
+웹 고객 API의 추가 시나리오가 필요하면 `migrations/test_seed_web_requirements.sql`을 `test_seed_rental_scenarios.sql` 이후 실행합니다. `NRTEST-WEB-MODEL-125`는 BASIC/PREMIUM 가격을 함께 제공하고, `NRTEST-WEB-MODEL-ND`는 배송 미지원 모델입니다. `NRTEST-CANGGU` 주소와 기존 `NRTEST-KUTA` 주소를 사용해 배송지역 일치·불일치도 확인할 수 있습니다.
+
 | 구분 | 값 | 예상 내용 |
 |---|---|---|
 | 테스트 지점 | `00000000-0000-4000-8000-000000000101` | `shopId`, `spotMasterId` 공통 값 |
@@ -31,6 +33,12 @@ Swagger의 `Try it out`을 사용하거나 같은 요청을 Postman·앱에서 �
 | 차량 302 | `NRTEST-VEHICLE-302` | 정비 상태 |
 | 차량 303 | `NRTEST-VEHICLE-303` | 진행 중 렌트 |
 | 차량 304 | `NRTEST-VEHICLE-304` | 미래 승인 예약 |
+| 웹 BASIC/PREMIUM 모델 | `NRTEST-WEB-MODEL-125` | 125cc, BASIC/PREMIUM 동시 가격, 테스트 이미지 URL |
+| 웹 배송 미지원 모델 | `NRTEST-WEB-MODEL-ND` | 125cc, 배송 요청 시 `DELIVERY_NOT_SUPPORTED` |
+| 웹 BASIC 차량 | `NRTEST-WEB-BASIC-125` | `NRTEST-WEB-MODEL-125`의 BASIC 가격 |
+| 웹 PREMIUM 차량 | `NRTEST-WEB-PREMIUM-125` | `NRTEST-WEB-MODEL-125`의 PREMIUM 일일 45 USD |
+| 웹 배송 미지원 차량 | `NRTEST-WEB-NODELIVERY` | 배송 미지원 모델의 대여 가능 차량 |
+| 웹 추가 배송지역 | `NRTEST-CANGGU` | `Canggu Test Area`, 왕복 30 USD |
 
 ### 예약 상태 샘플
 
