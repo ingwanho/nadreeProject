@@ -1,6 +1,7 @@
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
 from sqlalchemy import text
 
@@ -101,6 +102,16 @@ def create_app(settings=None, db=None, limiter=None, mailer=None, fcm=None, loca
         contact={"name": "Nadree API"},
         lifespan=lifespan,
         responses={code: {"model": Error} for code in [401, 403, 404, 409, 422, 429, 503]})
+    cors_origins = [origin.strip().rstrip("/") for origin in settings.cors_origins.split(",") if origin.strip()]
+    if cors_origins:
+        application.add_middleware(
+            CORSMiddleware,
+            allow_origins=cors_origins,
+            allow_credentials=False,
+            allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+            allow_headers=["Authorization", "Content-Type", "X-Refresh-Token", "X-FCM-Token"],
+            expose_headers=["Cache-Control", "Content-Disposition"],
+        )
     application.state.settings = settings
     application.state.db = db or Database(settings.database_url.get_secret_value())
     application.state.limiter = limiter or RateLimiter(settings.redis_url.get_secret_value())

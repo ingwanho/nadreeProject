@@ -91,3 +91,25 @@ def test_openapi_has_exact_work_group_routes(client):
     passport_response = paths["/nadreego/rent/passport/{booked_no}"]["get"]["responses"]["200"]["content"]
     assert passport_response["image/jpeg"]["schema"] == {"type": "string", "format": "binary"}
     assert passport_response["image/png"]["schema"] == {"type": "string", "format": "binary"}
+
+
+def test_configured_cors_allows_web_origin():
+    origin = "https://www.riderlog-lte.com:50045"
+    app = create_app(Settings(_env_file=None, cors_origins=origin))
+    with TestClient(app) as configured_client:
+        headers = {"Origin": origin}
+        response = configured_client.get("/health/live", headers=headers)
+        assert response.status_code == 200
+        assert response.headers["access-control-allow-origin"] == origin
+
+        preflight = configured_client.options(
+            "/api/v1/nadree/rental/request",
+            headers={
+                "Origin": origin,
+                "Access-Control-Request-Method": "POST",
+                "Access-Control-Request-Headers": "authorization,content-type",
+            },
+        )
+        assert preflight.status_code == 200
+        assert preflight.headers["access-control-allow-origin"] == origin
+        assert "authorization" in preflight.headers["access-control-allow-headers"].lower()

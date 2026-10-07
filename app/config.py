@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     rental_currency: str = "USD"
     business_timezone: str = "Asia/Makassar"
     passport_storage_root: str = ""
+    cors_origins: str = ""
     field_encrypt_key: SecretStr = SecretStr("")
     qr_hash_key: SecretStr = SecretStr("")
     availability_timeout_seconds: float = Field(default=2.0, gt=0, le=10)
