@@ -147,6 +147,10 @@ class CustomerProfileResult(Status):
     user: CustomerProfile
 
 
+class CustomerAccountDeletion(Status):
+    deleted: bool
+
+
 class PassportUploadResult(Status):
     bookedNo: str
     available: bool
@@ -204,12 +208,16 @@ class CustomerPayment(Status):
     paymentStatus: str
     refundStatus: str = "NONE"
     refundedAmount: int | float | None = None
+    refundRequestedAmount: int | float | None = None
     paypalOrderId: str | None = None
     paypalCaptureId: str | None = None
     approvalUrl: str | None = None
     totalPrice: int | float
     serverTotalPrice: int | float
     currency: str
+    paymentDeadline: str | None = None
+    canPay: bool = False
+    cannotPayReason: str | None = None
     payment: dict[str, Any] | None = None
 
 

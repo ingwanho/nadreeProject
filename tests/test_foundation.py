@@ -71,10 +71,10 @@ def test_openapi_has_exact_work_group_routes(client):
     assert redoc.status_code == 200 and "redoc" in redoc.text.lower()
     openapi = client.get("/openapi.json").json()
     paths = openapi["paths"]
-    assert len([path for path in paths if not path.startswith("/health/")]) == 51
+    assert len([path for path in paths if not path.startswith("/health/")]) == 52
     assert "/nadreego/admin/signup" in paths
     assert "/api/v1/nadree/rental/request/cancel" in paths
-    for path in ("/api/v1/nadree/user/login", "/api/v1/nadree/user/profile", "/api/v1/nadree/rental/availability",
+    for path in ("/api/v1/nadree/user/login", "/api/v1/nadree/user/profile", "/api/v1/nadree/user/account", "/api/v1/nadree/rental/availability",
                  "/api/v1/nadree/rental/request", "/api/v1/nadree/rental/payment/order",
                  "/api/v1/nadree/rental/payment/capture", "/api/v1/nadree/rental/payment/{paymentId}",
                  "/api/v1/nadree/rental/ongoing",
@@ -91,6 +91,11 @@ def test_openapi_has_exact_work_group_routes(client):
     passport_response = paths["/nadreego/rent/passport/{booked_no}"]["get"]["responses"]["200"]["content"]
     assert passport_response["image/jpeg"]["schema"] == {"type": "string", "format": "binary"}
     assert passport_response["image/png"]["schema"] == {"type": "string", "format": "binary"}
+    assert openapi["info"]["description"].find("NRTEST-WEB-MODEL-125") >= 0
+    assert openapi["components"]["schemas"]["CustomerModel"]["example"]["modelId"] == "NRTEST-WEB-MODEL-125"
+    assert openapi["components"]["schemas"]["CustomerPrice"]["example"]["totalOptions"] == [105, 165]
+    delivery_example = paths["/nadreego/shop/delivery/regions"]["get"]["responses"]["200"]
+    assert delivery_example["content"]["application/json"]["example"]["items"][1]["regionCode"] == "NRTEST-CANGGU"
 
 
 def test_configured_cors_allows_web_origin():

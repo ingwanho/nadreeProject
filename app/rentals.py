@@ -1,4 +1,5 @@
 import uuid
+from decimal import Decimal
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Request, Response
 from sqlalchemy import select, update
@@ -13,6 +14,7 @@ from app.headers import bearer
 from app.passport import decode_masked_image, passport_key
 from app.pricing import daily_price, load_tiers
 from app.paypal import execute_refund
+from app.payment_policy import refund_target
 from app.rental_common import (OPEN, action_result, context, contracts_for, day_end, effective_state,
                                expire_maintenance, fleet, is_open, iso, local_date, lock_key, rows, verify_qr)
 from app.rental_inputs import BookingAction, PassportUpload, Qr, RentApprove
@@ -153,12 +155,14 @@ def paid_booking(request, session, reservation):
 
 def prepare_booking_refund(request, session, reservation, actor, reason):
     payment_table = request.app.state.db.table("MSP_RENTAL_PAYMENT")
+    if "refund_requested_amount" not in payment_table.c:
+        raise Problem(503, "REFUND_POLICY_SCHEMA_UPDATE_REQUIRED")
     payment = session.execute(select(payment_table).where(
         payment_table.c.reservation_id == reservation["reservation_id"],
         payment_table.c.payment_environment == request.app.state.settings.paypal_environment)
         .order_by(payment_table.c.payment_id.desc()).with_for_update()).mappings().first()
     if not payment:
-        return None, None, False
+        return None, None, False, None, None
     if payment["payment_provider"] != "PAYPAL":
         raise Problem(409, "PAYMENT_STATE_INCONSISTENT")
     status = payment["payment_status"]
@@ -166,26 +170,44 @@ def prepare_booking_refund(request, session, reservation, actor, reason):
     if status in ("PAID", "PARTIALLY_REFUNDED"):
         if not payment["paypal_capture_id"]:
             raise Problem(409, "PAYMENT_STATE_INCONSISTENT")
-        if payment["refunded_amount"] >= payment["total_price"]:
-            return payment["payment_id"], "COMPLETED", False
+        if refund_status in ("PENDING", "REQUESTED") and payment.get("refund_requested_amount"):
+            return payment["payment_id"], "REQUESTED", refund_status == "REQUESTED", payment["refund_requested_amount"], "REFUND_90_PERCENT"
+        rental_day = local_date(request, now()) >= local_date(request, reservation["start_datetime"])
+        target = refund_target(payment["total_price"], rental_day=rental_day)
+        if payment["refunded_amount"] >= target:
+            return payment["payment_id"], "COMPLETED", False, target, "REFUND_90_PERCENT"
+        if target == Decimal("0.00"):
+            session.execute(update(payment_table).where(payment_table.c.payment_id == payment["payment_id"]).values(
+                refund_status="NOT_REQUIRED", refund_requested_amount=target,
+                refund_requested_by_admin_id=actor.admin["admin_id"], refund_reason="RENTAL_DAY_NO_REFUND", updated_at=now()))
+            return payment["payment_id"], "NOT_REQUIRED", False, target, "RENTAL_DAY_NO_REFUND"
         if refund_status not in ("PENDING", "REQUESTED"):
             session.execute(update(payment_table).where(payment_table.c.payment_id == payment["payment_id"]).values(
                 refund_status="REQUESTED", refund_requested_at=now(),
-                refund_requested_by_admin_id=actor.admin["admin_id"], refund_reason=reason, updated_at=now()))
-        return payment["payment_id"], "REQUESTED", True
+                refund_requested_by_admin_id=actor.admin["admin_id"], refund_reason=reason,
+                refund_requested_amount=target, updated_at=now()))
+        return payment["payment_id"], "REQUESTED", True, target, "REFUND_90_PERCENT"
     if status == "PENDING" and payment["paypal_capture_id"]:
+        target = refund_target(payment["total_price"], rental_day=local_date(request, now()) >= local_date(request, reservation["start_datetime"]))
+        if target == Decimal("0.00"):
+            session.execute(update(payment_table).where(payment_table.c.payment_id == payment["payment_id"]).values(
+                refund_status="NOT_REQUIRED", refund_requested_amount=target,
+                refund_requested_by_admin_id=actor.admin["admin_id"], refund_reason="RENTAL_DAY_NO_REFUND", updated_at=now()))
+            return payment["payment_id"], "NOT_REQUIRED", False, target, "RENTAL_DAY_NO_REFUND"
         if refund_status not in ("PENDING", "REQUESTED"):
             session.execute(update(payment_table).where(payment_table.c.payment_id == payment["payment_id"]).values(
                 refund_status="REQUESTED", refund_requested_at=now(),
-                refund_requested_by_admin_id=actor.admin["admin_id"], refund_reason=reason, updated_at=now()))
+                refund_requested_by_admin_id=actor.admin["admin_id"], refund_reason=reason,
+                refund_requested_amount=target, updated_at=now()))
         # Capture completion is handled by the corresponding webhook; PayPal
         # rejects a refund while the capture is still pending.
-        return payment["payment_id"], "REQUESTED", False
+        return payment["payment_id"], "REQUESTED", False, target, "REFUND_90_PERCENT"
     if status in ("CREATED", "PENDING"):
         session.execute(update(payment_table).where(payment_table.c.payment_id == payment["payment_id"]).values(
-            payment_status="CANCELED", refund_status="NOT_REQUIRED", refund_reason=reason, updated_at=now()))
-        return payment["payment_id"], "NOT_REQUIRED", False
-    return payment["payment_id"], refund_status, False
+            payment_status="CANCELED", refund_status="NOT_REQUIRED", refund_requested_amount=Decimal("0.00"),
+            refund_reason=reason, updated_at=now()))
+        return payment["payment_id"], "NOT_REQUIRED", False, Decimal("0.00"), "NO_COMPLETED_PAYMENT"
+    return payment["payment_id"], refund_status, False, payment.get("refund_requested_amount"), None
 
 
 def contract_history(request, session, ident, previous, new, actor, event):
@@ -208,9 +230,10 @@ def booking_action(body: BookingAction, request: Request, background_tasks: Back
         # Serialize approval with customer requests for the same spot/model.
         # The final availability check then uses the same resource lock.
         lock_key(session, "nadri-model", r["spot_master_id"] + ":" + r["model_id"])
-    refund_payment_id, refund_status, refund_ready = (None, None, False)
+    refund_payment_id, refund_status, refund_ready, refund_amount, refund_reason = (None, None, False, None, None)
     if body.action == "CANCEL":
-        refund_payment_id, refund_status, refund_ready = prepare_booking_refund(request, session, r, actor, body.reason)
+        refund_payment_id, refund_status, refund_ready, refund_amount, refund_reason = prepare_booking_refund(
+            request, session, r, actor, body.reason)
     values = dict(updated_at=now())
     if body.action == "APPROVE":
         if reservation_end(request, r) <= now():
@@ -250,6 +273,10 @@ def booking_action(body: BookingAction, request: Request, background_tasks: Back
                 vehicleAssignmentStatus=values["vehicle_assignment_status"])
     if refund_status is not None:
         data["refundStatus"] = refund_status
+    if refund_amount is not None:
+        data["refundAmount"] = float(refund_amount)
+    if refund_reason is not None:
+        data["refundReason"] = refund_reason
     return action_result(request, actor, values["reservation_status"], data)
 
 

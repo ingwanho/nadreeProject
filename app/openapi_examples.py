@@ -37,6 +37,24 @@ TEST_MODEL_155 = {
     "modelImageKey": "models/test-nmax-155.jpg",
 }
 
+TEST_WEB_MODEL_125 = {
+    "modelId": "NRTEST-WEB-MODEL-125",
+    "brand": "Honda",
+    "modelName": "Vario Web Test 125",
+    "cc": 125,
+    "vehicleType": "SCOOTER",
+    "modelImageKey": "https://placehold.co/640x480/png?text=NRTEST-WEB-125",
+}
+
+TEST_WEB_MODEL_NO_DELIVERY = {
+    "modelId": "NRTEST-WEB-MODEL-ND",
+    "brand": "SYM",
+    "modelName": "Cruiser No Delivery Test",
+    "cc": 125,
+    "vehicleType": "SCOOTER",
+    "modelImageKey": "https://placehold.co/640x480/png?text=NRTEST-NO-DELIVERY",
+}
+
 TEST_PRICE = {
     "currency": "USD",
     "rentalDays": 3,
@@ -78,6 +96,58 @@ TEST_DELIVERY = {
     "returnDeliveryFee": 10,
     "deliveryTotalFee": 20,
 }
+
+TEST_WEB_DELIVERY = {
+    "deliveryRequestType": "START_AND_RETURN",
+    "deliveryRegionId": 990000002,
+    "pickupLocation": "Canggu Test Area, Bali",
+    "returnLocation": "Canggu Test Area, Bali",
+    "startDeliveryFee": 15,
+    "returnDeliveryFee": 15,
+    "deliveryTotalFee": 30,
+}
+
+TEST_WEB_PRICE = {
+    "currency": "USD",
+    "rentalDays": 3,
+    "dailyFrom": 25,
+    "dailyTo": 45,
+    "dailyPriceFrom": 25,
+    "dailyPriceTo": 45,
+    "rentalFrom": 75,
+    "rentalTo": 135,
+    "pricingTiers": [{
+        "priceType": "BASIC",
+        "tierType": "BASIC",
+        "minCc": 0,
+        "maxCc": 125,
+        "dailyPriceFrom": 25,
+        "dailyPriceTo": 25,
+    }, {
+        "priceType": "PREMIUM",
+        "tierType": None,
+        "minCc": None,
+        "maxCc": None,
+        "dailyPriceFrom": 45,
+        "dailyPriceTo": 45,
+    }],
+    "deliveryStart": 15,
+    "deliveryReturn": 15,
+    "deliveryTotal": 30,
+    "deliveryStartFee": 15,
+    "deliveryReturnFee": 15,
+    "deliveryTotalFee": 30,
+    "totalOptions": [105, 165],
+    "totalFrom": 105,
+    "totalTo": 165,
+    "requestedTotal": None,
+    "calculatedTotalFrom": None,
+    "calculatedTotalTo": None,
+    "finalTotal": None,
+}
+
+TEST_WEB_REQUEST_PRICE = dict(TEST_WEB_PRICE, requestedTotal=105,
+                              calculatedTotalFrom=105, calculatedTotalTo=165, finalTotal=105)
 
 TEST_RECORD = {
     "recordType": "RESERVATION",
@@ -215,22 +285,25 @@ OPENAPI_EXAMPLES = {
     "TierCreate": {"minCc": 0, "maxCc": 125, "price": 25, "type": "BASIC", "spotCode": TEST_SPOT["spotCode"]},
     "Delivery": {
         "spotCode": TEST_SPOT["spotCode"],
-        "deliveryRegionId": 990000001,
+        "deliveryRegionId": 990000002,
         "isDeliveryEnabled": True,
-        "startDeliveryFee": 10,
-        "returnDeliveryFee": 10,
-        "memo": "Nadree 테스트 배송 지역",
+        "startDeliveryFee": 15,
+        "returnDeliveryFee": 15,
+        "memo": "Nadree 웹 배송 테스트 지역",
     },
-    "DeliveryDelete": {"spotDeliveryRegionId": 990000001},
+    "DeliveryDelete": {"spotDeliveryRegionId": 990000002},
     "NadriLogin": {"UID": "NRTEST-USER-001", "fcmToken": "<real-device-fcm-token>"},
     "NadriProfile": {"NAME": "Nadree Test Customer", "Age": 30, "GENDER": "M", "NATIONALITY": "KR"},
     "NadriAvailability": {
-        "startDate": "2026-10-10", "returnDate": "2026-10-13", "cc": 125, "deliveryRequested": False,
+        "startDate": "2026-10-10", "returnDate": "2026-10-13", "cc": 125,
+        "deliveryRequested": True, "pickupLocation": "Canggu Test Area, Bali",
+        "returnLocation": "Canggu Test Area, Bali",
     },
     "NadriRentalRequest": {
-        "spotMasterId": TEST_SPOT["spotMasterId"], "modelId": "NRTEST-MODEL-125",
-        "startDate": "2026-10-25", "returnDate": "2026-10-28", "totalPrice": 75,
-        "currency": "USD", "deliveryRequested": False,
+        "spotMasterId": TEST_SPOT["spotMasterId"], "modelId": "NRTEST-WEB-MODEL-125",
+        "startDate": "2026-10-25", "returnDate": "2026-10-28", "totalPrice": 105,
+        "currency": "USD", "deliveryRequested": True,
+        "pickupLocation": "Canggu Test Area, Bali", "returnLocation": "Canggu Test Area, Bali",
     },
     "NadriPaymentOrder": {"reservationId": "NRTEST-RES-APP-001"},
     "NadriPaymentCapture": {"paymentId": 2},
@@ -249,10 +322,10 @@ OPENAPI_EXAMPLES = {
     },
     "CustomerLocation": TEST_SPOT["location"],
     "CustomerSpot": TEST_SPOT,
-    "CustomerModel": TEST_MODEL_125,
-    "CustomerPricingTier": TEST_PRICE["pricingTiers"][0],
-    "CustomerPrice": TEST_PRICE,
-    "CustomerDelivery": TEST_DELIVERY,
+    "CustomerModel": TEST_WEB_MODEL_125,
+    "CustomerPricingTier": TEST_WEB_PRICE["pricingTiers"][0],
+    "CustomerPrice": TEST_WEB_PRICE,
+    "CustomerDelivery": TEST_WEB_DELIVERY,
     "CustomerRecord": TEST_RECORD,
     "CustomerUser": {
         "uidToken": "NRTEST-USER-001",
@@ -263,13 +336,13 @@ OPENAPI_EXAMPLES = {
         "ongoingRequests": [TEST_RECORD],
     },
     "CustomerAvailabilityItem": {
-        "shopId": TEST_SPOT["shopId"], "modelId": TEST_MODEL_125["modelId"],
-        "spot": TEST_SPOT, "model": TEST_MODEL_125, "price": TEST_PRICE,
+        "shopId": TEST_SPOT["shopId"], "modelId": TEST_WEB_MODEL_125["modelId"],
+        "spot": TEST_SPOT, "model": TEST_WEB_MODEL_125, "price": TEST_WEB_PRICE,
     },
     "CustomerAvailability": {
         "status": "success", "items": [{
-            "shopId": TEST_SPOT["shopId"], "modelId": TEST_MODEL_125["modelId"],
-            "spot": TEST_SPOT, "model": TEST_MODEL_125, "price": TEST_PRICE,
+            "shopId": TEST_SPOT["shopId"], "modelId": TEST_WEB_MODEL_125["modelId"],
+            "spot": TEST_SPOT, "model": TEST_WEB_MODEL_125, "price": TEST_WEB_PRICE,
         }],
     },
     "CustomerLogin": {
@@ -292,9 +365,9 @@ OPENAPI_EXAMPLES = {
         "reservationStatus": "REQUESTED", "vehicleAssignmentStatus": "SOFT_HOLD",
         "paymentAvailability": "WAITING_APPROVAL", "paymentStatus": "WAITING_APPROVAL",
         "shopId": TEST_SPOT["shopId"], "spotMasterId": TEST_SPOT["spotMasterId"],
-        "modelId": TEST_MODEL_125["modelId"], "totalPrice": 75, "currency": "USD",
-        "deliveryRequestType": "PICKUP", "spot": TEST_SPOT, "model": TEST_MODEL_125,
-        "price": TEST_PRICE,
+        "modelId": TEST_WEB_MODEL_125["modelId"], "totalPrice": 105, "currency": "USD",
+        "deliveryRequestType": "START_AND_RETURN", "spot": TEST_SPOT, "model": TEST_WEB_MODEL_125,
+        "price": TEST_WEB_REQUEST_PRICE,
     },
     "CustomerPage": {"status": "success", "items": [TEST_RECORD], "page": 1, "pageSize": 20, "totalCount": 1, "hasNext": False},
     "CustomerPayment": {
@@ -303,8 +376,11 @@ OPENAPI_EXAMPLES = {
         "paymentStatus": "PAID", "paypalOrderId": "NRTEST-ORDER-PAID-001",
         "paypalCaptureId": "NRTEST-CAPTURE-PAID-001", "approvalUrl": None,
         "totalPrice": 200, "serverTotalPrice": 200, "currency": "USD",
+        "paymentDeadline": "2026-10-04T10:00:00+08:00", "canPay": False,
+        "cannotPayReason": "PAYMENT_ALREADY_COMPLETED", "refundRequestedAmount": None,
         "payment": {"refundStatus": "NONE", "lastWebhookEventType": "PAYMENT.CAPTURE.COMPLETED"},
     },
+    "CustomerAccountDeletion": {"status": "success", "deleted": True},
     "CustomerCancellation": {
         "status": "success", "reservationId": "NRTEST-RES-REQ-001",
         "bookedNo": "BONRTEST-RES-REQ-001", "reservationStatus": "CANCELED", "refundStatus": "NOT_REQUIRED",
@@ -371,15 +447,19 @@ OPENAPI_RESPONSE_EXAMPLES = {
     ("GET", "/health/live"): {"status": "ok", "service": "nadree-api"},
     ("GET", "/health/ready"): {"status": "ok", "limitations": ["MFA_FLOW_NOT_IMPLEMENTED"]},
     ("POST", "/nadreego/shop/delivery"): {
-        "status": True, "spotDeliveryRegionId": 990000001, "deliveryRegionId": 990000001,
-        "isDeliveryEnabled": True, "startDeliveryFee": 10, "returnDeliveryFee": 10,
+        "status": True, "spotDeliveryRegionId": 990000002, "deliveryRegionId": 990000002,
+        "isDeliveryEnabled": True, "startDeliveryFee": 15, "returnDeliveryFee": 15,
     },
     ("GET", "/nadreego/shop/delivery/regions"): {
         "status": True, "items": [{
             "deliveryRegionId": 990000001, "countryCode": "ID", "regionName": "Kuta Test Area",
             "parentRegionId": None, "regionLevel": "CITY", "regionCode": "NRTEST-KUTA",
             "sortOrder": 1, "isActive": True,
-        }], "page": 1, "pageSize": 100, "totalCount": 1,
+        }, {
+            "deliveryRegionId": 990000002, "countryCode": "ID", "regionName": "Canggu Test Area",
+            "parentRegionId": None, "regionLevel": "CITY", "regionCode": "NRTEST-CANGGU",
+            "sortOrder": 2, "isActive": True,
+        }], "page": 1, "pageSize": 100, "totalCount": 2,
     },
     ("GET", "/nadreego/shop/delivery"): {
         "status": True, "items": [{
@@ -387,7 +467,12 @@ OPENAPI_RESPONSE_EXAMPLES = {
             "regionName": "Kuta Test Area", "regionCode": "NRTEST-KUTA",
             "isDeliveryEnabled": True, "startDeliveryFee": 10,
             "returnDeliveryFee": 10, "memo": "Nadree 테스트 배송 지역",
-        }], "page": 1, "pageSize": 100, "totalCount": 1,
+        }, {
+            "spotDeliveryRegionId": 990000002, "deliveryRegionId": 990000002,
+            "regionName": "Canggu Test Area", "regionCode": "NRTEST-CANGGU",
+            "isDeliveryEnabled": True, "startDeliveryFee": 15,
+            "returnDeliveryFee": 15, "memo": "Nadree 웹 배송 테스트 지역",
+        }], "page": 1, "pageSize": 100, "totalCount": 2,
     },
     ("POST", "/nadreego/shop/deliveryDelete"): {"status": True},
     ("POST", "/nadreego/shop/tierCreate"): {
@@ -424,18 +509,42 @@ OPENAPI_RESPONSE_EXAMPLES = {
         "status": "success", "spotMasterId": TEST_SPOT["spotMasterId"],
     },
     ("POST", "/nadreego/brand"): {
-        "brand": ["Honda", "Yamaha"], "vehicle": [
+        "brand": ["Honda", "SYM", "Yamaha"], "vehicle": [
             {"modelId": TEST_MODEL_125["modelId"], "brand": "Honda", "modelName": "Vario 125",
              "cc": 125, "modelImageKey": "models/test-vario-125.jpg", "vehicleCount": 3, "price": 25},
+            {"modelId": TEST_WEB_MODEL_125["modelId"], "brand": "Honda", "modelName": "Vario Web Test 125",
+             "cc": 125, "modelImageKey": TEST_WEB_MODEL_125["modelImageKey"], "vehicleCount": 2, "price": 25},
+            {"modelId": TEST_WEB_MODEL_NO_DELIVERY["modelId"], "brand": "SYM",
+             "modelName": "Cruiser No Delivery Test", "cc": 125,
+             "modelImageKey": TEST_WEB_MODEL_NO_DELIVERY["modelImageKey"], "vehicleCount": 1, "price": 25},
             {"modelId": TEST_MODEL_155["modelId"], "brand": "Yamaha", "modelName": "NMAX 155",
              "cc": 155, "modelImageKey": "models/test-nmax-155.jpg", "vehicleCount": 1, "price": 35},
-        ], "tier": [], "price": None, "page": 1, "pageSize": 20, "totalCount": 2, "hasNext": False,
+        ], "tier": [], "price": None, "page": 1, "pageSize": 20, "totalCount": 4, "hasNext": False,
     },
     ("POST", "/nadreego/vehicle/select"): {
         "status": True, "items": [{
             "vehicleId": "NRTEST-VEHICLE-301", "vehicleNo": "DK-TEST-301",
             "modelId": TEST_MODEL_125["modelId"], "modelName": "Vario 125", "vehicleStatus": "AVAILABLE",
-        }], "page": 1, "pageSize": 20, "totalCount": 4, "hasNext": False,
+        }, {
+            "vehicleId": "NRTEST-VEHICLE-302", "vehicleNo": "DK-TEST-302",
+            "modelId": TEST_MODEL_125["modelId"], "modelName": "Vario 125", "vehicleStatus": "MAINTENANCE",
+        }, {
+            "vehicleId": "NRTEST-VEHICLE-303", "vehicleNo": "DK-TEST-303",
+            "modelId": TEST_MODEL_125["modelId"], "modelName": "Vario 125", "vehicleStatus": "ON_RENT",
+        }, {
+            "vehicleId": "NRTEST-VEHICLE-304", "vehicleNo": "DK-TEST-304",
+            "modelId": TEST_MODEL_155["modelId"], "modelName": "NMAX 155", "vehicleStatus": "AVAILABLE",
+        }, {
+            "vehicleId": "NRTEST-WEB-BASIC-125", "vehicleNo": "DK-WEB-BASIC-125",
+            "modelId": TEST_WEB_MODEL_125["modelId"], "modelName": "Vario Web Test 125", "vehicleStatus": "AVAILABLE",
+        }, {
+            "vehicleId": "NRTEST-WEB-PREMIUM-125", "vehicleNo": "DK-WEB-PREMIUM-125",
+            "modelId": TEST_WEB_MODEL_125["modelId"], "modelName": "Vario Web Test 125", "vehicleStatus": "AVAILABLE",
+        }, {
+            "vehicleId": "NRTEST-WEB-NODELIVERY", "vehicleNo": "DK-WEB-NODELIVERY",
+            "modelId": TEST_WEB_MODEL_NO_DELIVERY["modelId"], "modelName": "Cruiser No Delivery Test",
+            "vehicleStatus": "AVAILABLE",
+        }], "page": 1, "pageSize": 20, "totalCount": 7, "hasNext": False,
     },
     ("POST", "/nadreego/booking/action"): {
         "status": True, "errorCode": None, "message": "success", "currentState": "APPROVED",
@@ -471,14 +580,14 @@ OPENAPI_RESPONSE_EXAMPLES = {
         "status": True, "items": [{"vehicleId": "NRTEST-VEHICLE-301", "vehicleNo": "DK-TEST-301",
                                      "modelId": TEST_MODEL_125["modelId"], "modelName": "Vario 125",
                                      "vehicleStatus": "AVAILABLE", "events": []}],
-        "page": 1, "pageSize": 20, "totalCount": 4, "hasNext": False,
+        "page": 1, "pageSize": 20, "totalCount": 7, "hasNext": False,
         "startDate": "2026-10-10", "endDate": "2026-10-13", "timeZone": "Asia/Makassar",
         "fetchedAt": "2026-10-01T08:00:00+08:00", "warnings": [],
     },
     ("GET", "/nadreego/main"): {
         "status": "success", "group": {"spotMasterId": TEST_SPOT["spotMasterId"],
         "spotCode": TEST_SPOT["spotCode"], "name": TEST_SPOT["spotName"]},
-        "name": "Nadree 테스트 대표관리자", "totalVehicles": 4, "totalReservations": 2,
+        "name": "Nadree 테스트 대표관리자", "totalVehicles": 7, "totalReservations": 2,
         "pending": 1, "chat": 0, "todayWork": [],
     },
     ("POST", "/nadreego/paypal/webhook"): {"status": True},

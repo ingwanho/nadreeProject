@@ -95,6 +95,7 @@ def migration_plan(db):
             ("refund_requested_at", "DATETIME DEFAULT NULL"),
             ("refund_requested_by_admin_id", "VARCHAR(36) DEFAULT NULL"),
             ("refund_reason", "VARCHAR(200) DEFAULT NULL"),
+            ("refund_requested_amount", "DECIMAL(18,2) DEFAULT NULL"),
         ]
         for column, definition in payment_columns:
             if column not in columns:

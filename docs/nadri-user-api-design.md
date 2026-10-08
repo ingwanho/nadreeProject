@@ -1,7 +1,7 @@
 # 나드리 고객 사용자 API 정본
 
-최종 수정일: 2026-09-28
-상태: **고객 API 13개 경로·15개 메서드 구현 및 로컬 검증 완료, 외부 PayPal·FCM 수신과 운영 앱·DB 통합 확인 대기**
+최종 수정일: 2026-10-08
+상태: **고객 API 14개 경로·16개 메서드 구현 및 로컬 검증 완료, 외부 PayPal·FCM 수신과 운영 앱·DB 통합 확인 대기**
 
 이 문서는 관리자 앱인 나드리고 API와 분리된 **나드리 고객 앱 전용 사용자 API** 설계다. 기존 RiderLog의 운전자 기능과 `MSP_DRIVER` 및 운전자 관련 테이블은 이 API에서 조회하거나 변경하지 않는다. 사용자 프로필은 독립적인 `MSP_RENTAL_USER`에, 인증 세션은 `MSP_RENTAL_USER_REFRESH_TOKEN`에 기록한다.
 
@@ -22,10 +22,11 @@
 | 11 | `POST /api/v1/nadree/rental/request/cancel` | 결제 전 예약 요청 취소 |
 | 12 | `POST /api/v1/nadree/user/logout` | 고객 access·refresh token 폐기. GET도 호환 지원 |
 | 13 | `POST /api/v1/nadree/user/refresh` | 고객 refresh token 회전 및 access token 재발급. GET도 호환 지원 |
+| 14 | `DELETE /api/v1/nadree/user/account` | 조건 없는 회원 탈퇴. 이력 보존·개인정보·Firebase 계정·세션 폐기 |
 
 URL은 나드리고 관리자 API의 `/nadreego/admin/*`와 충돌하지 않도록 `/nadree/user/*`와 `/nadree/rental/*` 네임스페이스로 분리한다.
 
-현재 코드의 OpenAPI에는 위 13개 경로와 15개 메서드가 등록되어 있다. 로그아웃과 고객 refresh는 신규 앱에서 POST를 사용하고, 기존 앱 호환을 위해 같은 경로의 GET도 허용한다. 외부 전달 기본 URL은 `https://na-dree.com`이며, 실행 중인 명세는 `/docs`, `/redoc`, `/openapi.json`에서 확인한다. PayPal 웹훅 `POST /nadreego/paypal/webhook`은 PayPal 서버가 호출하는 관리자 API 경로이므로 고객 앱이 호출하지 않는다.
+현재 코드의 OpenAPI에는 위 14개 경로와 16개 메서드가 등록되어 있다. 로그아웃과 고객 refresh는 신규 앱에서 POST를 사용하고, 기존 앱 호환을 위해 같은 경로의 GET도 허용한다. 외부 전달 기본 URL은 `https://na-dree.com`이며, 실행 중인 명세는 `/docs`, `/redoc`, `/openapi.json`에서 확인한다. PayPal 웹훅 `POST /nadreego/paypal/webhook`은 PayPal 서버가 호출하는 관리자 API 경로이므로 고객 앱이 호출하지 않는다.
 
 차량 상세 조회 API는 별도로 만들지 않는다. 검색 응답의 `price.pricingTiers`에 해당 모델에 적용된 배기량 요금 티어를 함께 넣어 한 번의 조회로 지점·모델·가격·티어를 확인하도록 한다.
 
@@ -816,9 +817,9 @@ PayPal 캡처가 진행 중인 `PENDING` 결제는 환불할 수 없으므로 `P
 
 ### 관리자 취소와 환불
 
-기존 `POST /nadreego/booking/action`에 `action=CANCEL`을 사용한다. 관리자는 출고 전 `APPROVED` 예약을 취소할 수 있다. 결제 완료(`PAID` 또는 부분 환불 상태)이고 환불 잔액이 있으면 예약을 먼저 `CANCELED`로 저장하고 결제 행을 `refund_status=REQUESTED`로 기록한다. 응답의 `refundStatus`가 `REQUESTED`이면 PayPal 환불 요청이 비동기로 시작된다. 환불 실패는 예약 취소를 되돌리지 않으며 `FAILED`로 남겨 재시도 대상으로 삼는다.
+기존 `POST /nadreego/booking/action`에 `action=CANCEL`을 사용한다. 관리자는 출고 전 `APPROVED` 예약을 취소할 수 있다. 결제 완료(`PAID` 또는 부분 환불 상태)이고 렌트일 전이면 예약을 먼저 `CANCELED`로 저장하고 결제 총액의 90%(센트 반올림)를 `refund_requested_amount`에 기록한 뒤 `refund_status=REQUESTED`로 저장한다. 렌트일 당일 또는 이후에는 예약 취소는 가능하지만 환불하지 않고 `refund_requested_amount=0`, `refund_status=NOT_REQUIRED`로 기록한다. 고객이 결제 완료 건을 직접 취소하는 것은 계속 금지되며 `PAYMENT_REFUND_ADMIN_ONLY`를 반환한다. 환불 실패는 예약 취소를 되돌리지 않으며 `FAILED`로 남겨 재시도 대상으로 삼는다.
 
-서버는 PayPal 캡처 ID를 사용해 `POST /v2/payments/captures/{capture_id}/refund`를 호출하고 `PayPal-Request-Id`를 결제 건에 고정한다. 환불 금액은 총액에서 이미 환불된 금액을 뺀 잔액이며 고객이 지정하지 않는다. PayPal 환불은 원래 결제 수단으로 돌아가고, 최종 환불 여부는 서명 검증된 `PAYMENT.CAPTURE.REFUNDED` 웹훅으로 확정한다. [PayPal 환불 공식 안내](https://developer.paypal.com/checkout/refund-payment)
+서버는 PayPal 캡처 ID를 사용해 `POST /v2/payments/captures/{capture_id}/refund`를 호출하고 `PayPal-Request-Id`를 결제 건에 고정한다. 환불 요청액은 저장된 90% 목표금액에서 이미 반영된 금액을 뺀 잔액이며 고객이 지정하지 않는다. PayPal 환불은 원래 결제 수단으로 돌아가고, 최종 환불 여부는 서명 검증된 `PAYMENT.CAPTURE.REFUNDED` 웹훅으로 확정한다. [PayPal 환불 공식 안내](https://developer.paypal.com/checkout/refund-payment)
 
 결제·환불 웹훅 상태는 다음처럼 저장한다.
 
@@ -828,7 +829,13 @@ PayPal 캡처가 진행 중인 `PENDING` 결제는 환불할 수 없으므로 `P
 | `PAYMENT.CAPTURE.REFUNDED` | `COMPLETED` | 전액이면 `REFUNDED`, 일부면 `PARTIALLY_REFUNDED` |
 | `PAYMENT.REFUND.FAILED` | `FAILED` | 캡처 상태 유지 |
 
-`MSP_RENTAL_PAYMENT`의 `refund_status`, `paypal_refund_id`, 요청 시각·관리자·사유 컬럼은 `migrations/004_payment_refund.sql`로 추가한다. PayPal 웹훅은 기존 `/nadreego/paypal/webhook`을 계속 사용한다. [PayPal 공식 이벤트 목록](https://developer.paypal.com/api/rest/webhooks/event-names/)
+`MSP_RENTAL_PAYMENT`의 `refund_status`, `paypal_refund_id`, 요청 시각·관리자·사유 컬럼은 `migrations/004_payment_refund.sql`, 90% 목표금액 컬럼은 `migrations/010_refund_policy.sql`로 추가한다. PayPal 웹훅은 기존 `/nadreego/paypal/webhook`을 계속 사용한다. [PayPal 공식 이벤트 목록](https://developer.paypal.com/api/rest/webhooks/event-names/)
+
+승인 시각부터 72시간이 결제 마감이다. 결제 주문·캡처 응답은 `paymentDeadline`, `canPay`, `cannotPayReason`을 반환하며 마감 후 요청은 `409 PAYMENT_DEADLINE_EXPIRED`로 거절한다.
+
+## API 14 — 조건 없는 회원 탈퇴
+
+`DELETE /api/v1/nadree/user/account`를 사용한다. 진행 중 예약·결제 여부와 무관하게 탈퇴하며, 렌탈 이력과 결제 이력은 보존한다. 사용자 프로필·FCM 토큰·고객 access/refresh 세션은 폐기하고, 운영 Firebase 설정이 있으면 FCM/고객 인증에 사용하는 같은 Firebase 프로젝트의 Authentication UID도 삭제한다.
 
 ## 13. API 11 — 나드리 사용자 로그아웃
 

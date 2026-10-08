@@ -9,7 +9,8 @@ from pydantic import ValidationError
 from app.config import Settings
 from app.paypal import PayPalClient
 from app.security import decode_user_access, sign_user_access
-from app.rental_inputs import NadriAvailability, NadriProfile, NadriRentalRequest
+from app.payment_policy import refund_target
+from app.rental_inputs import Calendar, NadriAvailability, NadriProfile, NadriRentalRequest
 
 
 def paypal_settings():
@@ -82,3 +83,15 @@ def test_customer_rental_period_is_limited_to_thirty_days():
         NadriRentalRequest(spotMasterId="spot-1", modelId="model-1", startDate=date(2026, 10, 1),
                            returnDate=date(2026, 11, 1), totalPrice=100, currency="USD",
                            deliveryRequested=False)
+
+
+def test_refund_policy_excludes_ten_percent_and_blocks_rental_day():
+    assert refund_target(Decimal("100.00"), rental_day=False) == Decimal("90.00")
+    assert refund_target(Decimal("99.99"), rental_day=False) == Decimal("89.99")
+    assert refund_target(Decimal("100.00"), rental_day=True) == Decimal("0.00")
+
+
+def test_admin_calendar_period_is_limited_to_thirty_days():
+    Calendar(page=1, pageSize=20, startDate=date(2026, 10, 1), endDate=date(2026, 10, 31))
+    with pytest.raises(ValidationError):
+        Calendar(page=1, pageSize=20, startDate=date(2026, 10, 1), endDate=date(2026, 11, 1))

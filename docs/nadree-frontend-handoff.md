@@ -128,6 +128,7 @@ X-Refresh-Token: <nadree-refresh-token>
 | 로그인·회원 생성 | POST | `/api/v1/nadree/user/login` | Firebase ID Token | body 필드는 `UID` 대문자 유지 |
 | 프로필 수정 | PATCH | `/api/v1/nadree/user/profile` | Nadree access | `NAME`, `Age`, `GENDER`, `NATIONALITY` 대소문자 유지 |
 | 프로필 조회 | GET | `/api/v1/nadree/user/profile` | Nadree access | 로그인한 사용자의 최신 프로필 조회 |
+| 회원 탈퇴 | DELETE | `/api/v1/nadree/user/account` | Nadree access | 상태와 관계없이 탈퇴, 성공 후 저장 토큰 삭제 |
 | 차량·지점·가격 조회 | POST | `/api/v1/nadree/rental/availability` | 없음 | 로그인 전 호출 가능, 서버 가격을 그대로 사용 |
 | 예약 요청 | POST | `/api/v1/nadree/rental/request` | Nadree access | `spotMasterId`와 `modelId`를 사용 |
 | PayPal 주문 생성 | POST | `/api/v1/nadree/rental/payment/order` | Nadree access | 관리자 승인 후에만 호출 |
@@ -262,7 +263,7 @@ Authorization: Bearer <nadree-access-token>
 
 1. 예약 요청 성공 후 관리자의 승인을 기다립니다.
 2. 진행 목록에서 `paymentAvailability=PAYMENT_REQUIRED`인지 확인합니다.
-3. 승인 전에는 `/payment/order`를 호출하지 않습니다.
+3. 승인 시각부터 72시간 이내에만 `/payment/order`를 호출합니다. 응답의 `paymentDeadline`, `canPay`, `cannotPayReason`을 사용합니다.
 4. 주문 생성 응답의 `approvalUrl` 또는 PayPal SDK로 결제를 진행합니다.
 5. 고객 승인 후 `/payment/capture`에 `paymentId`만 전송합니다.
 6. `PENDING`이면 캡처를 다시 즉시 호출하지 않고 `/payment/{paymentId}`를 조회합니다.
@@ -285,6 +286,8 @@ Authorization: Bearer <nadree-access-token>
 ```
 
 결제가 완료된 예약은 고객 취소 API에서 환불하지 않습니다. 결제 완료 후 취소·환불은 관리자 처리 영역입니다. 캡처가 진행 중인 `PENDING` 상태에서 취소하면 `PAYMENT_IN_PROGRESS`가 반환될 수 있습니다.
+
+관리자 취소 시 렌트일 전에는 결제금액의 90%가 환불되고, 렌트일 당일 또는 이후에는 환불되지 않습니다. 고객 앱은 `refundRequestedAmount`를 예정액, `refundedAmount`를 실제 반영액으로 표시합니다.
 
 ## 7. 목록 화면 구현 규칙
 
@@ -337,6 +340,7 @@ Authorization: Bearer <nadree-access-token>
 | `PAYMENT_STATE_INVALID` | 결제 상태 조회 후 현재 상태에 맞게 표시 |
 | `PAYMENT_IN_PROGRESS` | 결제 상태 조회 후 기다림 |
 | `PAYMENT_ALREADY_PAID` | 새 주문을 만들지 않고 결제 완료로 표시 |
+| `PAYMENT_DEADLINE_EXPIRED` | 결제 마감(승인 후 72시간) 만료 안내 |
 | `PAYMENT_REFUND_ADMIN_ONLY` | 관리자 취소·환불 절차 안내 |
 | `DELIVERY_NOT_SUPPORTED` / `DELIVERY_REGION_NOT_SUPPORTED` | 배송 선택 해제 또는 주소 수정 |
 
@@ -352,6 +356,9 @@ Authorization: Bearer <nadree-access-token>
 - [ ] `bookingId`를 결제 주문 요청에 사용하지 않고 `reservationId` 사용
 - [ ] 금액과 통화를 프론트에서 계산하지 않고 서버 응답 사용
 - [ ] 결제는 `APPROVED`와 `PAYMENT_REQUIRED` 이후에만 시작
+- [ ] `paymentDeadline`, `canPay`, `cannotPayReason`으로 결제 버튼 상태 제어
+- [ ] 환불액은 `refundRequestedAmount`와 `refundedAmount`로 구분해 표시
+- [ ] 회원 탈퇴 후 저장된 access·refresh token 삭제
 - [ ] `PENDING` 캡처를 즉시 재호출하지 않고 결제 상태 조회
 - [ ] FCM 수신 후 API로 최신 상태 재조회
 - [ ] 로그·분석 이벤트에 Firebase ID Token, access token, refresh token, FCM token을 기록하지 않음
@@ -360,7 +367,7 @@ Authorization: Bearer <nadree-access-token>
 
 ## 11. 검증 현황
 
-- 로컬 자동 테스트: **156개 통과**
+- 로컬 자동 테스트: **164개 통과**
 - MySQL 전용 동시성 테스트: **6개 스킵**(별도 테스트 DB 미설정)
 - Firebase 실토큰 검증, PayPal Sandbox 결제, 실제 기기 FCM 수신은 운영 환경에서 추가 확인해야 합니다.
 

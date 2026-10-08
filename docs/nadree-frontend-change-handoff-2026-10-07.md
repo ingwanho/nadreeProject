@@ -1,6 +1,6 @@
 # 나드리 프론트엔드 수정사항 인수서
 
-최종 수정일: 2026-10-07
+최종 수정일: 2026-10-08
 
 이번 백엔드 변경 중 프론트엔드 동작에 영향을 주는 내용만 정리한 문서입니다. 기존 전체 API 계약은 [`nadree-frontend-handoff.md`](nadree-frontend-handoff.md)를 기준으로 합니다.
 
@@ -36,7 +36,10 @@ Origin에는 끝의 `/`, `/*`, 경로, 해시를 포함하지 않습니다. 프�
 | 관리자 FCM | 예약·결제 알림은 대상 지점에 직접 연결된 관리자에게만 발송 | 하위 지점 전체 수신을 전제로 하지 않음 |
 | 고객 프로필 | 최신 프로필 조회 API 추가 | 앱 시작·프로필 화면에서 GET 호출 가능 |
 | 대여 기간 | 가용성 조회·예약 요청 최대 기간 42일에서 30일로 변경 | 시작일~반납일을 1~30일로 검증 |
-| 결제 응답 | `refundStatus`, `refundedAmount`를 응답 최상위에 제공 | `payment.refundStatus`만 보지 말고 최상위 필드 우선 사용 |
+| 결제 마감 | 관리자 승인 시각부터 72시간 이내에만 PayPal 주문·캡처 가능 | `paymentDeadline`, `canPay`, `cannotPayReason`으로 버튼 상태 제어 |
+| 환불 정책 | 결제 후 관리자 취소만 가능. 렌트일 전에는 결제금액의 90%, 렌트 당일부터 환불 불가 | `refundRequestedAmount`와 `refundStatus` 표시. 고객 취소는 결제 완료 후 차단 |
+| 회원 탈퇴 | 예약·결제 상태와 관계없이 탈퇴 가능. 렌탈 이력은 보존하고 개인정보·세션 폐기 | `DELETE /api/v1/nadree/user/account` 호출 후 토큰 삭제 |
+| 결제 응답 | `refundStatus`, `refundedAmount`, `refundRequestedAmount`를 응답 최상위에 제공 | `payment.*`보다 최상위 필드 우선 사용 |
 | 관리자 여권 | 마스킹된 이미지 업로드·활성 렌탈 중 조회 API 추가 | 아래 여권 연동 규칙 적용 |
 
 ## 3. 고객 프로필 조회
@@ -74,15 +77,30 @@ Authorization: Bearer <nadree-access-token>
   "paymentStatus": "PAID",
   "refundStatus": "NONE",
   "refundedAmount": 0,
+  "refundRequestedAmount": null,
+  "paymentDeadline": "2026-10-04T10:00:00+08:00",
+  "canPay": false,
+  "cannotPayReason": "PAYMENT_ALREADY_COMPLETED",
   "totalPrice": 200,
   "serverTotalPrice": 200,
   "currency": "USD"
 }
 ```
 
-환불 화면은 `refundStatus`를 기준으로 상태를 전환하고, 환불 금액은 `refundedAmount`를 표시합니다. 서버가 반환한 `paymentStatus`·`refundStatus` 외의 상태를 프론트에서 임의로 만들지 않습니다.
+환불 화면은 `refundStatus`를 기준으로 상태를 전환하고, 예정 환불액은 `refundRequestedAmount`, 실제 반영액은 `refundedAmount`를 표시합니다. 렌트일 전 관리자 취소는 총액의 90%가 목표 환불액이며, 렌트일 당일 이후에는 `refundRequestedAmount=0`·`refundStatus=NOT_REQUIRED`가 반환됩니다. 서버가 반환한 `paymentStatus`·`refundStatus` 외의 상태를 프론트에서 임의로 만들지 않습니다.
 
-## 5. 관리자 로그인·로그아웃
+결제 마감은 승인 이력의 `APPROVED` 시각부터 정확히 72시간입니다. 마감 후 주문·캡처 요청은 `409 PAYMENT_DEADLINE_EXPIRED`로 거절됩니다.
+
+## 5. 회원 탈퇴
+
+```http
+DELETE /api/v1/nadree/user/account
+Authorization: Bearer <nadree-access-token>
+```
+
+진행 중 예약·결제 여부와 관계없이 성공합니다. 서버는 렌탈 이력 보존을 위해 사용자 식별 행과 예약·결제 이력은 유지하고, 프로필·FCM 토큰·고객 access/refresh 세션을 폐기합니다. 운영 Firebase 설정이 있으면 같은 `NADREE_FCM_*` 프로젝트의 Firebase Authentication 계정도 삭제합니다. 성공 후 앱은 저장한 access/refresh token을 즉시 삭제합니다.
+
+## 6. 관리자 로그인·로그아웃
 
 ### 5.1 단일 활성 세션
 
@@ -105,7 +123,7 @@ X-FCM-Token: <current-device-fcm-token>
 - 헤더를 생략하거나 다른 토큰을 보내면 세션만 로그아웃하고 저장된 최신 FCM 토큰은 유지합니다.
 - 로그아웃 후 access token과 refresh token은 프론트 저장소에서 삭제합니다.
 
-## 6. 관리자 여권 이미지 API
+## 7. 관리자 여권 이미지 API
 
 여권 API는 관리자 앱용 `/nadreego` 경로입니다. 고객 앱에서 호출하지 않습니다.
 
@@ -177,7 +195,7 @@ Authorization: Bearer <admin-access-token>
 | `PASSPORT_NOT_FOUND` | 해당 렌탈에 이미지 없음 | 업로드 화면 표시 |
 | `PASSPORT_STORAGE_NOT_CONFIGURED` | 서버 저장소 설정 문제 | 사용자에게 일반 오류 표시, 백엔드 확인 |
 
-## 7. 프론트 체크리스트
+## 8. 프론트 체크리스트
 
 - [ ] 운영 Swagger에서 여권 PUT/GET 경로 확인
 - [ ] 관리자 인증 토큰을 `Authorization`에 전송
@@ -185,18 +203,20 @@ Authorization: Bearer <admin-access-token>
 - [ ] 새 관리자 로그인 후 기존 세션 만료를 처리
 - [ ] 고객 앱에서 프로필 화면 진입 시 `GET /api/v1/nadree/user/profile` 호출
 - [ ] 대여 기간을 최대 30일로 제한
-- [ ] 환불 화면에서 최상위 `refundStatus`, `refundedAmount` 사용
+- [ ] `paymentDeadline`, `canPay`, `cannotPayReason`으로 결제 버튼 상태 제어
+- [ ] 환불 화면에서 최상위 `refundStatus`, `refundRequestedAmount`, `refundedAmount` 사용
+- [ ] 회원 탈퇴 시 `DELETE /api/v1/nadree/user/account` 호출 후 저장 토큰 삭제
 - [ ] 여권 이미지 마스킹 후 base64 JSON 업로드
 - [ ] 여권 조회 응답을 `blob`으로 표시하고 로컬 캐시 금지
 - [ ] 반납 후 여권 조회 `404` 처리
 
-## 8. 현재 제한사항
+## 9. 현재 제한사항
 
 - 서버는 `masked: true` 요청을 받지만 이미지에 실제 개인정보가 보이지 않는지 OCR/비전 검증까지는 하지 않습니다. 프론트 마스킹이 필수입니다.
 - 현재 저장소는 운영 서버의 비공개 파일 시스템입니다. 향후 S3 또는 암호화 오브젝트 저장소로 교체할 수 있습니다.
 - 반납 후 API 조회는 차단되지만, 자동 파일 삭제 정책은 별도 운영 작업이 필요합니다.
 
-## 9. 권장 확인 순서
+## 10. 권장 확인 순서
 
 1. 테스트 관리자 계정으로 로그인합니다.
 2. 활성 렌탈의 `bookedNo`를 확인합니다.

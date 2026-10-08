@@ -35,8 +35,8 @@ class Calendar(Page):
 
     @model_validator(mode="after")
     def dates(self):
-        if not 0 < (self.endDate - self.startDate).days <= 42:
-            raise ValueError("calendar interval must be 1 to 42 days")
+        if not 0 < (self.endDate - self.startDate).days <= 30:
+            raise ValueError("calendar interval must be 1 to 30 days")
         return self
 
 

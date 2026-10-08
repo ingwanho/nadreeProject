@@ -40,7 +40,7 @@ OPENAPI_TAGS = [
     {"name": "W07 Dashboard and calendar", "description": "운영 현황과 캘린더 조회"},
     {"name": "W08 PayPal webhook", "description": "PayPal 결제·환불·웹훅"},
     {"name": "Nadree customer users", "description": "나드리 고객 UID 로그인·프로필·토큰. 로그인에는 Firebase ID Token과 body의 UID가 모두 필요합니다."},
-    {"name": "Nadree customer rentals", "description": "나드리 차량 조회·예약·결제·렌트 이력. 테스트 지점은 `00000000-0000-4000-8000-000000000101`, 모델은 `NRTEST-MODEL-125`와 `NRTEST-MODEL-155`입니다."},
+    {"name": "Nadree customer rentals", "description": "나드리 차량 조회·예약·결제·렌트 이력. 테스트 지점은 `00000000-0000-4000-8000-000000000101`, 웹 시나리오는 `NRTEST-WEB-MODEL-125`와 `NRTEST-WEB-MODEL-ND`입니다."},
 ]
 
 OPENAPI_DESCRIPTION = """
@@ -60,8 +60,11 @@ OPENAPI_DESCRIPTION = """
 - 테스트 지점(`spotMasterId`/`shopId`): `00000000-0000-4000-8000-000000000101`
 - 테스트 모델: `NRTEST-MODEL-125`(Honda Vario 125, 125cc), `NRTEST-MODEL-155`(Yamaha NMAX 155, 155cc)
 - 테스트 차량: `NRTEST-VEHICLE-301`(대여 가능), `NRTEST-VEHICLE-302`(정비), `NRTEST-VEHICLE-303`(진행 중 렌트), `NRTEST-VEHICLE-304`(미래 승인 예약)
+- 웹 테스트 모델: `NRTEST-WEB-MODEL-125`(Honda Vario Web Test 125, 125cc, BASIC/PREMIUM), `NRTEST-WEB-MODEL-ND`(SYM Cruiser No Delivery Test, 배송 미지원)
+- 웹 테스트 차량: `NRTEST-WEB-BASIC-125`, `NRTEST-WEB-PREMIUM-125`(일일 45 USD), `NRTEST-WEB-NODELIVERY`
+- 웹 테스트 배송지역: `NRTEST-KUTA`(왕복 20 USD), `NRTEST-CANGGU`(왕복 30 USD)
 - 예약 상태 샘플: `NRTEST-RES-REQ-001`, `NRTEST-RES-APP-001`, `NRTEST-RES-PENDING-001`, `NRTEST-RES-REJECT-001`, `NRTEST-RES-CANCEL-001`, `NRTEST-RES-EXPIRED-001`, `NRTEST-RES-HAND-001`, `NRTEST-RES-RETURN-001`
-- 테스트 통화: `USD`; 테스트 가격 기준: 125cc 일일 25 USD, 155cc 일일 35 USD
+- 테스트 통화: `USD`; 기존 125cc BASIC은 일일 25 USD, 웹 125cc 모델은 BASIC 25 USD 또는 PREMIUM 45 USD입니다. Canggu 왕복 배송은 15 + 15 USD입니다.
 
 테스트 데이터의 전체 실행 순서와 예상 결과는 저장소의 `docs/nadree-api-test-handoff-2026-10-01.md`를 참고합니다. Firebase ID Token, access token, refresh token, PayPal 자격증명과 실제 FCM 토큰은 Swagger 설명에 기록하지 않습니다.
 """

@@ -93,3 +93,19 @@ class CustomerFirebaseAuth:
         if token_uid != uid:
             raise Problem(401, "FIREBASE_UID_MISMATCH")
         return claims
+
+    def delete_uid(self, uid):
+        """Delete the Firebase account when the shared Firebase project is configured."""
+        if not self.configured or self._verify_fn is not None:
+            return False
+        try:
+            from firebase_admin import auth
+            auth.delete_user(uid, app=self._firebase_app())
+        except ImportError as exc:
+            raise Problem(503, "CUSTOMER_FIREBASE_AUTH_NOT_CONFIGURED") from exc
+        except Exception as exc:
+            if type(exc).__name__ == "UserNotFoundError":
+                return True
+            logger.error("Customer Firebase account deletion failed: %s", type(exc).__name__)
+            raise Problem(503, "CUSTOMER_FIREBASE_ACCOUNT_DELETE_FAILED") from exc
+        return True

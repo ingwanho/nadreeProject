@@ -124,6 +124,20 @@ def test_nadri_logout_keeps_access_only_compatibility(setup):
         "X-Refresh-Token": headers["X-Refresh-Token"]}).status_code == 401
 
 
+def test_nadri_account_deletion_is_unconditional_and_revokes_sessions(setup):
+    tables = rental_tables(setup)
+    headers, _ = login(setup["client"], "user-delete")
+    response = setup["client"].delete("/api/v1/nadree/user/account", headers=headers)
+    assert response.status_code == 200, response.text
+    assert response.json() == {"status": "success", "deleted": True}
+    assert setup["client"].get("/api/v1/nadree/user/profile", headers=headers).status_code == 401
+    assert setup["client"].post("/api/v1/nadree/user/refresh", headers={
+        "X-Refresh-Token": headers["X-Refresh-Token"]}).status_code == 401
+    with setup["engine"].connect() as connection:
+        row = connection.execute(select(tables["MSP_RENTAL_USER"])).mappings().one()
+    assert row["name"] is None and row["fcm_token"] is None and row["user_access_revoked_at"] is not None
+
+
 def test_nadri_logout_rejects_a_refresh_token_from_another_user(setup):
     rental_tables(setup)
     first, _ = login(setup["client"], "user-refresh-5")

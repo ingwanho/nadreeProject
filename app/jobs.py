@@ -15,9 +15,9 @@ from app.config import Settings
 from app.db import Database
 from app.fcm import (FcmSender, queue_payment_deadline_expired,
                      queue_payment_deadline_reminder)
+from app.payment_policy import PAYMENT_DEADLINE
 
 OPEN_CONTRACTS = ("ON_RENT", "OVERDUE")
-PAYMENT_DEADLINE = timedelta(days=3)
 PAYMENT_REMINDERS = ((2, timedelta(days=1)), (1, timedelta(days=2)))
 
 

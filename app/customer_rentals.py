@@ -15,11 +15,12 @@ from app.errors import Problem
 from app.fcm import queue_reservation_request
 from app.headers import fcm_header, refresh_header
 from app.paypal import identifier
+from app.payment_policy import PAYMENT_DEADLINE
 from app.pricing import daily_price, load_tiers
 from app.rental_common import contracts_for, day_end, fleet, iso, local_date, lock_key, midnight
 from app.rental_inputs import (NadriAvailability, NadriLogin, NadriPaymentCapture,
                                NadriPaymentOrder, NadriProfile, NadriRentalRequest, ReservationCancel)
-from app.responses import (CustomerAvailability, CustomerCancellation, CustomerLogin,
+from app.responses import (CustomerAccountDeletion, CustomerAvailability, CustomerCancellation, CustomerLogin,
                            CustomerPage, CustomerPayment, CustomerProfileResult,
                            CustomerRequest, Status, Tokens)
 from app.security import fingerprint, now, sign_user_access, user_principal
@@ -325,6 +326,7 @@ def _payment_view(payment):
             "paypalOrderId": payment.get("paypal_order_id"), "paypalCaptureId": payment.get("paypal_capture_id"),
             "totalPrice": _number(payment.get("total_price")), "currency": payment.get("currency"),
             "refundedAmount": _number(payment.get("refunded_amount")), "refundStatus": payment.get("refund_status", "NONE"),
+            "refundRequestedAmount": _number(payment.get("refund_requested_amount")),
             "paypalRefundId": payment.get("paypal_refund_id"), "paidAt": payment.get("paid_at").isoformat() if payment.get("paid_at") else None}
 
 
@@ -580,6 +582,27 @@ def nadree_profile_view(request: Request, session: Session = DB):
                                              "nationality": row.get("nationality")}}
 
 
+@user_router.delete("/account", response_model=CustomerAccountDeletion,
+                    summary="나드리 고객 회원 탈퇴",
+                    description="진행 중 예약·결제 여부와 관계없이 탈퇴합니다. 렌탈 이력은 보존하고 고객 개인정보·FCM 토큰·세션을 폐기합니다.",
+                    dependencies=[Depends(customer_access_token)])
+def nadree_delete_account(request: Request, session: Session = DB):
+    user = user_principal(request, session)
+    request.app.state.customer_auth.delete_uid(user.uid_token)
+    lock_key(session, "nadri-user", user.uid_token)
+    table = _db(request).table("MSP_RENTAL_USER")
+    refresh_table = _db(request).table("MSP_RENTAL_USER_REFRESH_TOKEN")
+    current = now()
+    values = {"name": None, "age": None, "gender": None, "nationality": None,
+              "fcm_token": None, "fcm_token_updated_at": current,
+              "user_access_revoked_at": current, "updated_at": current}
+    require_columns(table, values)
+    session.execute(update(table).where(table.c.uid_token == user.uid_token).values(**values))
+    session.execute(update(refresh_table).where(refresh_table.c.uid_token == user.uid_token,
+                                                refresh_table.c.revoked_at.is_(None)).values(revoked_at=current))
+    return {"status": "success", "deleted": True}
+
+
 @user_router.post("/logout", response_model=Status,
                   dependencies=[Depends(customer_access_token), Depends(refresh_header), Depends(fcm_header)])
 @user_router.get("/logout", response_model=Status,
@@ -618,7 +641,7 @@ def nadree_logout(request: Request, session: Session = DB,
 
 @router.post("/availability", response_model=CustomerAvailability,
              summary="지점·차량 모델·USD 가격·배송비 조회",
-             description="테스트 시 spotMasterId/shopId는 00000000-0000-4000-8000-000000000101, 모델은 NRTEST-MODEL-125 또는 NRTEST-MODEL-155를 기준으로 확인합니다.")
+             description="테스트 시 spotMasterId/shopId는 00000000-0000-4000-8000-000000000101을 사용합니다. 웹 시나리오는 NRTEST-WEB-MODEL-125(BASIC/PREMIUM)와 NRTEST-WEB-MODEL-ND(배송 미지원)를 기준으로 확인합니다.")
 def nadree_availability(body: NadriAvailability, request: Request, session: Session = DB):
     items = _availability_for(request, session, body)
     return {"status": "success", "items": [
@@ -692,6 +715,32 @@ def _reservation_for_payment(request, session, user, reservation_id):
     return dict(row)
 
 
+def _payment_window(request, session, reservation, payment=None):
+    history = _db(request).table("MSP_RESERVATION_HISTORY")
+    approved_at = session.execute(select(history.c.created_at).where(
+        history.c.reservation_id == reservation["reservation_id"], history.c.event_type == "APPROVED")
+        .order_by(history.c.created_at.desc()).limit(1)).scalar()
+    approved_at = approved_at or reservation.get("updated_at") or reservation.get("created_at")
+    deadline = approved_at + PAYMENT_DEADLINE if approved_at else None
+    status = payment.get("payment_status") if payment else None
+    if status in ("PAID", "PARTIALLY_REFUNDED", "REFUNDED"):
+        can_pay, reason = False, "PAYMENT_ALREADY_COMPLETED"
+    elif status in ("CANCELED", "FAILED", "REVERSED"):
+        can_pay, reason = False, "PAYMENT_NOT_AVAILABLE"
+    elif deadline is not None and now() >= deadline:
+        can_pay, reason = False, "PAYMENT_DEADLINE_EXPIRED"
+    else:
+        can_pay, reason = True, None
+    return {"paymentDeadline": iso(request, deadline), "canPay": can_pay, "cannotPayReason": reason}
+
+
+def _ensure_payment_window(request, session, reservation, payment=None):
+    window = _payment_window(request, session, reservation, payment)
+    if window["cannotPayReason"] == "PAYMENT_DEADLINE_EXPIRED":
+        raise Problem(409, "PAYMENT_DEADLINE_EXPIRED")
+    return window
+
+
 def _revalidate_reservation_quote(request, session, reservation):
     criteria = reservation.get("required_criteria_json") or {}
     source = criteria.get("availabilityRequest") if isinstance(criteria, dict) else None
@@ -725,7 +774,7 @@ def _revalidate_reservation_quote(request, session, reservation):
     return stored
 
 
-def _payment_result(payment, approval_url=None):
+def _payment_result(payment, approval_url=None, payment_window=None):
     view = _payment_view(payment)
     return {"status": "success", "paymentId": payment["payment_id"], "reservationId": payment.get("reservation_id"),
             "bookingId": payment.get("reservation_id"),
@@ -734,8 +783,12 @@ def _payment_result(payment, approval_url=None):
             "paypalCaptureId": payment.get("paypal_capture_id"), "approvalUrl": approval_url,
             "refundStatus": payment.get("refund_status", "NONE"),
             "refundedAmount": _number(payment.get("refunded_amount")),
+            "refundRequestedAmount": _number(payment.get("refund_requested_amount")),
             "totalPrice": _number(payment.get("total_price")), "serverTotalPrice": _number(payment.get("total_price")),
-            "currency": payment["currency"], "payment": view}
+            "currency": payment["currency"], "payment": view,
+            "paymentDeadline": (payment_window or {}).get("paymentDeadline"),
+            "canPay": (payment_window or {}).get("canPay", False),
+            "cannotPayReason": (payment_window or {}).get("cannotPayReason")}
 
 
 @router.post("/payment/order", response_model=CustomerPayment,
@@ -752,6 +805,8 @@ def nadree_payment_order(body: NadriPaymentOrder, request: Request, session: Ses
     if existing:
         if existing["payment_status"] in ("PAID", "PARTIALLY_REFUNDED", "REFUNDED"):
             raise Problem(409, "PAYMENT_ALREADY_PAID")
+    payment_window = _ensure_payment_window(request, session, reservation, existing)
+    if existing:
         if existing["payment_status"] in ("CREATED", "PENDING") and existing.get("paypal_order_id"):
             approval, provider_order = None, None
             try:
@@ -764,15 +819,15 @@ def nadree_payment_order(body: NadriPaymentOrder, request: Request, session: Ses
                 else:
                     raise Problem(409, "PAYMENT_STATE_INVALID")
             except (AttributeError, SQLAlchemyError):
-                return _payment_result(dict(existing, _shop_master_id=reservation["spot_master_id"]))
+                return _payment_result(dict(existing, _shop_master_id=reservation["spot_master_id"]), payment_window=payment_window)
             except Problem:
                 # A provider read failure is not proof that an order expired;
                 # leave the attempt intact and let the expiry job decide.
                 raise
             if provider_order is not None:
-                return _payment_result(dict(existing, _shop_master_id=reservation["spot_master_id"]), approval)
+                return _payment_result(dict(existing, _shop_master_id=reservation["spot_master_id"]), approval, payment_window)
             if existing["payment_status"] == "PENDING":
-                return _payment_result(dict(existing, _shop_master_id=reservation["spot_master_id"]))
+                return _payment_result(dict(existing, _shop_master_id=reservation["spot_master_id"]), payment_window=payment_window)
             # The PayPal order can expire independently of this service. Close
             # the internal attempt and create a fresh order on the next call.
             session.execute(update(table).where(table.c.payment_id == existing["payment_id"],
@@ -810,7 +865,7 @@ def nadree_payment_order(body: NadriPaymentOrder, request: Request, session: Ses
         raise Problem(503, "PAYPAL_APPROVAL_URL_MISSING")
     session.execute(update(table).where(table.c.payment_id == payment["payment_id"]).values(paypal_order_id=order_id, updated_at=now()))
     payment = dict(payment, paypal_order_id=order_id, _shop_master_id=reservation["spot_master_id"])
-    return _payment_result(payment, approval)
+    return _payment_result(payment, approval, payment_window)
 
 
 @router.post("/payment/capture", response_model=CustomerPayment,
@@ -834,11 +889,14 @@ def nadree_payment_capture(body: NadriPaymentCapture, request: Request, session:
     if not reservation:
         raise Problem(404, "PAYMENT_NOT_FOUND")
     if payment["payment_status"] in ("PAID", "PARTIALLY_REFUNDED", "REFUNDED"):
-        return _payment_result(dict(payment, _shop_master_id=reservation["spot_master_id"]))
+        return _payment_result(dict(payment, _shop_master_id=reservation["spot_master_id"]),
+                               payment_window=_payment_window(request, session, reservation, payment))
     if payment["payment_status"] == "PENDING" and payment.get("paypal_capture_id"):
-        return _payment_result(dict(payment, _shop_master_id=reservation["spot_master_id"]))
+        return _payment_result(dict(payment, _shop_master_id=reservation["spot_master_id"]),
+                               payment_window=_payment_window(request, session, reservation, payment))
     if payment["payment_status"] not in ("CREATED", "PENDING") or not payment.get("paypal_order_id"):
         raise Problem(409, "PAYMENT_STATE_INVALID")
+    payment_window = _ensure_payment_window(request, session, reservation, payment)
     try:
         result = request.app.state.paypal.capture_order(payment["paypal_order_id"], "nadree-capture-" + str(payment["payment_id"]))
     except Problem:
@@ -853,7 +911,8 @@ def nadree_payment_capture(body: NadriPaymentCapture, request: Request, session:
     session.execute(update(table).where(table.c.payment_id == payment["payment_id"]).values(**values))
     payment = dict(payment)
     payment.update(values)
-    return _payment_result(dict(payment, _shop_master_id=reservation["spot_master_id"]))
+    return _payment_result(dict(payment, _shop_master_id=reservation["spot_master_id"]),
+                           payment_window=payment_window)
 
 
 def _owned_customer_payment(request, session, user, payment_id):
@@ -867,7 +926,9 @@ def _owned_customer_payment(request, session, user, payment_id):
     if payment.get("reservation_id"):
         reservations = _db(request).table("MSP_RESERVATION")
         subject = session.execute(select(reservations.c.uid_token,
-                                         reservations.c.spot_master_id).where(
+                                         reservations.c.spot_master_id, reservations.c.reservation_id,
+                                         reservations.c.start_datetime, reservations.c.created_at,
+                                         reservations.c.updated_at).where(
             reservations.c.reservation_id == payment["reservation_id"])).mappings().first()
     elif payment.get("rental_contract_id"):
         contracts = _db(request).table("MSP_RENTAL_CONTRACT")
@@ -879,6 +940,8 @@ def _owned_customer_payment(request, session, user, payment_id):
     if not subject or subject["uid_token"] != user.uid_token:
         raise Problem(404, "PAYMENT_NOT_FOUND")
     payment["_shop_master_id"] = subject["spot_master_id"]
+    if payment.get("reservation_id"):
+        payment["_reservation"] = dict(subject)
     return payment
 
 
@@ -888,7 +951,10 @@ def _owned_customer_payment(request, session, user, payment_id):
 def nadree_payment_status(paymentId: int, request: Request, session: Session = DB):
     """결제 요청 응답이 유실된 경우 현재 저장된 결제·웹훅 상태를 다시 조회한다."""
     user = user_principal(request, session)
-    return _payment_result(_owned_customer_payment(request, session, user, paymentId))
+    payment = _owned_customer_payment(request, session, user, paymentId)
+    reservation = payment.pop("_reservation", None)
+    window = _payment_window(request, session, reservation, payment) if reservation else None
+    return _payment_result(payment, payment_window=window)
 
 
 @router.get("/ongoing", response_model=CustomerPage,
