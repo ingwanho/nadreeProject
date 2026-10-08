@@ -81,7 +81,7 @@ class CustomerFirebaseAuth:
                 claims = self._verify_fn(id_token)
             else:
                 from firebase_admin import auth
-                claims = auth.verify_id_token(id_token, app=self._firebase_app())
+                claims = auth.verify_id_token(id_token, app=self._firebase_app(), check_revoked=True)
         except Problem:
             raise
         except Exception as exc:
@@ -92,6 +92,8 @@ class CustomerFirebaseAuth:
         token_uid = claims.get("uid") or claims.get("sub")
         if token_uid != uid:
             raise Problem(401, "FIREBASE_UID_MISMATCH")
+        if type(claims.get("auth_time")) is not int or claims["auth_time"] < 0:
+            raise Problem(401, "FIREBASE_ID_TOKEN_INVALID")
         return claims
 
     def delete_uid(self, uid):

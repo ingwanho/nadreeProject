@@ -226,6 +226,8 @@ class CustomerCancellation(Status):
     bookedNo: str
     reservationStatus: str
     refundStatus: str
+    refundRequestedAmount: int | float
+    refundReason: str
 
 
 class SignedIn(Tokens):

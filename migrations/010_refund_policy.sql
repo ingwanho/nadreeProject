@@ -1,4 +1,4 @@
--- 90% refund before the rental day; no refund from the rental day.
+-- Stored cumulative refund target: customer cancellation 90%, administrator cancellation 100%.
 -- Apply after 004_payment_refund.sql on databases that already have the payment table.
 
 ALTER TABLE MSP_RENTAL_PAYMENT

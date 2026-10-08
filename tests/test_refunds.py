@@ -85,10 +85,10 @@ def test_customer_rental_period_is_limited_to_thirty_days():
                            deliveryRequested=False)
 
 
-def test_refund_policy_excludes_ten_percent_and_blocks_rental_day():
-    assert refund_target(Decimal("100.00"), rental_day=False) == Decimal("90.00")
-    assert refund_target(Decimal("99.99"), rental_day=False) == Decimal("89.99")
-    assert refund_target(Decimal("100.00"), rental_day=True) == Decimal("0.00")
+def test_refund_policy_depends_on_cancellation_actor():
+    assert refund_target(Decimal("100.00"), customer=True) == Decimal("90.00")
+    assert refund_target(Decimal("99.99"), customer=True) == Decimal("89.99")
+    assert refund_target(Decimal("100.00"), customer=False) == Decimal("100.00")
 
 
 def test_admin_calendar_period_is_limited_to_thirty_days():

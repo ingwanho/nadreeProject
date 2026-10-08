@@ -136,7 +136,7 @@ X-Refresh-Token: <nadree-refresh-token>
 | 결제 상태 복구 | GET | `/api/v1/nadree/rental/payment/{paymentId}` | Nadree access | 응답 유실·`PENDING` 상태 확인용 |
 | 진행 중 목록 | GET | `/api/v1/nadree/rental/ongoing` | Nadree access | `page`, `pageSize` 사용 |
 | 완료 목록 | GET | `/api/v1/nadree/rental/completed` | Nadree access | `page`, `pageSize` 사용 |
-| 결제 전 예약 취소 | POST | `/api/v1/nadree/rental/request/cancel` | Nadree access | body에 `reservationId` 사용 |
+| 고객 예약 취소·90% 환불 | POST | `/api/v1/nadree/rental/request/cancel` | Nadree access | 렌트일 전까지, body에 `reservationId` 사용 |
 | 로그아웃 | POST | `/api/v1/nadree/user/logout` | access + refresh | 일치하는 `X-FCM-Token`을 보내면 현재 FCM 토큰 삭제 |
 | 토큰 갱신 | POST | `/api/v1/nadree/user/refresh` | refresh | 새 access·refresh로 교체 |
 
@@ -271,7 +271,7 @@ Authorization: Bearer <nadree-access-token>
 
 주문 생성 성공의 `CREATED`와 캡처 직후의 `PENDING`은 결제 완료가 아닙니다. 최종 완료 여부는 PayPal 웹훅으로 갱신됩니다.
 
-### 결제 전 예약 취소
+### 고객 예약 취소
 
 ```http
 POST /api/v1/nadree/rental/request/cancel
@@ -285,9 +285,9 @@ Authorization: Bearer <nadree-access-token>
 }
 ```
 
-결제가 완료된 예약은 고객 취소 API에서 환불하지 않습니다. 결제 완료 후 취소·환불은 관리자 처리 영역입니다. 캡처가 진행 중인 `PENDING` 상태에서 취소하면 `PAYMENT_IN_PROGRESS`가 반환될 수 있습니다.
+고객은 렌트 시작일 전까지 본인의 인계 전 REQUESTED/APPROVED 예약을 취소할 수 있습니다. 결제 완료 시 90% 환불이며, 업무 시간대(기본 Asia/Makassar)의 시작일 00:00부터는 미결제도 취소할 수 없습니다. 캡처 진행 중 `PENDING`은 `PAYMENT_IN_PROGRESS`를 반환합니다.
 
-관리자 취소 시 렌트일 전에는 결제금액의 90%가 환불되고, 렌트일 당일 또는 이후에는 환불되지 않습니다. 고객 앱은 `refundRequestedAmount`를 예정액, `refundedAmount`를 실제 반영액으로 표시합니다.
+관리자 취소는 렌트일과 관계없이 결제금액의 100% 환불입니다(인계 전 APPROVED 예약만 가능). 고객 앱은 `refundRequestedAmount`를 목표 누적 환불액, `refundedAmount`를 실제 반영액으로 표시합니다. 고객 취소 응답에도 `refundRequestedAmount`와 `refundReason`이 포함됩니다.
 
 ## 7. 목록 화면 구현 규칙
 
@@ -341,7 +341,7 @@ Authorization: Bearer <nadree-access-token>
 | `PAYMENT_IN_PROGRESS` | 결제 상태 조회 후 기다림 |
 | `PAYMENT_ALREADY_PAID` | 새 주문을 만들지 않고 결제 완료로 표시 |
 | `PAYMENT_DEADLINE_EXPIRED` | 결제 마감(승인 후 72시간) 만료 안내 |
-| `PAYMENT_REFUND_ADMIN_ONLY` | 관리자 취소·환불 절차 안내 |
+| `CUSTOMER_CANCELLATION_DEADLINE_PASSED` | 렌트 당일부터 고객 취소 불가 안내 |
 | `DELIVERY_NOT_SUPPORTED` / `DELIVERY_REGION_NOT_SUPPORTED` | 배송 선택 해제 또는 주소 수정 |
 
 예약 생성·결제 주문·결제 캡처·취소 같은 변경 요청은 네트워크 타임아웃만으로 자동 재전송하지 않습니다. 먼저 기존 예약 목록 또는 결제 상태 API로 결과를 확인합니다.

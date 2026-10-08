@@ -383,7 +383,8 @@ OPENAPI_EXAMPLES = {
     "CustomerAccountDeletion": {"status": "success", "deleted": True},
     "CustomerCancellation": {
         "status": "success", "reservationId": "NRTEST-RES-REQ-001",
-        "bookedNo": "BONRTEST-RES-REQ-001", "reservationStatus": "CANCELED", "refundStatus": "NOT_REQUIRED",
+        "bookedNo": "BONRTEST-RES-REQ-001", "reservationStatus": "CANCELED", "refundStatus": "REQUESTED",
+        "refundRequestedAmount": 90, "refundReason": "CUSTOMER_REFUND_90_PERCENT",
     },
     "HierarchyItem": {
         "spot_master_id": TEST_SPOT["spotMasterId"], "unit_code": TEST_SPOT["unitCode"],

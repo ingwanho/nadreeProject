@@ -247,7 +247,8 @@ def queue_reservation_decision(db, session, uid_token, reservation_id, status):
                         "updated_at": row.get("fcm_token_updated_at")}],
            event="RESERVATION_APPROVED" if approved else "RESERVATION_REJECTED",
            title="예약 승인 완료" if approved else "예약 거절 안내",
-           body="렌트 예약이 승인되었습니다. 3일 이내에 결제를 진행해 주세요." if approved
+           body=("렌트 예약이 승인되었습니다. 3일 이내에 결제를 진행해 주세요. "
+                 "결제 후 고객 취소 시 결제금액의 10%가 환불 수수료로 공제됩니다. 렌트 당일부터는 고객 취소가 불가능합니다.") if approved
            else "요청하신 렌트 예약이 거절되었습니다.",
            data={"type": "RESERVATION_APPROVED" if approved else "RESERVATION_REJECTED",
                  "reservationId": reservation_id, "bookedNo": "BO" + reservation_id,
@@ -265,7 +266,8 @@ def queue_payment_deadline_reminder(db, session, uid_token, reservation_id, days
            recipients=[{"id": row["uid_token"], "token": row.get("fcm_token"),
                         "updated_at": row.get("fcm_token_updated_at")}],
            event=event, title="결제 기한 안내",
-           body=f"예약 결제까지 {days_remaining}일 이내에 결제해 주세요.",
+           body=(f"예약 결제까지 {days_remaining}일 이내에 결제해 주세요. "
+                 "결제 후 고객 취소 시 결제금액의 10%가 환불 수수료로 공제됩니다. 렌트 당일부터는 고객 취소가 불가능합니다."),
            data={"type": event, "reservationId": reservation_id, "bookedNo": "BO" + reservation_id,
                  "reservationStatus": "APPROVED", "daysRemaining": days_remaining,
                  "paymentDeadlineAt": deadline_at.isoformat()})

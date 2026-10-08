@@ -3,7 +3,7 @@ import uuid
 from datetime import date, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, Query, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import or_, select, update
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
@@ -14,7 +14,8 @@ from app.db import require_columns, transaction
 from app.errors import Problem
 from app.fcm import queue_reservation_request
 from app.headers import fcm_header, refresh_header
-from app.paypal import identifier
+from app.paypal import execute_refund, identifier
+from app.refunds import prepare_booking_refund
 from app.payment_policy import PAYMENT_DEADLINE
 from app.pricing import daily_price, load_tiers
 from app.rental_common import contracts_for, day_end, fleet, iso, local_date, lock_key, midnight
@@ -481,14 +482,14 @@ def _user_view(request, session, user):
 
 @user_router.post("/login", response_model=CustomerLogin,
                   summary="나드리 고객 Firebase UID 로그인·회원 생성",
-                  description="Firebase ID Token의 uid와 body의 UID가 일치해야 합니다. 테스트 고객 UID는 NRTEST-USER-001 또는 NRTEST-USER-002입니다.")
+                  description="Firebase ID Token의 UID·폐기 여부·계정 상태를 검증합니다. 탈퇴·로그아웃 시각 이하의 auth_time은 401 FIREBASE_REAUTHENTICATION_REQUIRED입니다. 토큰 갱신만이 아닌 Firebase 재인증이 필요합니다. 정상 신규 UID는 새 회원으로 생성합니다.")
 def nadree_login(body: NadriLogin, request: Request, session: Session = DB,
                  credentials: HTTPAuthorizationCredentials | None = Depends(firebase_id_token)):
     id_token = credentials.credentials if credentials is not None else None
-    request.app.state.customer_auth.verify_uid(body.UID, id_token)
     db = _db(request)
     table = db.table("MSP_RENTAL_USER")
     lock_key(session, "nadri-user", body.UID)
+    claims = request.app.state.customer_auth.verify_uid(body.UID, id_token)
     row = session.execute(select(table).where(table.c.uid_token == body.UID).with_for_update()).mappings().first()
     is_new = row is None
     if row is None:
@@ -502,15 +503,19 @@ def nadree_login(body: NadriLogin, request: Request, session: Session = DB,
         raise Problem(503, "RENTAL_USER_STORAGE_UNAVAILABLE")
     user = dict(row)
     current = now()
+    # Only the explicitly unconfigured development/test verifier lacks auth_time.
+    auth_time = claims.get("auth_time")
+    if claims.get("verified") is False and not request.app.state.customer_auth.configured:
+        auth_time = int(current.replace(tzinfo=timezone.utc).timestamp())
+    revoked = user.get("user_access_revoked_at")
+    if revoked is not None and auth_time <= int(revoked.replace(tzinfo=timezone.utc).timestamp()):
+        raise Problem(401, "FIREBASE_REAUTHENTICATION_REQUIRED")
     if body.fcmToken is not None:
         values = {"fcm_token": body.fcmToken, "fcm_token_updated_at": current, "updated_at": current}
         require_columns(table, values)
         session.execute(update(table).where(table.c.uid_token == body.UID).values(**values))
         user.update(values)
     refresh_token = _issue_user_refresh(request, session, body.UID, current)
-    auth_time = None
-    if user.get("user_access_revoked_at") is not None:
-        auth_time = int(user["user_access_revoked_at"].replace(tzinfo=timezone.utc).timestamp()) + 1
     return {"status": "success", "isNewUser": is_new,
             "refreshToken": refresh_token,
             "accessToken": sign_user_access(request.app.state.settings, body.UID, auth_time=auth_time),
@@ -528,7 +533,7 @@ def nadree_refresh(request: Request, session: Session = DB):
     if not user:
         raise Problem(401, "INVALID_REFRESH_TOKEN")
     revoked = user.get("user_access_revoked_at")
-    if revoked is not None and initial["issued_at"] <= revoked:
+    if revoked is not None and int(initial["issued_at"].replace(tzinfo=timezone.utc).timestamp()) <= int(revoked.replace(tzinfo=timezone.utc).timestamp()):
         raise Problem(401, "INVALID_REFRESH_TOKEN")
     table, row = _user_refresh_row(request, session, raw, locked=True)
     new_raw = USER_REFRESH_PREFIX + secrets.token_urlsafe(48)
@@ -538,8 +543,6 @@ def nadree_refresh(request: Request, session: Session = DB):
     if result.rowcount != 1:
         raise Problem(401, "INVALID_REFRESH_TOKEN")
     issued = int(row["issued_at"].replace(tzinfo=timezone.utc).timestamp())
-    if revoked is not None:
-        issued = max(issued, int(revoked.replace(tzinfo=timezone.utc).timestamp()) + 1)
     return {"status": "success", "accessToken": sign_user_access(request.app.state.settings,
                                                                      row["uid_token"], auth_time=issued),
             "refreshToken": new_raw}
@@ -588,8 +591,8 @@ def nadree_profile_view(request: Request, session: Session = DB):
                     dependencies=[Depends(customer_access_token)])
 def nadree_delete_account(request: Request, session: Session = DB):
     user = user_principal(request, session)
-    request.app.state.customer_auth.delete_uid(user.uid_token)
     lock_key(session, "nadri-user", user.uid_token)
+    request.app.state.customer_auth.delete_uid(user.uid_token)
     table = _db(request).table("MSP_RENTAL_USER")
     refresh_table = _db(request).table("MSP_RENTAL_USER_REFRESH_TOKEN")
     current = now()
@@ -978,10 +981,10 @@ def nadree_completed(request: Request, page: int = Query(1, ge=1), pageSize: int
 
 
 @router.post("/request/cancel", response_model=CustomerCancellation,
-             summary="결제 전 예약 취소",
-             description="REQUESTED 또는 APPROVED 상태에서 결제 전 취소할 수 있습니다. 결제 완료 건은 관리자 환불 절차를 사용합니다.",
+             summary="고객 예약 취소·90% 환불",
+             description="본인의 REQUESTED 또는 APPROVED 예약을 렌트 시작일 전까지 취소할 수 있습니다. 결제 완료 시 결제금액의 90%를 환불합니다. 업무 시간대(기본 Asia/Makassar) 기준 렌트 당일 00:00부터는 결제 여부와 관계없이 409 CUSTOMER_CANCELLATION_DEADLINE_PASSED로 차단합니다. 캡처 처리 중에는 PAYMENT_IN_PROGRESS를 반환합니다.",
              dependencies=[Depends(customer_access_token)])
-def cancel_request(body: ReservationCancel, request: Request, session: Session = DB):
+def cancel_request(body: ReservationCancel, request: Request, background_tasks: BackgroundTasks, session: Session = DB):
     user = user_principal(request, session)
     db = request.app.state.db
     reservation_table = db.table("MSP_RESERVATION")
@@ -992,25 +995,15 @@ def cancel_request(body: ReservationCancel, request: Request, session: Session =
         raise Problem(404, "RESERVATION_NOT_FOUND")
     if reservation["reservation_status"] not in ("REQUESTED", "APPROVED"):
         raise Problem(409, "RESERVATION_STATE_INVALID")
+    if local_date(request, now()) >= local_date(request, reservation["start_datetime"]):
+        raise Problem(409, "CUSTOMER_CANCELLATION_DEADLINE_PASSED")
     contract_table = db.table("MSP_RENTAL_CONTRACT")
     if session.execute(select(contract_table.c.rental_contract_id).where(
             contract_table.c.reservation_id == reservation["reservation_id"])).first():
         raise Problem(409, "RESERVATION_ALREADY_HANDED_OVER")
 
-    payment_table = db.table("MSP_RENTAL_PAYMENT")
-    payments = session.execute(select(payment_table).where(
-        payment_table.c.reservation_id == reservation["reservation_id"],
-        payment_table.c.payment_environment == request.app.state.settings.paypal_environment)
-        .order_by(payment_table.c.payment_id.desc()).with_for_update()).mappings().all()
-    refund_status = "NOT_REQUIRED"
-    for payment in payments:
-        if payment["paid_at"] is not None or payment["payment_status"] in ("PAID", "PARTIALLY_REFUNDED", "REFUNDED"):
-            raise Problem(409, "PAYMENT_REFUND_ADMIN_ONLY")
-        if payment["payment_status"] == "PENDING":
-            raise Problem(409, "PAYMENT_IN_PROGRESS")
-        if payment["payment_status"] in ("CREATED", "PENDING"):
-            session.execute(update(payment_table).where(payment_table.c.payment_id == payment["payment_id"]).values(
-                payment_status="CANCELED", refund_status="NOT_REQUIRED", refund_reason=body.reason, updated_at=now()))
+    payment_id, refund_status, refund_ready, refund_amount, refund_reason = prepare_booking_refund(
+        request, session, reservation, body.reason, customer=True)
 
     at = now()
     values = dict(reservation_status="CANCELED", vehicle_assignment_status="RELEASED",
@@ -1019,6 +1012,9 @@ def cancel_request(body: ReservationCancel, request: Request, session: Session =
         reservation_table.c.reservation_id == reservation["reservation_id"],
         reservation_table.c.reservation_status.in_(("REQUESTED", "APPROVED"))).values(**values))
     reservation_history(request, session, reservation, values, "CANCELLED", user.uid_token, body.reason)
+    if refund_ready:
+        background_tasks.add_task(execute_refund, db, request.app.state.paypal, payment_id)
     return {"status": "success", "reservationId": reservation["reservation_id"],
             "bookedNo": "BO" + reservation["reservation_id"], "reservationStatus": "CANCELED",
-            "refundStatus": refund_status}
+            "refundStatus": refund_status, "refundRequestedAmount": _number(refund_amount),
+            "refundReason": refund_reason}

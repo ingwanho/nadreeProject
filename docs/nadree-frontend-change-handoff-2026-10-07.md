@@ -37,7 +37,7 @@ Origin에는 끝의 `/`, `/*`, 경로, 해시를 포함하지 않습니다. 프�
 | 고객 프로필 | 최신 프로필 조회 API 추가 | 앱 시작·프로필 화면에서 GET 호출 가능 |
 | 대여 기간 | 가용성 조회·예약 요청 최대 기간 42일에서 30일로 변경 | 시작일~반납일을 1~30일로 검증 |
 | 결제 마감 | 관리자 승인 시각부터 72시간 이내에만 PayPal 주문·캡처 가능 | `paymentDeadline`, `canPay`, `cannotPayReason`으로 버튼 상태 제어 |
-| 환불 정책 | 결제 후 관리자 취소만 가능. 렌트일 전에는 결제금액의 90%, 렌트 당일부터 환불 불가 | `refundRequestedAmount`와 `refundStatus` 표시. 고객 취소는 결제 완료 후 차단 |
+| 환불 정책 | 고객은 렌트일 전까지 취소 가능하며 결제금액의 90% 환불. 렌트 당일부터 고객 취소 불가. 인계 전 관리자 취소는 100% 환불 | `refundRequestedAmount`와 `refundStatus` 표시. 당일 고객 취소 버튼 비활성화 |
 | 회원 탈퇴 | 예약·결제 상태와 관계없이 탈퇴 가능. 렌탈 이력은 보존하고 개인정보·세션 폐기 | `DELETE /api/v1/nadree/user/account` 호출 후 토큰 삭제 |
 | 결제 응답 | `refundStatus`, `refundedAmount`, `refundRequestedAmount`를 응답 최상위에 제공 | `payment.*`보다 최상위 필드 우선 사용 |
 | 관리자 여권 | 마스킹된 이미지 업로드·활성 렌탈 중 조회 API 추가 | 아래 여권 연동 규칙 적용 |
@@ -87,7 +87,7 @@ Authorization: Bearer <nadree-access-token>
 }
 ```
 
-환불 화면은 `refundStatus`를 기준으로 상태를 전환하고, 예정 환불액은 `refundRequestedAmount`, 실제 반영액은 `refundedAmount`를 표시합니다. 렌트일 전 관리자 취소는 총액의 90%가 목표 환불액이며, 렌트일 당일 이후에는 `refundRequestedAmount=0`·`refundStatus=NOT_REQUIRED`가 반환됩니다. 서버가 반환한 `paymentStatus`·`refundStatus` 외의 상태를 프론트에서 임의로 만들지 않습니다.
+환불 화면은 `refundStatus`를 기준으로 상태를 전환하고, 예정 환불액은 `refundRequestedAmount`, 실제 반영액은 `refundedAmount`를 표시합니다. 고객 취소는 총액의 90%, 관리자 취소는 100%가 목표 환불액입니다. 업무 시간대(기본 Asia/Makassar) 기준 렌트 시작일 00:00부터 고객 취소는 `CUSTOMER_CANCELLATION_DEADLINE_PASSED`로 차단됩니다. 서버가 반환한 `paymentStatus`·`refundStatus` 외의 상태를 프론트에서 임의로 만들지 않습니다.
 
 결제 마감은 승인 이력의 `APPROVED` 시각부터 정확히 72시간입니다. 마감 후 주문·캡처 요청은 `409 PAYMENT_DEADLINE_EXPIRED`로 거절됩니다.
 

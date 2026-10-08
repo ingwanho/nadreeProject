@@ -18,7 +18,6 @@ from starlette.concurrency import run_in_threadpool
 
 from app.errors import Problem
 from app.fcm import queue_payment_complete
-from app.payment_policy import refund_target
 from app.security import now
 
 router = APIRouter(tags=["W08 PayPal webhook"])
@@ -371,12 +370,12 @@ def process_event(db, client, stored, snapshot, notifier=None):
             refund_status = "PENDING"
         elif event["event_type"] == "PAYMENT.REFUND.FAILED":
             refund_status = "FAILED"
-        elif capture_status == "COMPLETED" and reservation_status in ("CANCELED", "EXPIRED") and refunded < payment["total_price"] \
-                and refund_status not in ("NOT_REQUIRED", "COMPLETED"):
+        elif (capture_status == "COMPLETED" and reservation_status in ("CANCELED", "EXPIRED")
+              and payment.get("refund_requested_amount") is not None
+              and refunded < payment["refund_requested_amount"]
+              and refund_status not in ("NOT_REQUIRED", "COMPLETED", "PENDING")):
             refund_status = "REQUESTED"
             values["refund_requested_at"] = now()
-            if "refund_requested_amount" in p.c and payment.get("refund_requested_amount") is None:
-                values["refund_requested_amount"] = refund_target(payment["total_price"], rental_day=False)
         values["refund_status"] = refund_status
         if snapshot.get("refund"):
             values["paypal_refund_id"] = snapshot["refund"]["id"]

@@ -19,7 +19,7 @@
 | 8 | `GET /api/v1/nadree/rental/payment/{paymentId}` | 응답 유실 후 본인 결제 상태 복구 조회 |
 | 9 | `GET /api/v1/nadree/rental/ongoing` | 현재 진행 중인 렌트·예약 목록 조회 |
 | 10 | `GET /api/v1/nadree/rental/completed` | 반납 완료된 렌트 목록 조회 |
-| 11 | `POST /api/v1/nadree/rental/request/cancel` | 결제 전 예약 요청 취소 |
+| 11 | `POST /api/v1/nadree/rental/request/cancel` | 렌트일 전 고객 예약 취소·90% 환불 |
 | 12 | `POST /api/v1/nadree/user/logout` | 고객 access·refresh token 폐기. GET도 호환 지원 |
 | 13 | `POST /api/v1/nadree/user/refresh` | 고객 refresh token 회전 및 access token 재발급. GET도 호환 지원 |
 | 14 | `DELETE /api/v1/nadree/user/account` | 조건 없는 회원 탈퇴. 이력 보존·개인정보·Firebase 계정·세션 폐기 |
@@ -800,7 +800,7 @@ Authorization: Bearer <nadri-user-access-token>
 
 ## 12. 예약 취소와 환불
 
-### API 10 — 결제 전 예약 요청 취소
+### API 10 — 고객 예약 취소·90% 환불
 
 `POST /api/v1/nadree/rental/request/cancel`
 
@@ -811,15 +811,15 @@ Authorization: Bearer <nadri-user-access-token>
 }
 ```
 
-고객 토큰의 UID가 예약의 `uid_token`과 일치할 때만 호출할 수 있다. 예약 상태가 `REQUESTED` 또는 `APPROVED`이고 출고 계약이 없을 때만 취소할 수 있다. 결제 행이 `CREATED`이면 결제 행을 `CANCELED`로 바꾸고, 예약과 차량 가배정을 `CANCELED/RELEASED`로 바꾼다. 결제 상태가 `PENDING`이면 캡처 결과가 확정될 때까지 취소하지 않고 `PAYMENT_IN_PROGRESS`를 반환한다. 이미 결제 완료된 예약은 이 API에서 취소하지 않고 `PAYMENT_REFUND_ADMIN_ONLY`를 반환한다.
+고객 토큰의 UID가 예약의 `uid_token`과 일치하고 상태가 `REQUESTED` 또는 `APPROVED`이며 출고 계약이 없을 때 취소할 수 있다. 업무 시간대(기본 Asia/Makassar)의 렌트 시작일 00:00부터는 결제 여부와 관계없이 `409 CUSTOMER_CANCELLATION_DEADLINE_PASSED`로 차단한다. 시작일 전 결제 완료 건은 총액의 90%(센트 반올림)를 목표 환불액으로 저장한다. 미완료 `CREATED` 결제는 `CANCELED`로 바꾸며 예약과 차량 가배정은 `CANCELED/RELEASED`로 바꾼다. 응답은 `refundStatus`, `refundRequestedAmount`, `refundReason`을 포함한다. 유료 취소의 사유 코드는 `CUSTOMER_REFUND_90_PERCENT`, 미결제는 `NO_COMPLETED_PAYMENT`다.
 
-PayPal 캡처가 진행 중인 `PENDING` 결제는 환불할 수 없으므로 `PAYMENT_IN_PROGRESS`로 거절한다. 해당 결제가 완료된 뒤 관리자가 취소·환불을 처리한다. PayPal은 캡처가 보류 중일 때 환불을 허용하지 않는다. [PayPal 공식 오류 안내](https://developer.paypal.com/api/payments/v2/errors/pending_capture/)
+캡처 진행 중 `PENDING` 결제가 있으면 고객 취소는 `PAYMENT_IN_PROGRESS`로 거절한다. 캡처 완료 후 날짜·예약 상태 조건을 다시 확인하여 고객 취소를 요청한다.
 
 ### 관리자 취소와 환불
 
-기존 `POST /nadreego/booking/action`에 `action=CANCEL`을 사용한다. 관리자는 출고 전 `APPROVED` 예약을 취소할 수 있다. 결제 완료(`PAID` 또는 부분 환불 상태)이고 렌트일 전이면 예약을 먼저 `CANCELED`로 저장하고 결제 총액의 90%(센트 반올림)를 `refund_requested_amount`에 기록한 뒤 `refund_status=REQUESTED`로 저장한다. 렌트일 당일 또는 이후에는 예약 취소는 가능하지만 환불하지 않고 `refund_requested_amount=0`, `refund_status=NOT_REQUIRED`로 기록한다. 고객이 결제 완료 건을 직접 취소하는 것은 계속 금지되며 `PAYMENT_REFUND_ADMIN_ONLY`를 반환한다. 환불 실패는 예약 취소를 되돌리지 않으며 `FAILED`로 남겨 재시도 대상으로 삼는다.
+기존 `POST /nadreego/booking/action`에 `action=CANCEL`을 사용한다. 관리자는 출고 전 `APPROVED` 예약을 취소할 수 있다. 렌트일과 관계없이 결제 총액의 100%를 `refund_requested_amount`에 기록한다. 예약은 `CANCELED`, 환불은 `REQUESTED`로 저장하며 완료 캡처에 대해 환불을 실행한다. 응답은 `data.refundAmount`와 `data.refundReason=ADMIN_REFUND_100_PERCENT`를 포함한다. 환불 실패는 예약 취소를 되돌리지 않고 `FAILED`로 남는다. 실패 건은 운영자가 확인해야 하며 자동 재시도를 보장하지 않는다.
 
-서버는 PayPal 캡처 ID를 사용해 `POST /v2/payments/captures/{capture_id}/refund`를 호출하고 `PayPal-Request-Id`를 결제 건에 고정한다. 환불 요청액은 저장된 90% 목표금액에서 이미 반영된 금액을 뺀 잔액이며 고객이 지정하지 않는다. PayPal 환불은 원래 결제 수단으로 돌아가고, 최종 환불 여부는 서명 검증된 `PAYMENT.CAPTURE.REFUNDED` 웹훅으로 확정한다. [PayPal 환불 공식 안내](https://developer.paypal.com/checkout/refund-payment)
+서버는 PayPal 캡처 ID를 사용해 `POST /v2/payments/captures/{capture_id}/refund`를 호출하고 `PayPal-Request-Id`를 결제 건에 고정한다. 환불 요청액은 저장된 목표금액(고객 90%, 관리자 100%)에서 이미 반영된 금액을 뺀 잔액이며 고객이 지정하지 않는다. 실제 환불액은 서명 검증된 웹훅으로 반영한다. 이미 진행 중인 다른 금액의 환불은 `REFUND_ALREADY_IN_PROGRESS`로 차단한다.
 
 결제·환불 웹훅 상태는 다음처럼 저장한다.
 
@@ -829,11 +829,15 @@ PayPal 캡처가 진행 중인 `PENDING` 결제는 환불할 수 없으므로 `P
 | `PAYMENT.CAPTURE.REFUNDED` | `COMPLETED` | 전액이면 `REFUNDED`, 일부면 `PARTIALLY_REFUNDED` |
 | `PAYMENT.REFUND.FAILED` | `FAILED` | 캡처 상태 유지 |
 
-`MSP_RENTAL_PAYMENT`의 `refund_status`, `paypal_refund_id`, 요청 시각·관리자·사유 컬럼은 `migrations/004_payment_refund.sql`, 90% 목표금액 컬럼은 `migrations/010_refund_policy.sql`로 추가한다. PayPal 웹훅은 기존 `/nadreego/paypal/webhook`을 계속 사용한다. [PayPal 공식 이벤트 목록](https://developer.paypal.com/api/rest/webhooks/event-names/)
+`MSP_RENTAL_PAYMENT`의 환불 상태·ID·요청 메타데이터는 `migrations/004_payment_refund.sql`, 목표금액 컬럼은 `migrations/010_refund_policy.sql`을 사용한다. 이미 적용했다면 추가 마이그레이션은 없다. 고객 취소 시 관리자 ID는 NULL이며 고객 UID는 예약 이력에 기록한다. 웹훅 경로는 기존 `/nadreego/paypal/webhook`이다.
 
 승인 시각부터 72시간이 결제 마감이다. 결제 주문·캡처 응답은 `paymentDeadline`, `canPay`, `cannotPayReason`을 반환하며 마감 후 요청은 `409 PAYMENT_DEADLINE_EXPIRED`로 거절한다.
 
 ## API 14 — 조건 없는 회원 탈퇴
+
+2026-10-08 보안 보완: 로그인 시 `check_revoked=True`로 Firebase 계정 삭제·비활성화·토큰 폐기를 검증한다. 검증된 `auth_time`이 서버의 탈퇴 또는 로그아웃 시각과 같은 초이거나 이전이면 `401 FIREBASE_REAUTHENTICATION_REQUIRED`로 차단한다. 인증 시각을 임의로 올려 토큰을 발급하지 않는다. 프론트는 저장된 서비스 토큰을 삭제하고 Firebase 재인증/새 가입 절차를 진행해야 하며 단순 ID 토큰 강제 갱신만으로 재시도하지 않는다. 새 UID는 신규 회원으로 생성한다. 기존 UID는 Firebase 검증과 더 최근의 실제 인증을 모두 통과한 경우에만 기존 행으로 로그인하며 `isNewUser=false`다. 이력은 새 UID로 자동 연결하지 않는다.
+
+로그인 검증과 탈퇴 삭제는 동일 UID 잠금 안에서 수행한다. Firebase Authentication 삭제는 Firestore 채팅 데이터의 자동 삭제를 의미하지 않는다. 운영 배포·실제 Firebase 연동 검증은 별도이며 DB 마이그레이션이나 새 환경변수는 필요 없다. 서비스 계정은 폐기 검증에 필요한 Authentication 사용자 조회 권한도 보유해야 한다.
 
 `DELETE /api/v1/nadree/user/account`를 사용한다. 진행 중 예약·결제 여부와 무관하게 탈퇴하며, 렌탈 이력과 결제 이력은 보존한다. 사용자 프로필·FCM 토큰·고객 access/refresh 세션은 폐기하고, 운영 Firebase 설정이 있으면 FCM/고객 인증에 사용하는 같은 Firebase 프로젝트의 Authentication UID도 삭제한다.
 
@@ -849,7 +853,7 @@ PayPal 캡처가 진행 중인 `PENDING` 결제는 환불할 수 없으므로 `P
 
 `POST /api/v1/nadree/user/refresh`를 사용한다. 호환을 위해 같은 경로의 `GET`도 지원하며, `X-Refresh-Token` 헤더만 사용한다. 고객 토큰은 `nadri.rt.` 접두사를 사용하고 `MSP_RENTAL_USER_REFRESH_TOKEN`에서 해시로 조회한다.
 
-활성·미만료 토큰만 갱신할 수 있다. UID별 행 잠금으로 같은 토큰의 동시 갱신을 직렬화하고, 성공하면 기존 해시를 새 값으로 교체한다. 원래 `issued_at`을 access token의 인증 시각으로 유지하되, 로그아웃 폐기 시각과 같은 초에 다시 로그인한 경우에는 폐기 시각 다음 초로 보정한다. refresh token의 절대 만료 기간은 갱신하지 않는다. 이미 사용했거나 폐기·만료된 토큰은 `401 INVALID_REFRESH_TOKEN`을 반환한다.
+활성·미만료 토큰만 갱신할 수 있다. UID별 행 잠금으로 같은 토큰의 동시 갱신을 직렬화하고, 성공하면 기존 해시를 새 값으로 교체한다. 원래 서비스 세션의 `issued_at`을 access token의 인증 시각으로 사용하며 폐기 시각과 같은 초이거나 이전에 발급된 세션은 거절한다. 인증 시각을 미래로 보정하지 않는다. refresh token의 절대 만료 기간은 갱신하지 않는다. 이미 사용했거나 폐기·만료된 토큰은 `401 INVALID_REFRESH_TOKEN`을 반환한다.
 
 ```json
 {
