@@ -1,0 +1,5 @@
+{
+  "functions": [{"source": "functions", "codebase": "nadree-chat", "runtime": "python312", "ignore": ["venv", ".venv", "__pycache__", ".env.local", "tests"]}],
+  "firestore": {"rules": "firestore.rules", "indexes": "firestore.indexes.json"},
+  "emulators": {"auth": {"port": 9099}, "firestore": {"port": 8080}, "functions": {"port": 5001}, "singleProjectMode": true}
+}

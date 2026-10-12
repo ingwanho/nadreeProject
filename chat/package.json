@@ -1,0 +1,9 @@
+{
+  "name": "nadree-chat-rules-tests",
+  "private": true,
+  "scripts": {
+    "test": "firebase emulators:exec --only firestore --project demo-nadree-chat 'node --test tests/rules.test.cjs'",
+    "test:transactions": "firebase emulators:exec --only firestore --project demo-nadree-chat '../.venv/bin/python -m pytest ../tests/test_chat_firestore.py -q'"
+  },
+  "devDependencies": {"@firebase/rules-unit-testing": "3.0.4", "firebase": "10.14.1", "firebase-tools": "13.35.1"}
+}

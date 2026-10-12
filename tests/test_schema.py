@@ -27,11 +27,20 @@ def test_schema_requires_active_rental_roles(setup):
 
 
 def test_migration_plan_is_read_only_and_idempotent_after_expected_changes(setup):
+    from app.rental_schema import metadata
+    metadata.tables["MSP_RENTAL_NOTIFICATION"].create(setup["engine"])
     plan = migration_plan(setup["db"])
     assert [label for label, sql, params in plan] == ["index MSP_ADMIN.fcm_token"]
     with setup["engine"].begin() as conn:
         conn.execute(text("CREATE INDEX idx_admin_fcm_token ON MSP_ADMIN (fcm_token)"))
     assert migration_plan(setup["db"]) == []
+
+
+def test_migration_plan_does_not_repurpose_legacy_notification_table(setup):
+    with setup["engine"].begin() as conn:
+        conn.execute(text("CREATE TABLE MSP_RENTAL_NOTIFICATION (notification_id INTEGER PRIMARY KEY)"))
+    with pytest.raises(ValueError, match="legacy definition"):
+        migration_plan(setup["db"])
 
 
 def test_migration_plan_adds_rental_performance_indexes_once(setup):
@@ -167,6 +176,8 @@ def reflected_columns(setup, monkeypatch, transform):
 
 @pytest.mark.parametrize("existing", [[], ["introduction"], ["contact_email"]])
 def test_profile_migration_only_adds_missing_columns(setup, monkeypatch, existing):
+    from app.rental_schema import metadata
+    metadata.tables["MSP_RENTAL_NOTIFICATION"].create(setup["engine"])
     profile = {"introduction", "contact_email"}
     reflected_columns(setup, monkeypatch, lambda name, columns:
         [column for column in columns if column["name"] not in profile - set(existing)] if name == "MSP_SPOT_RENT" else columns)

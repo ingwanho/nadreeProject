@@ -47,6 +47,12 @@ def transaction(request: Request):
             with session.begin():
                 yield session
             notifications = session.info.pop("fcm_notifications", [])
+            for ident in session.info.pop("chat_bookings", set()):
+                try:
+                    request.app.state.chat.sync_booking(db, ident)
+                except Exception:
+                    # Durable SQL remains authoritative; chat_sync retries current snapshots.
+                    logger.exception("Chat booking synchronization failed")
         finally:
             # MySQL named locks belong to the connection, not the transaction.
             for name in session.info.get("named_locks", []):

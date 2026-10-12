@@ -13,6 +13,7 @@ def cancellation(setup, monkeypatch):
     metadata.create_all(setup["engine"])
     at = datetime(2026, 10, 8, 15, 59, 59)
     monkeypatch.setattr("app.customer_rentals.now", lambda: at)
+    monkeypatch.setattr("app.rentals.now", lambda: at)
     calls = []
 
     class PayPal:
@@ -53,33 +54,53 @@ def test_customer_paid_cancellation_before_midnight(cancellation):
         reservation = conn.execute(select(metadata.tables["MSP_RESERVATION"])).mappings().one()
         assert reservation["reservation_status"] == "CANCELED"
         assert reservation["assigned_vehicle_id"] is None
+        payment = conn.execute(select(metadata.tables["MSP_RENTAL_PAYMENT"])).mappings().one()
+        assert payment["refund_percentage"] == 90
+        assert payment["cancellation_requested_by_type"] == "CUSTOMER"
+        assert payment["cancellation_requested_by_id"] == "customer"
     assert customer_cancel(cancellation).status_code == 409
     assert len(cancellation["calls"]) == 1
 
 
 @pytest.mark.parametrize("at", [datetime(2026, 10, 8, 16), datetime(2026, 10, 9, 16)])
 @pytest.mark.parametrize("paid", [True, False])
-def test_customer_cannot_cancel_on_or_after_local_rental_day(cancellation, monkeypatch, at, paid):
+def test_customer_cancels_without_refund_on_or_after_local_rental_day(cancellation, monkeypatch, at, paid):
     monkeypatch.setattr("app.customer_rentals.now", lambda: at)
     if not paid:
         with cancellation["engine"].begin() as conn:
             conn.execute(metadata.tables["MSP_RENTAL_PAYMENT"].delete())
     response = customer_cancel(cancellation)
-    assert response.status_code == 409, response.text
-    assert "CUSTOMER_CANCELLATION_DEADLINE_PASSED" in response.text
+    assert response.status_code == 200, response.text
+    assert response.json()["refundRequestedAmount"] == 0
+    assert response.json()["refundStatus"] == "NOT_REQUIRED"
     assert not cancellation["calls"]
     with cancellation["engine"].connect() as conn:
-        assert conn.scalar(select(metadata.tables["MSP_RESERVATION"].c.reservation_status)) == "APPROVED"
+        assert conn.scalar(select(metadata.tables["MSP_RESERVATION"].c.reservation_status)) == "CANCELED"
+        if paid:
+            payment = conn.execute(select(metadata.tables["MSP_RENTAL_PAYMENT"])).mappings().one()
+            assert payment["cancellation_requested_by_type"] == "CUSTOMER"
+            assert payment["cancellation_requested_by_id"] == "customer"
+            assert payment["refund_percentage"] == 0
 
 
 @pytest.mark.parametrize("start", [datetime(2026, 10, 8, 16), datetime(2026, 10, 7, 16)])
-def test_admin_refunds_full_amount_even_on_rental_day(cancellation, signin, start):
+def test_admin_refunds_full_amount_only_before_rental_day(cancellation, signin, start):
     with cancellation["engine"].begin() as conn:
         conn.execute(metadata.tables["MSP_RESERVATION"].update().values(start_datetime=start))
     response = cancellation["client"].post("/nadreego/booking/action", headers=signin(),
         json={"bookedNo": "BOcancel-1", "action": "CANCEL"})
-    assert response.status_code == 200, response.text
-    assert cancellation["calls"] == [("capture-1", "USD", Decimal("100.00"))]
+    if start == datetime(2026, 10, 8, 16):
+        assert response.status_code == 200, response.text
+        assert cancellation["calls"] == [("capture-1", "USD", Decimal("100.00"))]
+        with cancellation["engine"].connect() as conn:
+            payment = conn.execute(select(metadata.tables["MSP_RENTAL_PAYMENT"])).mappings().one()
+        assert payment["cancellation_requested_by_type"] == "ADMIN"
+        assert payment["cancellation_requested_by_id"] == "primary"
+        assert payment["refund_percentage"] == 100
+    else:
+        assert response.status_code == 409, response.text
+        assert "ADMIN_CANCELLATION_DEADLINE_PASSED" in response.text
+        assert not cancellation["calls"]
 
 
 def test_customer_cannot_cancel_another_users_booking(cancellation):
@@ -115,3 +136,24 @@ def test_partial_refund_only_requests_remaining_customer_amount(cancellation):
             payment_status="PARTIALLY_REFUNDED", refunded_amount=Decimal("20")))
     assert customer_cancel(cancellation).status_code == 200
     assert cancellation["calls"] == [("capture-1", "USD", Decimal("70.00"))]
+
+
+def test_admin_cancellation_is_rejected_at_exact_local_midnight(cancellation, signin, monkeypatch):
+    monkeypatch.setattr("app.rentals.now", lambda: datetime(2026, 10, 8, 16))
+    response = cancellation["client"].post("/nadreego/booking/action", headers=signin(),
+        json={"bookedNo": "BOcancel-1", "action": "CANCEL"})
+    assert response.status_code == 409
+    assert response.json()["errorCode"] == "ADMIN_CANCELLATION_DEADLINE_PASSED"
+    with cancellation["engine"].connect() as conn:
+        assert conn.scalar(select(metadata.tables["MSP_RESERVATION"].c.reservation_status)) == "APPROVED"
+    assert not cancellation["calls"]
+
+
+def test_customer_cannot_cancel_after_handover(cancellation):
+    with cancellation["engine"].begin() as conn:
+        conn.execute(metadata.tables["MSP_RENTAL_CONTRACT"].insert().values(
+            rental_contract_id="handed", reservation_id="cancel-1", uid_token="customer", vehicle_id="vehicle-1",
+            pickup_spot_master_id="root", planned_end_date=datetime(2026, 10, 10).date()))
+    response = customer_cancel(cancellation)
+    assert response.status_code == 409 and response.json()["errorCode"] == "RESERVATION_ALREADY_HANDED_OVER"
+    assert not cancellation["calls"]

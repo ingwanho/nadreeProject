@@ -16,9 +16,9 @@ from app.fcm import queue_reservation_request
 from app.headers import fcm_header, refresh_header
 from app.paypal import execute_refund, identifier
 from app.refunds import prepare_booking_refund
-from app.payment_policy import PAYMENT_DEADLINE
+from app.payment_policy import payment_deadline
 from app.pricing import daily_price, load_tiers
-from app.rental_common import contracts_for, day_end, fleet, iso, local_date, lock_key, midnight
+from app.rental_common import contracts_for, day_end, fleet, iso, local_date, location_snapshot, lock_key, midnight
 from app.rental_inputs import (NadriAvailability, NadriLogin, NadriPaymentCapture,
                                NadriPaymentOrder, NadriProfile, NadriRentalRequest, ReservationCancel)
 from app.responses import (CustomerAccountDeletion, CustomerAvailability, CustomerCancellation, CustomerLogin,
@@ -61,6 +61,8 @@ def _user_refresh_row(request, session, raw=None, *, locked=False):
 
 
 def _issue_user_refresh(request, session, uid_token, current):
+    from app.chat import revoke_customer_chat
+    revoke_customer_chat(request, uid_token)
     table = _db(request).table("MSP_RENTAL_USER_REFRESH_TOKEN")
     session.execute(update(table).where(table.c.uid_token == uid_token, table.c.revoked_at.is_(None),
                                         table.c.expires_at > current).values(revoked_at=current))
@@ -293,6 +295,8 @@ def _availability_for(request, session, body, *, selected_spot=None, selected_mo
             price = _price_view(request, groups, body.startDate, body.returnDate, delivery,
                                 getattr(body, "totalPrice", None), model=model)
             items.append({"spot": _spot_view(spot), "model": _model_view(model), "price": price,
+                          "canRequest": location_snapshot(spot) is not None,
+                          "cannotRequestReason": None if location_snapshot(spot) is not None else "SHOP_LOCATION_REQUIRED",
                           "delivery": {**delivery, "pickupLocation": getattr(body, "pickupLocation", None),
                                        "returnLocation": getattr(body, "returnLocation", None)}})
     return items
@@ -306,6 +310,8 @@ def _quote_for_request(request, session, body):
     if not items:
         raise Problem(409, "RENTAL_UNAVAILABLE")
     item = items[0]
+    if not item["canRequest"]:
+        raise Problem(409, item["cannotRequestReason"])
     price = item["price"]
     if body.totalPrice not in set(price.get("totalOptions", [price["totalFrom"], price["totalTo"]])):
         raise Problem(409, "PRICE_QUOTE_MISMATCH")
@@ -328,6 +334,8 @@ def _payment_view(payment):
             "totalPrice": _number(payment.get("total_price")), "currency": payment.get("currency"),
             "refundedAmount": _number(payment.get("refunded_amount")), "refundStatus": payment.get("refund_status", "NONE"),
             "refundRequestedAmount": _number(payment.get("refund_requested_amount")),
+            "refundPercentage": payment.get("refund_percentage"),
+            "cancellationRequestedByType": payment.get("cancellation_requested_by_type"),
             "paypalRefundId": payment.get("paypal_refund_id"), "paidAt": payment.get("paid_at").isoformat() if payment.get("paid_at") else None}
 
 
@@ -401,7 +409,10 @@ def _record_view(request, reservation, contract, payment, spot, model):
             "vehicleAssignmentStatus": (reservation or {}).get("vehicle_assignment_status"),
             "shopId": spot["spot_master_id"], "spotMasterId": spot["spot_master_id"],
             "modelId": (reservation or {}).get("model_id") or (model or {}).get("model_id"),
-            "paymentAvailability": availability, "spot": _spot_view(spot), "model": _model_view(model) if model else None,
+            "paymentAvailability": availability, "spot": dict(_spot_view(spot), location=(criteria.get("pickupLocationSnapshot") or {})) if reservation else _spot_view(spot),
+            "pickupLocationSnapshot": (contract or {}).get("pickup_location_snapshot") if contract else criteria.get("pickupLocationSnapshot"),
+            "returnLocationSnapshot": (contract or {}).get("return_location_snapshot") if contract else criteria.get("returnLocationSnapshot"),
+            "model": _model_view(model) if model else None,
             "startDate": start_date.isoformat() if start_date else None,
             "returnDate": return_date.isoformat() if isinstance(return_date, date) else None,
             "actualStartTime": iso(request, (contract or {}).get("actual_start_time")),
@@ -562,6 +573,11 @@ def nadree_profile(body: NadriProfile, request: Request, session: Session = DB):
         if source in fields:
             values[target] = getattr(body, source)
     if "fcmToken" in fields:
+        lock_key(session, "nadri-user", user.uid_token)
+        session.execute(select(table).where(table.c.uid_token == user.uid_token).with_for_update()).first()
+        user_principal(request, session)
+        from app.chat import revoke_customer_chat
+        revoke_customer_chat(request, user.uid_token)
         values.update(fcm_token=body.fcmToken, fcm_token_updated_at=now())
     values["updated_at"] = now()
     require_columns(table, values)
@@ -593,6 +609,8 @@ def nadree_delete_account(request: Request, session: Session = DB):
     user = user_principal(request, session)
     lock_key(session, "nadri-user", user.uid_token)
     request.app.state.customer_auth.delete_uid(user.uid_token)
+    from app.chat import revoke_customer_chat
+    revoke_customer_chat(request, user.uid_token)
     table = _db(request).table("MSP_RENTAL_USER")
     refresh_table = _db(request).table("MSP_RENTAL_USER_REFRESH_TOKEN")
     current = now()
@@ -632,6 +650,8 @@ def nadree_logout(request: Request, session: Session = DB,
     if "user_access_revoked_at" not in table.c:
         raise Problem(503, "RENTAL_USER_SCHEMA_UPDATE_REQUIRED")
     revoked_at = now()
+    from app.chat import revoke_customer_chat
+    revoke_customer_chat(request, user.uid_token)
     if current_fcm_token and fresh.get("fcm_token") == current_fcm_token:
         session.execute(update(table).where(table.c.uid_token == user.uid_token,
                                              table.c.fcm_token == current_fcm_token)
@@ -649,7 +669,8 @@ def nadree_availability(body: NadriAvailability, request: Request, session: Sess
     items = _availability_for(request, session, body)
     return {"status": "success", "items": [
         {"shopId": item["spot"]["spotMasterId"], "modelId": item["model"]["modelId"],
-         "spot": item["spot"], "model": item["model"], "price": item["price"]}
+         "spot": item["spot"], "model": item["model"], "price": item["price"],
+         "canRequest": item["canRequest"], "cannotRequestReason": item["cannotRequestReason"]}
         for item in items]}
 
 
@@ -665,6 +686,8 @@ def nadree_request(body: NadriRentalRequest, request: Request, session: Session 
     lock_key(session, "nadri-model", body.spotMasterId + ":" + body.modelId)
     start, end = _local_period(request, body.startDate, body.returnDate)
     table = db.table("MSP_RESERVATION")
+    if start <= now():
+        raise Problem(409, "RESERVATION_START_PASSED")
     recent = session.execute(select(table.c.reservation_id).where(
         table.c.uid_token == user.uid_token, table.c.spot_master_id == body.spotMasterId, table.c.model_id == body.modelId,
         table.c.start_datetime == start, table.c.end_datetime == end, table.c.reservation_status.in_(("REQUESTED", "APPROVED")),
@@ -684,6 +707,7 @@ def nadree_request(body: NadriRentalRequest, request: Request, session: Session 
     quote["calculatedTotalFrom"] = quote["totalFrom"]
     quote["calculatedTotalTo"] = quote["totalTo"]
     criteria = {"source": "nadri.rental.availability", "availabilityRequest": availability_request,
+                "pickupLocationSnapshot": item["spot"]["location"], "returnLocationSnapshot": item["spot"]["location"],
                 "selected": {"spotMasterId": body.spotMasterId, "modelId": body.modelId}, "quote": quote,
                 "priceType": item["price"]["pricingTiers"][0]["priceType"], "dailyPrice": item["price"]["dailyFrom"]}
     values = dict(reservation_id=reservation_id, uid_token=user.uid_token, spot_master_id=body.spotMasterId, model_id=body.modelId,
@@ -722,16 +746,18 @@ def _payment_window(request, session, reservation, payment=None):
     history = _db(request).table("MSP_RESERVATION_HISTORY")
     approved_at = session.execute(select(history.c.created_at).where(
         history.c.reservation_id == reservation["reservation_id"], history.c.event_type == "APPROVED")
-        .order_by(history.c.created_at.desc()).limit(1)).scalar()
-    approved_at = approved_at or reservation.get("updated_at") or reservation.get("created_at")
-    deadline = approved_at + PAYMENT_DEADLINE if approved_at else None
+        .order_by(history.c.created_at.asc()).limit(1)).scalar()
+    approved_at = approved_at or reservation.get("created_at")
+    deadline = payment_deadline(approved_at, reservation["start_datetime"])
     status = payment.get("payment_status") if payment else None
     if status in ("PAID", "PARTIALLY_REFUNDED", "REFUNDED"):
         can_pay, reason = False, "PAYMENT_ALREADY_COMPLETED"
-    elif status in ("CANCELED", "FAILED", "REVERSED"):
-        can_pay, reason = False, "PAYMENT_NOT_AVAILABLE"
     elif deadline is not None and now() >= deadline:
         can_pay, reason = False, "PAYMENT_DEADLINE_EXPIRED"
+    elif reservation["reservation_status"] != "APPROVED":
+        can_pay, reason = False, "RESERVATION_NOT_APPROVED_FOR_PAYMENT"
+    elif status in ("PENDING", "REVERSED"):
+        can_pay, reason = False, "PAYMENT_IN_PROGRESS" if status == "PENDING" else "PAYMENT_NOT_AVAILABLE"
     else:
         can_pay, reason = True, None
     return {"paymentDeadline": iso(request, deadline), "canPay": can_pay, "cannotPayReason": reason}
@@ -746,32 +772,18 @@ def _ensure_payment_window(request, session, reservation, payment=None):
 
 def _revalidate_reservation_quote(request, session, reservation):
     criteria = reservation.get("required_criteria_json") or {}
-    source = criteria.get("availabilityRequest") if isinstance(criteria, dict) else None
     stored = criteria.get("quote") if isinstance(criteria, dict) else None
-    if not isinstance(source, dict) or not isinstance(stored, dict):
+    if not isinstance(stored, dict) or stored.get("currency") != request.app.state.settings.rental_currency:
         raise Problem(409, "PAYMENT_QUOTE_CHANGED")
-    spot = _spot(request, session, reservation["spot_master_id"])
-    model = _model(request, session, reservation["model_id"])
-    start_date = date.fromisoformat(source["startDate"])
-    return_date = date.fromisoformat(source["returnDate"])
-    start, end = _local_period(request, start_date, return_date)
-    delivery = _delivery(request, session, spot, model, source.get("pickupLocation"), source.get("returnLocation"),
-                         required=bool(source.get("deliveryRequested")))
-    groups = _price_groups(request, session, spot, model["model_id"], start, end, check_availability=False)
-    if not groups:
-        raise Problem(409, "PAYMENT_QUOTE_CHANGED")
-    request._nadri_session, request._nadri_spot = session, spot
-    current = _price_view(request, groups, start_date, return_date, delivery, model=model)
-    if (stored.get("currency") != current["currency"] or stored.get("totalFrom", stored.get("calculatedTotalFrom")) != current["totalFrom"]
-            or stored.get("totalTo", stored.get("calculatedTotalTo")) != current["totalTo"]):
-        raise Problem(409, "PAYMENT_QUOTE_CHANGED")
+    # Reservation creation validated the price and saved it server-side. Later
+    # catalogue/delivery changes must not rewrite an accepted reservation.
     final_total = stored.get("finalTotal", stored.get("requestedTotal"))
     try:
         final_total = Decimal(str(final_total))
+        valid_totals = {Decimal(str(value)) for value in stored.get("totalOptions", [])}
     except (InvalidOperation, TypeError, ValueError):
         raise Problem(409, "PAYMENT_QUOTE_UNAVAILABLE") from None
-    valid_totals = {Decimal(str(value)) for value in current.get("totalOptions", [])}
-    if final_total <= 0 or final_total not in valid_totals:
+    if not final_total.is_finite() or final_total <= 0 or final_total not in valid_totals:
         raise Problem(409, "PAYMENT_QUOTE_CHANGED")
     stored = dict(stored, finalTotal=final_total)
     return stored
@@ -929,7 +941,7 @@ def _owned_customer_payment(request, session, user, payment_id):
     if payment.get("reservation_id"):
         reservations = _db(request).table("MSP_RESERVATION")
         subject = session.execute(select(reservations.c.uid_token,
-                                         reservations.c.spot_master_id, reservations.c.reservation_id,
+                                         reservations.c.spot_master_id, reservations.c.reservation_id, reservations.c.reservation_status,
                                          reservations.c.start_datetime, reservations.c.created_at,
                                          reservations.c.updated_at).where(
             reservations.c.reservation_id == payment["reservation_id"])).mappings().first()
@@ -981,8 +993,8 @@ def nadree_completed(request: Request, page: int = Query(1, ge=1), pageSize: int
 
 
 @router.post("/request/cancel", response_model=CustomerCancellation,
-             summary="고객 예약 취소·90% 환불",
-             description="본인의 REQUESTED 또는 APPROVED 예약을 렌트 시작일 전까지 취소할 수 있습니다. 결제 완료 시 결제금액의 90%를 환불합니다. 업무 시간대(기본 Asia/Makassar) 기준 렌트 당일 00:00부터는 결제 여부와 관계없이 409 CUSTOMER_CANCELLATION_DEADLINE_PASSED로 차단합니다. 캡처 처리 중에는 PAYMENT_IN_PROGRESS를 반환합니다.",
+             summary="고객 예약 취소·시작일 전 90% 당일부터 0% 환불",
+             description="본인의 인계 전 REQUESTED/APPROVED 예약을 취소합니다. 업무 시간대(기본 Asia/Makassar)의 시작일 전에는 결제액 90%, 시작일 00:00부터는 0%이며 PG 환불을 요청하지 않습니다. 캡처 처리 중에는 PAYMENT_IN_PROGRESS를 반환합니다.",
              dependencies=[Depends(customer_access_token)])
 def cancel_request(body: ReservationCancel, request: Request, background_tasks: BackgroundTasks, session: Session = DB):
     user = user_principal(request, session)
@@ -995,15 +1007,14 @@ def cancel_request(body: ReservationCancel, request: Request, background_tasks: 
         raise Problem(404, "RESERVATION_NOT_FOUND")
     if reservation["reservation_status"] not in ("REQUESTED", "APPROVED"):
         raise Problem(409, "RESERVATION_STATE_INVALID")
-    if local_date(request, now()) >= local_date(request, reservation["start_datetime"]):
-        raise Problem(409, "CUSTOMER_CANCELLATION_DEADLINE_PASSED")
+    rental_day = local_date(request, now()) >= local_date(request, reservation["start_datetime"])
     contract_table = db.table("MSP_RENTAL_CONTRACT")
     if session.execute(select(contract_table.c.rental_contract_id).where(
             contract_table.c.reservation_id == reservation["reservation_id"])).first():
         raise Problem(409, "RESERVATION_ALREADY_HANDED_OVER")
 
     payment_id, refund_status, refund_ready, refund_amount, refund_reason = prepare_booking_refund(
-        request, session, reservation, body.reason, customer=True)
+        request, session, reservation, body.reason, customer=True, rental_day=rental_day)
 
     at = now()
     values = dict(reservation_status="CANCELED", vehicle_assignment_status="RELEASED",

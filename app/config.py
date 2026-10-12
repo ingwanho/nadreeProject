@@ -40,6 +40,7 @@ class Settings(BaseSettings):
     location_firebase_database_url: str = ""
     fcm_credential_type: str = "service_account"
     fcm_project_id: str = ""
+    fcm_chat_enabled: bool = False
     fcm_private_key_id: str = ""
     fcm_private_key: SecretStr = SecretStr("")
     fcm_client_email: str = ""

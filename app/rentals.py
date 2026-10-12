@@ -15,7 +15,7 @@ from app.pricing import daily_price, load_tiers
 from app.paypal import execute_refund
 from app.refunds import prepare_booking_refund
 from app.rental_common import (OPEN, action_result, context, contracts_for, day_end, effective_state,
-                               expire_maintenance, fleet, is_open, iso, local_date, lock_key, rows, verify_qr)
+                               expire_maintenance, fleet, is_open, iso, local_date, location_snapshot, lock_key, rows, verify_qr)
 from app.rental_inputs import BookingAction, PassportUpload, Qr, RentApprove
 from app.responses import PassportUploadResult
 from app.security import now
@@ -155,14 +155,24 @@ def paid_booking(request, session, reservation):
 
 
 def contract_history(request, session, ident, previous, new, actor, event):
+    from app.notifications import record_notification
     t = request.app.state.db.table("MSP_RENTAL_CONTRACT_HISTORY")
     session.execute(t.insert().values(rental_contract_id=ident, event_type=event,
         previous_contract_status=previous, new_contract_status=new, changed_by=actor, created_at=now()))
+    contracts = request.app.state.db.table("MSP_RENTAL_CONTRACT")
+    from app.chat import queue_booking_chat
+    booking_id = session.scalar(select(contracts.c.reservation_id).where(contracts.c.rental_contract_id == ident))
+    if booking_id:
+        queue_booking_chat(request, session, booking_id, new)
+    shop_id = session.scalar(select(contracts.c.pickup_spot_master_id).where(contracts.c.rental_contract_id == ident))
+    if shop_id:
+        record_notification(request.app.state.db, session, shop_id, "RENTAL_" + event,
+                            "RENTAL", ident, "rental:" + ident + ":" + event)
 
 
 @router.post("/nadreego/booking/action",
              summary="관리자 예약 승인·거절·취소",
-             description="APPROVE 후 고객 결제가 가능합니다. CANCEL은 인계 전 APPROVED 예약에 한하며, 관리자 취소는 렌트 당일에도 결제금액 전액을 환불합니다.")
+             description="APPROVE 후 고객 결제가 가능합니다. CANCEL은 시작일 전·인계 전 APPROVED 예약만 가능하며 결제금액 100%를 환불합니다. 시작일 00:00(업무 시간대)부터 ADMIN_CANCELLATION_DEADLINE_PASSED로 거절합니다.")
 def booking_action(body: BookingAction, request: Request, background_tasks: BackgroundTasks, session: Session = DB):
     actor, root = context(request, session, write=True)
     r = booking(request, session, root, body.bookedNo)
@@ -176,11 +186,13 @@ def booking_action(body: BookingAction, request: Request, background_tasks: Back
         lock_key(session, "nadri-model", r["spot_master_id"] + ":" + r["model_id"])
     refund_payment_id, refund_status, refund_ready, refund_amount, refund_reason = (None, None, False, None, None)
     if body.action == "CANCEL":
+        if local_date(request, now()) >= local_date(request, r["start_datetime"]):
+            raise Problem(409, "ADMIN_CANCELLATION_DEADLINE_PASSED")
         refund_payment_id, refund_status, refund_ready, refund_amount, refund_reason = prepare_booking_refund(
             request, session, r, body.reason, admin_id=actor.admin["admin_id"])
     values = dict(updated_at=now())
     if body.action == "APPROVE":
-        if reservation_end(request, r) <= now():
+        if r["start_datetime"] <= now():
             raise Problem(409, "RESERVATION_PERIOD_ENDED")
         customer(request, session, r["uid_token"])
         vehicles = fleet(request, session, root, model_id=r["model_id"], lock=True)
@@ -276,9 +288,13 @@ def approve_rent(body: RentApprove, request: Request, session: Session = DB):
     apply_assignments(request, session, assignment, records, actor.admin["admin_id"])
     ident = str(uuid.uuid4())
     t, state = db.table("MSP_RENTAL_CONTRACT"), db.table("MSP_VEHICLE_STATUS")
+    criteria = (r.get("required_criteria_json") or {}) if r else {}
+    pickup = criteria.get("pickupLocationSnapshot") if r else location_snapshot(root)
+    return_location = criteria.get("returnLocationSnapshot") if r else location_snapshot(root)
     session.execute(t.insert().values(rental_contract_id=ident, reservation_id=r["reservation_id"] if r else None,
         vehicle_id=qr["vehicle_id"], uid_token=uid_token, sensor_id=item["sensors"][0]["sensor_id"] if item["sensors"] else None,
         pickup_spot_master_id=root["spot_master_id"], actual_start_time=at, planned_end_date=end_date,
+        pickup_location_snapshot=pickup, return_location_snapshot=return_location,
         contract_status="ON_RENT", created_at=at, updated_at=at))
     session.execute(update(state).where(state.c.vehicle_id == qr["vehicle_id"]).values(status="ON_RENT",
         maintenance_until=None, status_reason=None, status_changed_at=at, changed_by=actor.admin["admin_id"], updated_at=at))
@@ -294,6 +310,7 @@ def approve_rent(body: RentApprove, request: Request, session: Session = DB):
     contract_history(request, session, ident, None, "ON_RENT", actor.admin["admin_id"], "STARTED")
     return action_result(request, actor, "ON_RENT", dict(bookedNo=body.bookedNo or "RT" + ident,
         rentalContractId=ident, contractStatus="ON_RENT", vehicleStatus="ON_RENT", plannedEndDate=end_date,
+        pickupLocationSnapshot=pickup, returnLocationSnapshot=return_location,
         reservationStatus="HANDED_OVER" if r else None, vehicleAssignmentStatus="LOCKED" if r else None))
 
 
@@ -333,4 +350,5 @@ def return_vehicle(body: Qr, request: Request, session: Session = DB):
         reservation_history(request, session, r, values, "RETURNED", actor.admin["admin_id"])
     contract_history(request, session, contract["rental_contract_id"], contract["contract_status"], "RETURNED", actor.admin["admin_id"], "RETURNED")
     return action_result(request, actor, "RETURNED", dict(rentalContractId=contract["rental_contract_id"], actualEndTime=iso(request, at),
+        pickupLocationSnapshot=contract.get("pickup_location_snapshot"), returnLocationSnapshot=contract.get("return_location_snapshot"),
         vehicleStatus="AVAILABLE", reservationStatus="RETURNED" if r else None, vehicleAssignmentStatus="RELEASED" if r else None))

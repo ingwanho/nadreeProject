@@ -10,3 +10,5 @@ __pycache__/
 *.log
 dist/
 build/
+chat/node_modules/
+chat/.firebase/

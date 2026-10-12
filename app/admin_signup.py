@@ -86,11 +86,12 @@ def _target_spot(request, session, body):
         representative_email = _normalized_email(body.representativeEmail)
         representative, root = _representative_for_target(session, db, target, representative_email)
     else:
-        # A code alone is accepted only when exactly one active primary owns its subtree.
+        # Nested spots can have both a company primary and a nearer branch primary.
         admins, mapping, role = db.table("MSP_ADMIN"), db.table("MSP_ADMIN_ROLE"), db.table("MSP_ROLE")
         rows = session.execute(select(admins).join(mapping, mapping.c.admin_id == admins.c.admin_id)
             .join(role, role.c.role_code == mapping.c.role_code)
-            .where(admins.c.is_active == 1, mapping.c.role_code == PRIMARY, role.c.is_active == 1)
+            .where(admins.c.is_active == 1, mapping.c.role_code == PRIMARY, role.c.is_active == 1,
+                   or_(mapping.c.expires_at.is_(None), mapping.c.expires_at > now()))
             .with_for_update()).mappings().all()
         matches = []
         for row in rows:
@@ -99,13 +100,17 @@ def _target_spot(request, session, body):
                                                         master.c.is_active == 1)).mappings().first() if root_id else None
             if root and in_subtree(root, target):
                 matches.append((dict(row), dict(root)))
+        if matches:
+            depth = max(len(root["unit_code"]) for _, root in matches)
+            matches = [(admin, root) for admin, root in matches if len(root["unit_code"]) == depth]
         if len(matches) != 1:
             raise Problem(409, "REPRESENTATIVE_REQUIRED")
         representative, root = matches[0]
     return target, representative
 
 
-@router.post("/signup", response_model=AdminSignupResult, status_code=201)
+@router.post("/signup", response_model=AdminSignupResult, status_code=201,
+             description="지점 생성 시 발급된 일회성 inviteCode 가입은 해당 지점 대표관리자로 즉시 활성화하며 requestId/requestStatus는 null입니다. representativeEmail만 사용하면 해당 대표 지점의 일반관리자 가입 승인 대기입니다. 둘 다 보내면 이메일의 관리 범위를 검증한 뒤 코드 가입을 적용합니다. 자동 로그인하지 않습니다.")
 def signup(body: AdminSignup, request: Request, session: Session = DB):
     email = _normalized_email(body.email)
     _limited(request, email)
@@ -114,6 +119,14 @@ def signup(body: AdminSignup, request: Request, session: Session = DB):
     check_contract(session, db, target, request.app.state.settings)
 
     admins = db.table("MSP_ADMIN")
+    if body.inviteCode:
+        mapping = db.table("MSP_ADMIN_ROLE")
+        occupied = session.scalar(select(admins.c.admin_id).join(mapping, mapping.c.admin_id == admins.c.admin_id)
+            .where(admins.c.primary_spot_master_id == target["spot_master_id"], admins.c.is_active == 1,
+                   mapping.c.role_code == PRIMARY,
+                   or_(mapping.c.expires_at.is_(None), mapping.c.expires_at > now())).limit(1))
+        if occupied:
+            raise Problem(409, "PRIMARY_ADMIN_ALREADY_EXISTS")
     lock_email(session, email)
     rows = session.execute(select(admins).where(or_(admins.c.email == email, admins.c.login_id == body.loginId))
                            .with_for_update()).mappings().all()
@@ -128,6 +141,9 @@ def signup(body: AdminSignup, request: Request, session: Session = DB):
         raise Problem(409, "APPLICANT_ACCOUNT_UNAVAILABLE")
     if existing and roles(session, db, existing["admin_id"]) & {"rental_primary_admin", "rental_manager"}:
         raise Problem(409, "APPLICANT_ALREADY_RENTAL_ADMIN")
+    if existing and body.inviteCode:
+        # An email match is not proof of ownership of an existing shared account.
+        raise Problem(409, "ACCOUNT_ALREADY_EXISTS")
 
     if existing:
         admin_id = existing["admin_id"]
@@ -151,11 +167,7 @@ def signup(body: AdminSignup, request: Request, session: Session = DB):
     if duplicate:
         raise Problem(409, "ADMIN_REQUEST_ALREADY_EXISTS")
 
-    request_id = str(uuid.uuid4())
     current = now()
-    session.execute(pending.insert().values(request_id=request_id, spot_master_id=target["spot_master_id"],
-                                             admin_id=admin_id, email=email, status="REQUESTED", requested_at=current,
-                                             reviewed_at=None, reviewed_by_admin_id=None))
     if body.inviteCode:
         rent = db.table("MSP_SPOT_RENT")
         result = session.execute(rent.update().where(rent.c.spot_master_id == target["spot_master_id"],
@@ -163,5 +175,18 @@ def signup(body: AdminSignup, request: Request, session: Session = DB):
                                  .values(invite_code=None, updated_at=current))
         if result.rowcount != 1:
             raise Problem(409, "INVITE_CODE_ALREADY_USED")
+        session.execute(admins.update().where(admins.c.admin_id == admin_id).values(
+            contract_id=target["contract_id"], primary_spot_master_id=target["spot_master_id"]))
+        session.execute(db.table("MSP_ADMIN_ROLE").insert().values(
+            admin_id=admin_id, role_code=PRIMARY, assigned_at=current))
+        session.execute(db.table("MSP_ADMIN_SPOT_SCOPE").insert().values(
+            admin_id=admin_id, spot_master_id=target["spot_master_id"], access_type="manage",
+            granted_at=current, granted_by=_representative["admin_id"]))
+        return {"status": "success", "adminId": admin_id, "requestId": None,
+                "spotMasterId": target["spot_master_id"], "requestStatus": None, "accountStatus": "ACTIVE"}
+    request_id = str(uuid.uuid4())
+    session.execute(pending.insert().values(request_id=request_id, spot_master_id=target["spot_master_id"],
+                                             admin_id=admin_id, email=email, status="REQUESTED", requested_at=current,
+                                             reviewed_at=None, reviewed_by_admin_id=None))
     return {"status": "success", "adminId": admin_id, "requestId": request_id,
-            "spotMasterId": target["spot_master_id"], "requestStatus": "REQUESTED"}
+            "spotMasterId": target["spot_master_id"], "requestStatus": "REQUESTED", "accountStatus": "PENDING_APPROVAL"}

@@ -7,6 +7,7 @@ from sqlalchemy import or_, select, update
 from sqlalchemy.orm import Session
 
 from app.db import lock_email, require_columns, transaction
+from app.chat import revoke_admin_chat
 from app.errors import Problem
 from app.headers import bearer, fcm_header, refresh_header
 from app.responses import ProfileResult, SignedIn, SpotResult, Status, Tokens
@@ -59,6 +60,7 @@ def login(body: Login, request: Request, session: Session = DB):
         tokens.c.revoked_at.is_(None), tokens.c.expires_at > current)
         .order_by(tokens.c.issued_at.asc(), tokens.c.token_id.asc()).with_for_update()).mappings().all()
     # 한 계정은 현재 로그인 기기 하나만 사용한다. 새 로그인은 이전 세션을 폐기한다.
+    revoke_admin_chat(request, row["admin_id"])
     for old in active_sessions:
         session.execute(update(tokens).where(tokens.c.token_id == old["token_id"],
             tokens.c.revoked_at.is_(None)).values(revoked_at=current))
@@ -116,6 +118,7 @@ def logout(request: Request, session: Session = DB, current_fcm_token: str | Non
         raise Problem(401, "TOKEN_PAIR_MISMATCH")
     current = now()
     session.execute(update(table).where(table.c.token_id == actor.session_id).values(revoked_at=current))
+    revoke_admin_chat(request, actor.admin["admin_id"])
     # 지연된 이전 기기의 로그아웃이 최신 기기 토큰을 지우지 않도록 현재 값과 비교한다.
     if current_fcm_token and account.get("fcm_token") == current_fcm_token:
         admins = request.app.state.db.table("MSP_ADMIN")
@@ -129,6 +132,7 @@ def logout(request: Request, session: Session = DB, current_fcm_token: str | Non
 def fcm_token(body: FcmToken, request: Request, session: Session = DB):
     actor = principal(request, session)
     lock_account(request, session, actor.admin["admin_id"], actor.session_id)
+    revoke_admin_chat(request, actor.admin["admin_id"])
     admins = request.app.state.db.table("MSP_ADMIN")
     require_columns(admins, {"fcm_token": body.fcmToken, "fcm_token_updated_at": now()})
     session.execute(update(admins).where(admins.c.admin_id == actor.admin["admin_id"], admins.c.is_active == 1)
@@ -186,11 +190,13 @@ def profile(body: Profile, request: Request, session: Session = DB):
             raise Problem(503, "PHONE_STORAGE_MAPPING_REQUIRED")
     if body.fcmToken is not None:
         values.update(fcm_token=body.fcmToken, fcm_token_updated_at=now())
+        revoke_admin_chat(request, actor.admin["admin_id"])
     if body.password is not None:
         values["password_hash"] = password_hash(body.password.get_secret_value())
     require_columns(admins, values)
     session.execute(update(admins).where(admins.c.admin_id == actor.admin["admin_id"]).values(**values))
     if body.password is not None or body.email is not None:
+        revoke_admin_chat(request, actor.admin["admin_id"])
         tokens = db.table("MSP_REFRESH_TOKEN")
         session.execute(update(tokens).where(tokens.c.admin_id == actor.admin["admin_id"],
                 tokens.c.revoked_at.is_(None)).values(revoked_at=now()))
@@ -213,6 +219,7 @@ def find_password(body: Email, request: Request, session: Session = DB):
         return {"status": "success"}
     request.app.state.limiter.check("password-reset:account:" + row["admin_id"], limit=1, seconds=300)
     password = secrets.token_urlsafe(24)
+    revoke_admin_chat(request, row["admin_id"])
     session.execute(update(admins).where(admins.c.admin_id == row["admin_id"]).values(password_hash=password_hash(password)))
     tokens = request.app.state.db.table("MSP_REFRESH_TOKEN")
     session.execute(update(tokens).where(tokens.c.admin_id == row["admin_id"], tokens.c.revoked_at.is_(None)).values(revoked_at=now()))

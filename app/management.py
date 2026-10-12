@@ -9,8 +9,9 @@ from sqlalchemy.orm import Session
 from app.db import require_columns, transaction
 from app.errors import Problem
 from app.headers import bearer
-from app.responses import Admins, Applicants, CreatedSpot, Hierarchy, PrimaryResult, ShopResult, Status
+from app.responses import Admins, Applicants, CreatedSpot, Hierarchy, PrimaryResult, ShopProfile, ShopResult, Status
 from app.schemas import AdminId, RequestAction, Shop, SpotCreate
+from app.rental_common import context, editable_spot, resolve_spot
 from app.security import (GENERAL, PRIMARY, SESSION_MARKER, active_spot, check_contract, in_subtree,
                           now, principal, roles)
 
@@ -58,6 +59,12 @@ def change_role(body: AdminId, request: Request, session: Session = DB):
                mapping.c.role_code == PRIMARY, or_(mapping.c.expires_at.is_(None), mapping.c.expires_at > now()))).all()
     if primaries != [actor.admin["admin_id"]]:
         raise Problem(409, "PRIMARY_ADMIN_INCONSISTENT")
+    # Serialize demotion with issuance of the outgoing primary's chat session.
+    from app.security import lock_account
+    lock_account(request, session, actor.admin["admin_id"], actor.session_id)
+    from app.chat import revoke_admin_chat
+    revoke_admin_chat(request, actor.admin["admin_id"])
+    revoke_admin_chat(request, target["admin_id"])
     set_role(session, db, actor.admin["admin_id"], GENERAL)
     set_role(session, db, target["admin_id"], PRIMARY)
     return {"status": "success", "primaryAdminId": target["admin_id"]}
@@ -87,6 +94,8 @@ def delete_admin(body: AdminId, request: Request, session: Session = DB):
     target = member(session, db, body.adminId, root)
     if roles(session, db, target["admin_id"]) & {PRIMARY, GENERAL} != {GENERAL}:
         raise Problem(409, "PRIMARY_ADMIN_CANNOT_BE_REMOVED")
+    from app.chat import revoke_admin_chat
+    revoke_admin_chat(request, body.adminId)
     # Remove rental membership, not a shared account or its unrelated web roles.
     mapping = db.table("MSP_ADMIN_ROLE")
     session.execute(delete(mapping).where(mapping.c.admin_id == body.adminId, mapping.c.role_code == GENERAL))
@@ -99,21 +108,52 @@ def delete_admin(body: AdminId, request: Request, session: Session = DB):
     return {"status": "success"}
 
 
-@router.post("/nadreego/shop/update", response_model=ShopResult)
+@router.get("/nadreego/shop/profile", response_model=ShopProfile, summary="매장 전체 프로필 조회")
+def shop_profile(request: Request, spotMasterId: str | None = Query(None, max_length=36), session: Session = DB):
+    _, root = context(request, session)
+    root = resolve_spot(request, session, root, spotMasterId)
+    table = request.app.state.db.table("MSP_SPOT_RENT")
+    row = session.execute(select(table).where(table.c.spot_master_id == root["spot_master_id"])).mappings().first()
+    if not row:
+        raise Problem(404, "RENTAL_SPOT_NOT_CONFIGURED")
+    return {"status": "success", "spotMasterId": root["spot_master_id"], "spotCode": root["unit_code"],
+        "shopName": root["spot_name"], "companyId": root["org_id"], "contact": root["phone"],
+        "email": row.get("contact_email"), "address": root["address"], "location": root["address"],
+        "lat": root["lat"], "lng": root["lng"], "addressDetail": row.get("address_detail"),
+        "zipCode": root["zip_code"], "directions": row.get("directions"),
+        "introduction": row.get("introduction"), "deliveryServiceType": row["delivery_service_type"]}
+
+
+@router.post("/nadreego/shop/update", response_model=ShopResult,
+             description="spotMasterId 생략 시 현재 지점. 대표는 자기 지점과 하위 지점 프로필 수정, 일반관리자는 직접 소속 지점 deliveryServiceType만 수정합니다. 필수 정보 null/빈 값 삭제 불가, 선택 정보 빈 문자열은 유지하고 null은 삭제합니다. lat/lng는 함께 전달합니다.")
 def update_shop(body: Shop, request: Request, session: Session = DB):
-    actor, root = representative(request, session)
-    if not body.model_fields_set or any(getattr(body, name) is None for name in body.model_fields_set):
+    actor, root = context(request, session, write=True)
+    fields = body.model_fields_set - {"spotMasterId"}
+    if not fields:
         raise Problem(422, "EMPTY_OR_NULL_UPDATE")
+    if fields - {"deliveryServiceType"} and PRIMARY not in roles(session, request.app.state.db, actor.admin["admin_id"]):
+        raise Problem(403, "PRIMARY_ADMIN_REQUIRED")
+    root = editable_spot(request, session, actor, root, body.spotMasterId)
+    for field in fields & {"shopName", "location", "email", "lat", "lng", "deliveryServiceType"}:
+        value = getattr(body, field)
+        if value is None or isinstance(value, str) and not value.strip():
+            raise Problem(422, "REQUIRED_SHOP_FIELD")
+    if ("lat" in fields) != ("lng" in fields):
+        raise Problem(422, "COORDINATE_PAIR_REQUIRED")
+    # Empty optional strings preserve existing values; explicit null clears them.
+    fields = {name for name in fields if getattr(body, name) != ""}
     db = request.app.state.db
     master, rent = db.table("MSP_SPOT_MASTER"), db.table("MSP_SPOT_RENT")
     values = {column: getattr(body, name) for name, column in
-              [("shopName", "spot_name"), ("location", "address"), ("contact", "phone")]
-              if name in body.model_fields_set}
+              [("shopName", "spot_name"), ("location", "address"), ("contact", "phone"),
+               ("lat", "lat"), ("lng", "lng"), ("zipCode", "zip_code")]
+              if name in fields}
     if body.shopName is not None and "unit_name" in master.c:
         values["unit_name"] = body.shopName
     extra = {column: getattr(body, name) for name, column in
-             [("introduction", "introduction"), ("email", "contact_email"), ("deliveryServiceType", "delivery_service_type")]
-             if name in body.model_fields_set}
+             [("introduction", "introduction"), ("email", "contact_email"), ("deliveryServiceType", "delivery_service_type"),
+              ("addressDetail", "address_detail"), ("directions", "directions")]
+             if name in fields}
     require_columns(master, values)
     require_columns(rent, extra)
     rent_row = session.execute(select(rent).where(rent.c.spot_master_id == root["spot_master_id"])).mappings().first()
@@ -159,7 +199,7 @@ def hierarchy(request: Request, offset: int = Query(0, ge=0), limit: int = Query
         .group_by(admins.c.primary_spot_master_id).subquery())
     source = table.outerjoin(managers, table.c.spot_master_id == managers.c.spot_id)
     # A segment delimiter prevents ORG01 from matching ORG010.
-    condition = (table.c.contract_id == root["contract_id"]) & table.c.unit_code.startswith(root["unit_code"] + "-", autoescape=True)
+    condition = (table.c.contract_id == root["contract_id"]) & (table.c.org_id == root["org_id"]) & table.c.unit_code.startswith(root["unit_code"] + "-", autoescape=True)
     if search:
         condition &= or_(table.c.spot_name.contains(search, autoescape=True), table.c.unit_code.contains(search, autoescape=True),
                          managers.c.manager_name.contains(search, autoescape=True))
@@ -173,9 +213,19 @@ def hierarchy(request: Request, offset: int = Query(0, ge=0), limit: int = Query
     rows = session.execute(select(table, managers.c.manager_name).select_from(source).where(condition).order_by(table.c.unit_code, table.c.spot_master_id)
                            .offset(offset).limit(limit)).mappings().all()
     keys = ["spot_master_id", "unit_code", "spot_name", "hierarchy_level", "org_name", "region_name", "is_active"]
+    primary = PRIMARY in roles(session, db, actor.admin["admin_id"])
+    company = session.execute(select(table.c.spot_master_id, table.c.unit_code).where(
+        table.c.org_id == root["org_id"], table.c.contract_id == root["contract_id"])).all()
+    parents = {item.unit_code: item.spot_master_id for item in company}
     return {"items": [{**{k: row.get(k) for k in keys}, "is_active": bool(row["is_active"]),
-                       "manager_name": row["manager_name"]} for row in rows],
-            "total": total}
+                       "manager_name": row["manager_name"], "companyId": row["org_id"],
+                       "parentSpotMasterId": parents.get(row["unit_code"].rsplit("-", 1)[0]),
+                       "canEditProfile": primary and bool(row["is_active"]),
+                       "canEditPricing": bool(row["is_active"]) and (primary or row["spot_master_id"] == root["spot_master_id"]),
+                       "canEditDelivery": bool(row["is_active"]) and (primary or row["spot_master_id"] == root["spot_master_id"]),
+                       "canCreateChild": primary and bool(row["is_active"]) and row["hierarchy_level"] in ("org", "spot")} for row in rows],
+            "total": total, "currentSpotMasterId": root["spot_master_id"], "companyId": root["org_id"],
+            "isCompanyPrimary": primary and root["hierarchy_level"] == "org"}
 
 
 @router.post("/api/v1/organizations/spots", response_model=CreatedSpot)
@@ -190,6 +240,9 @@ def create_spot(body: SpotCreate, request: Request, session: Session = DB):
     if not parent or not in_subtree(root, parent):
         raise Problem(404, "PARENT_SPOT_NOT_FOUND")
     check_contract(session, db, parent, request.app.state.settings)
+    if body.unit_type == "spot":
+        if not body.address or not body.address.strip() or body.email is None or body.lat is None or body.lng is None:
+            raise Problem(422, "REQUIRED_SHOP_PROFILE_MISSING")
     end = body.contract_end or parent["contract_end"]
     start = body.contract_start or parent["contract_start"]
     if ((start and end and start > end) or (parent["contract_end"] and end and end > parent["contract_end"])
@@ -199,6 +252,10 @@ def create_spot(body: SpotCreate, request: Request, session: Session = DB):
     stem = parent["unit_code"] + "-" + prefix
     codes = session.scalars(select(table.c.unit_code).where(table.c.unit_code.startswith(stem, autoescape=True))).all()
     pattern = re.compile(re.escape(stem) + r"(\d+)$")
+    same_name = session.execute(select(table.c.unit_code).where(table.c.contract_id == parent["contract_id"],
+        table.c.org_id == parent["org_id"], table.c.spot_name == body.spot_name)).scalars().all()
+    if any(pattern.fullmatch(code) for code in same_name):
+        raise Problem(409, "DUPLICATE_SPOT_NAME")
     sequence = max([int(m[1]) for code in codes if (m := pattern.fullmatch(code))] + [0]) + 1
     unit_code = stem + f"{sequence:02d}"
     ident = str(uuid.uuid4())
@@ -207,7 +264,7 @@ def create_spot(body: SpotCreate, request: Request, session: Session = DB):
               "region_name": parent.get("region_name"), "local_name": parent.get("local_name"),
               "unit_code": unit_code, "spot_name": body.spot_name,
               "hierarchy_level": body.unit_type, "phone": body.phone, "biz_reg_num": body.biz_reg_num,
-              "address": " ".join(x for x in [body.address, body.address_detail] if x) or None,
+              "address": body.address,
               "zip_code": body.zip_code, "lat": body.lat, "lng": body.lng,
               "contract_start": start, "contract_end": end, "is_active": 1}
     # spot_id is a legacy normalized-key bridge. Newer shared schemas use only
@@ -239,7 +296,8 @@ def create_spot(body: SpotCreate, request: Request, session: Session = DB):
     session.execute(table.insert().values(**values))
     rent = db.table("MSP_SPOT_RENT")
     invite_code = secrets.token_urlsafe(48)[:64] if "invite_code" in rent.c else None
-    rent_values = {"spot_master_id": ident, "delivery_service_type": "NONE"}
+    rent_values = {"spot_master_id": ident, "delivery_service_type": "NONE",
+                   "contact_email": str(body.email) if body.email else None, "address_detail": body.address_detail}
     if invite_code is not None:
         rent_values["invite_code"] = invite_code
     require_columns(rent, rent_values)
@@ -247,7 +305,8 @@ def create_spot(body: SpotCreate, request: Request, session: Session = DB):
     return {"spot_id": ident, "unit_code": unit_code, "spot_name": body.spot_name,
             "hierarchy_level": body.unit_type, "phone": body.phone, "biz_reg_num": body.biz_reg_num,
             "address": values["address"], "zip_code": body.zip_code, "lat": body.lat, "lng": body.lng,
-            "contract_start": start, "contract_end": end, "is_active": True, "inviteCode": invite_code}
+            "contract_start": start, "contract_end": end, "is_active": True, "inviteCode": invite_code,
+            "email": body.email, "parentSpotMasterId": body.parent_spot_id}
 
 
 @router.get("/nadreego/shop/adminRequest", response_model=Applicants)

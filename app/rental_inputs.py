@@ -65,7 +65,7 @@ class VehicleNumber(Body):
 
 class VehicleCreate(Body):
     sensorId: Identifier | None = None
-    qrToken: SecretStr | None = Field(default=None, min_length=1, max_length=4096)
+    qrToken: SecretStr = Field(min_length=1, max_length=4096)
     brand: Annotated[str, Field(min_length=1, max_length=50)]
     vehicleName: Annotated[str, Field(min_length=1, max_length=50)]
     modelId: ModelId

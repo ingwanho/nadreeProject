@@ -164,6 +164,13 @@ class FcmSender:
                     continue
                 if row["fcm_token_updated_at"] != item.get("updated_at"):
                     continue
+                if notification.get("event") == "CHAT_MESSAGE":
+                    sessions = db.table("MSP_REFRESH_TOKEN" if notification["table"] == "MSP_ADMIN" else "MSP_RENTAL_USER_REFRESH_TOKEN")
+                    if not connection.scalar(select(sessions.c.token_id).where(
+                        sessions.c.token_id == item.get("chat_session_id"),
+                        sessions.c[notification["key_column"]] == item["id"],
+                        sessions.c.revoked_at.is_(None), sessions.c.expires_at > _utc_now())):
+                        continue
                 current.append(item)
         return dict(notification, recipients=current)
 
@@ -248,7 +255,7 @@ def queue_reservation_decision(db, session, uid_token, reservation_id, status):
            event="RESERVATION_APPROVED" if approved else "RESERVATION_REJECTED",
            title="예약 승인 완료" if approved else "예약 거절 안내",
            body=("렌트 예약이 승인되었습니다. 3일 이내에 결제를 진행해 주세요. "
-                 "결제 후 고객 취소 시 결제금액의 10%가 환불 수수료로 공제됩니다. 렌트 당일부터는 고객 취소가 불가능합니다.") if approved
+                 "렌트 시작 전까지 결제해 주세요. 시작일 전 고객 취소 시 10%가 공제되며, 렌트 당일부터는 취소해도 환불되지 않습니다.") if approved
            else "요청하신 렌트 예약이 거절되었습니다.",
            data={"type": "RESERVATION_APPROVED" if approved else "RESERVATION_REJECTED",
                  "reservationId": reservation_id, "bookedNo": "BO" + reservation_id,
@@ -267,7 +274,7 @@ def queue_payment_deadline_reminder(db, session, uid_token, reservation_id, days
                         "updated_at": row.get("fcm_token_updated_at")}],
            event=event, title="결제 기한 안내",
            body=(f"예약 결제까지 {days_remaining}일 이내에 결제해 주세요. "
-                 "결제 후 고객 취소 시 결제금액의 10%가 환불 수수료로 공제됩니다. 렌트 당일부터는 고객 취소가 불가능합니다."),
+                 "렌트 시작 전까지 결제해 주세요. 시작일 전 고객 취소 시 10%가 공제되며, 렌트 당일부터는 취소해도 환불되지 않습니다."),
            data={"type": event, "reservationId": reservation_id, "bookedNo": "BO" + reservation_id,
                  "reservationStatus": "APPROVED", "daysRemaining": days_remaining,
                  "paymentDeadlineAt": deadline_at.isoformat()})

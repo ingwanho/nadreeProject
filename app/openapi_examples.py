@@ -230,6 +230,7 @@ OPENAPI_EXAMPLES = {
     },
     "SpotCreate": {
         "spot_name": "Nadree 테스트 하위 지점",
+        "email": "nadree.test.shop@example.com",
         "unit_type": "spot",
         "parent_spot_id": TEST_SPOT["spotMasterId"],
         "phone": "+62-000-000-002",
@@ -336,11 +337,13 @@ OPENAPI_EXAMPLES = {
         "ongoingRequests": [TEST_RECORD],
     },
     "CustomerAvailabilityItem": {
+        "canRequest": True, "cannotRequestReason": None,
         "shopId": TEST_SPOT["shopId"], "modelId": TEST_WEB_MODEL_125["modelId"],
         "spot": TEST_SPOT, "model": TEST_WEB_MODEL_125, "price": TEST_WEB_PRICE,
     },
     "CustomerAvailability": {
         "status": "success", "items": [{
+            "canRequest": True, "cannotRequestReason": None,
             "shopId": TEST_SPOT["shopId"], "modelId": TEST_WEB_MODEL_125["modelId"],
             "spot": TEST_SPOT, "model": TEST_WEB_MODEL_125, "price": TEST_WEB_PRICE,
         }],
@@ -390,6 +393,8 @@ OPENAPI_EXAMPLES = {
         "spot_master_id": TEST_SPOT["spotMasterId"], "unit_code": TEST_SPOT["unitCode"],
         "spot_name": TEST_SPOT["spotName"], "hierarchy_level": "org", "org_name": TEST_SPOT["spotName"],
         "region_name": None, "is_active": True, "manager_name": "Nadree 테스트 대표관리자",
+        "companyId": "NR_TEST_COMPANY", "parentSpotMasterId": None,
+        "canEditProfile": True, "canEditPricing": True, "canEditDelivery": True, "canCreateChild": True,
     },
     "Applicant": {"email": "nadree.test.newmanager@example.com", "name": "Nadree 테스트 일반관리자"},
 }
@@ -420,9 +425,13 @@ OPENAPI_EXAMPLES.update({
         "spot_master_id": TEST_SPOT["spotMasterId"], "unit_code": TEST_SPOT["unitCode"],
         "spot_name": TEST_SPOT["spotName"], "hierarchy_level": "org", "org_name": TEST_SPOT["spotName"],
         "region_name": None, "is_active": True, "manager_name": "Nadree 테스트 대표관리자",
+        "companyId": "NR_TEST_COMPANY", "parentSpotMasterId": None,
+        "canEditProfile": True, "canEditPricing": True, "canEditDelivery": True, "canCreateChild": True,
     },
-    "Hierarchy": {"items": [OPENAPI_EXAMPLES["HierarchyItem"]], "total": 1},
+    "Hierarchy": {"items": [OPENAPI_EXAMPLES["HierarchyItem"]], "total": 1,
+                  "currentSpotMasterId": TEST_SPOT["spotMasterId"], "companyId": "NR_TEST_COMPANY", "isCompanyPrimary": True},
     "CreatedSpot": {
+        "email": "nadree.test.shop@example.com", "parentSpotMasterId": TEST_SPOT["spotMasterId"],
         "spot_id": "00000000-0000-4000-8000-000000000102", "unit_code": "NR_TEST_20260921-ORG01-SP01",
         "spot_name": "Nadree 테스트 하위 지점", "hierarchy_level": "spot", "phone": "+62-000-000-002",
         "biz_reg_num": "TEST-BIZ-CHILD-001", "address": "Kuta Test Area", "zip_code": "80361",
@@ -433,7 +442,7 @@ OPENAPI_EXAMPLES.update({
     "Applicants": {"status": "success", "admins": [OPENAPI_EXAMPLES["Applicant"]]},
     "AdminSignupResult": {
         "status": "success", "adminId": "<created-admin-uuid>", "requestId": "<request-uuid>",
-        "spotMasterId": TEST_SPOT["spotMasterId"], "requestStatus": "REQUESTED",
+        "spotMasterId": TEST_SPOT["spotMasterId"], "requestStatus": "REQUESTED", "accountStatus": "PENDING_APPROVAL",
     },
     "PassportUploadResult": {
         "status": "success", "bookedNo": "BONRTEST-RES-HAND-001", "available": True,
@@ -491,7 +500,9 @@ OPENAPI_RESPONSE_EXAMPLES = {
     },
     ("POST", "/nadreego/shop/tierDelete"): {"status": "success"},
     ("POST", "/nadreego/vehicle/create"): {
-        "status": "success", "vehicleId": "<created-vehicle-uuid>", "iot": {},
+        "status": "success", "vehicleId": "<created-vehicle-uuid>",
+        "qr": {"qrId": "<qr-id>", "qrStatus": "ACTIVE"},
+        "iot": {"sensorId": None, "sensorStatus": "NOT_LINKED"},
         "brand": "Honda", "vehicleName": "Vario 125",
     },
     ("POST", "/nadreego/vehicle/qr/validate"): {

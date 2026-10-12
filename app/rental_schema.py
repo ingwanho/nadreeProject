@@ -103,6 +103,7 @@ Table("MSP_RENTAL_CONTRACT", metadata,
       C("vehicle_id", String(36), nullable=False, index=True), C("uid_token", String(36), nullable=False, index=True),
       C("sensor_id", String(36)), C("pickup_spot_master_id", String(36), nullable=False, index=True),
       C("return_spot_master_id", String(36)), C("actual_start_time", DateTime), C("actual_end_time", DateTime),
+      C("pickup_location_snapshot", JSON), C("return_location_snapshot", JSON),
       C("planned_end_date", Date, nullable=False), C("contract_status", String(20), nullable=False, server_default="ON_RENT"),
       *timestamps(), CheckConstraint("contract_status IN ('ON_RENT','OVERDUE','RETURNED','CANCELED')", name="ck_contract_status"),
       Index("ix_contract_vehicle_open", "vehicle_id", "actual_end_time", "contract_status"))
@@ -135,6 +136,8 @@ Table("MSP_RENTAL_PAYMENT", metadata,
       C("refund_status", String(20), nullable=False, server_default="NONE"), C("paypal_refund_id", String(50)),
       C("refund_requested_at", DateTime), C("refund_requested_by_admin_id", String(36)), C("refund_reason", String(200)),
       C("refund_requested_amount", Numeric(18, 2)),
+      C("cancellation_requested_by_type", String(20)), C("cancellation_requested_by_id", String(36)),
+      C("refund_percentage", Integer),
       C("paid_at", DateTime), *timestamps(),
       UniqueConstraint("payment_environment", "paypal_order_id", name="uq_paypal_order"),
       UniqueConstraint("payment_environment", "paypal_capture_id", name="uq_paypal_capture"),
@@ -151,6 +154,13 @@ Table("MSP_PAYPAL_WEBHOOK_EVENT", metadata,
       C("received_at", DateTime, nullable=False), C("processed_at", DateTime), C("updated_at", DateTime, nullable=False),
       UniqueConstraint("payment_environment", "paypal_event_id", name="uq_paypal_event"),
       Index("ix_paypal_event_retry", "processing_status", "updated_at"))
+
+Table("MSP_RENTAL_NOTIFICATION", metadata,
+      C("notification_id", ID, primary_key=True, autoincrement=True),
+      C("spot_master_id", String(36), nullable=False), C("event_type", String(50), nullable=False),
+      C("target_type", String(20), nullable=False), C("target_id", String(50), nullable=False),
+      C("event_key", String(180), nullable=False, unique=True), C("created_at", DateTime, nullable=False),
+      C("read_at", DateTime), Index("ix_notification_shop_read", "spot_master_id", "read_at", "notification_id"))
 
 # Opaque provider identifiers and QR digests require case-sensitive MySQL comparisons.
 for name in ("MSP_RENTAL_PAYMENT", "MSP_PAYPAL_WEBHOOK_EVENT", "MSP_VEHICLE_QR"):

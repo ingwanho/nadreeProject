@@ -1,0 +1,38 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function session() {
+      let user = get(/databases/$(database)/documents/chatUsers/$(request.auth.uid)).data;
+      return user.active == true && user.sessionId == request.auth.token.chatSessionId
+        && request.time < user.expiresAt;
+    }
+    function member(shopId) {
+      return get(/databases/$(database)/documents/chatShops/$(shopId)/members/$(request.auth.uid)).data.active == true;
+    }
+    function allowed(room) {
+      return request.auth != null && session()
+        && (room.customerUid == request.auth.uid || member(room.shopId));
+    }
+    match /chatUsers/{uid} {
+      allow get: if request.auth != null && request.auth.uid == uid && session();
+    }
+    match /chatShops/{shopId}/members/{uid} {
+      allow get: if request.auth != null && request.auth.uid == uid && session();
+    }
+    match /chatShops/{shopId}/products/{productId} {
+      allow read: if request.auth != null && session() && resource.data.active == true;
+    }
+    match /chatRoomAccess/{roomId} {
+      allow get, list: if allowed(resource.data);
+      match /messages/{messageId} {
+        allow read: if allowed(get(/databases/$(database)/documents/chatRoomAccess/$(roomId)).data);
+      }
+      match /reads/{uid} {
+        allow get: if request.auth != null && request.auth.uid == uid
+          && allowed(get(/databases/$(database)/documents/chatRoomAccess/$(roomId)).data);
+      }
+    }
+    // No client writes, private booking links, inquiry locks or push tokens.
+    match /{document=**} { allow read, write: if false; }
+  }
+}

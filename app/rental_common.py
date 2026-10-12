@@ -6,7 +6,7 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import or_, select, text, update
 
 from app.errors import Problem
-from app.security import active_spot, check_contract, in_subtree, now, principal
+from app.security import PRIMARY, active_spot, check_contract, in_subtree, now, principal, roles
 
 OPEN = ("ON_RENT", "OVERDUE")
 MOVABLE = ("PROVISIONAL", "REALLOCATED")
@@ -34,6 +34,15 @@ def local_date(request, value):
     return value.replace(tzinfo=timezone.utc).astimezone(timezone_for(request)).date()
 
 
+def location_snapshot(spot):
+    if not spot.get("address") or not spot["address"].strip() or spot.get("lat") is None or spot.get("lng") is None:
+        return None
+    lat, lng = float(spot["lat"]), float(spot["lng"])
+    if not -90 <= lat <= 90 or not -180 <= lng <= 180:
+        return None
+    return {"address": spot["address"], "zipCode": spot.get("zip_code"), "latitude": lat, "longitude": lng}
+
+
 def iso(request, value):
     return value.replace(tzinfo=timezone.utc).astimezone(timezone_for(request)).isoformat() if value else None
 
@@ -54,8 +63,15 @@ def resolve_spot(request, session, root, code=None, *, lock=False):
     rows = session.execute(query.with_for_update() if lock else query).mappings().all()
     if len(rows) != 1 or not rows[0]["is_active"] or not in_subtree(root, rows[0]):
         raise Problem(404, "SPOT_NOT_FOUND")
-    check_contract(request, session, rows[0])
+    check_contract(session, db, rows[0], request.app.state.settings)
     return rows[0]
+
+
+def editable_spot(request, session, actor, root, code=None):
+    target = resolve_spot(request, session, root, code, lock=True)
+    if target["spot_master_id"] != root["spot_master_id"] and PRIMARY not in roles(session, request.app.state.db, actor.admin["admin_id"]):
+        raise Problem(403, "SPOT_ACCESS_DENIED")
+    return target
 
 
 def lock_key(session, namespace, value):

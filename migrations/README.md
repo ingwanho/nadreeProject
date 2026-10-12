@@ -1,5 +1,22 @@
 # Nadree DB 변경 안내
 
+## 2026-10-12 추가 변경 — 미적용
+
+아래는 새 코드에 필요한 변경이며 운영 DB에는 실행하지 않았다. 과거 알림 테이블 제외·삭제 안내와 이전 취소 정책보다 이 절이 우선한다.
+
+| 대상 | 추가 내용 |
+| --- | --- |
+| MSP_RENTAL_PAYMENT | cancellation_requested_by_type VARCHAR(20), cancellation_requested_by_id VARCHAR(36), refund_percentage INT, 모두 nullable |
+| MSP_RENTAL_CONTRACT | pickup_location_snapshot, return_location_snapshot, nullable JSON |
+| MSP_SPOT_RENT | address_detail VARCHAR(200), directions VARCHAR(500), nullable |
+| MSP_RENTAL_NOTIFICATION | 지점 공통 알림·읽음, event_key UNIQUE, 지점/읽음/ID 인덱스 |
+
+`app.migrate` 기본 실행은 읽기 전용 계획 조회다. 없는 컬럼·테이블·인덱스만 계획하며 과거 취소 요청자·환불률·위치를 추정해서 채우지 않는다. 기존 알림 테이블이 다른 구조라면 자동 덮어쓰기·삭제 없이 중단하므로 실제 DDL과 데이터 이전을 검토한다. 새 알림 테이블은 예약·결제 등 업무 트랜잭션에 필요하므로 승인된 스키마 적용 후 코드를 재시작한다. 아래 승인·백업 절차를 그대로 따른다.
+
+환불 정책: 관리자 시작일 전 100%, 당일부터 취소 금지. 고객 시작일 전 90%, 당일부터 인계 전 취소 가능·0% 환불. 날짜는 업무 시간대 기준이다.
+
+## 과거 변경 이력
+
 DB 계획 v2.24는 지점 소개·연락 이메일 2컬럼과 기존 관리자 phone VARCHAR(200) 확장을 포함한다. 고객 refresh token 테이블을 포함한 전체 렌탈 계획은 18개 업무 테이블이며, 이 폴더는 승인된 공통 변경과 결제 환불·고객 인증에 필요한 부분을 다룬다. 알림 큐 테이블은 현재 제외하고, 새 Firebase 프로젝트 연결 후 별도로 설계한다.
 
 | 순서 | 변경 | 조건 |
@@ -25,7 +42,7 @@ DB 계획 v2.24는 지점 소개·연락 이메일 2컬럼과 기존 관리자 p
 
 복합 인덱스는 API 결과나 예약 규칙을 변경하지 않는다. `MSP_VEHICLE_SPOT_HISTORY`에는 현재 지점 차량 조회용 `idx_vehicle_spot_current(spot_master_id, released_at, vehicle_id)`, `MSP_RESERVATION`에는 전체 모델 캘린더용 `idx_reservation_calendar(spot_master_id, reservation_status, start_datetime, model_id)`, `MSP_RENTAL_CONTRACT`에는 지점·차량별 계약 조회용 `idx_rental_contract_calendar(pickup_spot_master_id, vehicle_id, contract_status, actual_start_time, actual_end_time)`를 추가한다. 기존 `ix_reservation_availability(spot_master_id, model_id, reservation_status, start_datetime)`는 모델 지정 가용성 계산용으로 유지한다. 같은 컬럼 순서의 인덱스가 다른 이름으로 이미 있으면 추가하지 않으며, 같은 이름에 다른 컬럼 구성이 있으면 자동 적용을 중단하고 수동 검토를 요구한다.
 
-기존 DB에 `MSP_RENTAL_NOTIFICATION`이 이미 생성되어 있다면 이 계획은 자동 삭제하지 않는다. 백업과 사용 여부를 확인한 뒤 DB 담당자가 별도 `DROP TABLE` 절차로 제거해야 한다.
+기존 DB에 `MSP_RENTAL_NOTIFICATION`이 이미 생성되어 있다면 삭제하지 않는다. 위 2026-10-12 구조와 비교하여 호환 여부·데이터 이전 필요성을 확인한다.
 
 
 `MSP_RENTAL_USER`가 이미 있는 DB에는 `008_rental_user_refresh_token.sql`을 적용해 고객 세션 테이블을 추가한다. 기존 관리자 `MSP_REFRESH_TOKEN`이나 `MSP_DRIVER` 관련 테이블은 변경하지 않는다.

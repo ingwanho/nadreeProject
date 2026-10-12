@@ -7,12 +7,15 @@ from sqlalchemy import text
 
 from app.auth import router as auth_router
 from app.admin_signup import router as admin_signup_router
+from app.chat import FirebaseChat, router as chat_router
 from app.config import Settings
 from app.db import Database
 from app.errors import Problem, install_handlers
 from app.fcm import FcmSender
 from app.firebase_auth import CustomerFirebaseAuth
 from app.management import router as management_router
+from app.admin_customers import router as admin_customers_router
+from app.notifications import router as notifications_router
 from app.mail import PasswordMailer
 from app.locations import VehicleLocations
 from app.openapi_examples import (OPENAPI_EXAMPLES, OPENAPI_REQUEST_EXAMPLES,
@@ -121,6 +124,7 @@ def create_app(settings=None, db=None, limiter=None, mailer=None, fcm=None, loca
     application.state.mailer = mailer or PasswordMailer(settings)
     application.state.fcm = fcm or FcmSender(settings)
     application.state.customer_auth = customer_auth or CustomerFirebaseAuth(settings)
+    application.state.chat = FirebaseChat(settings)
     application.state.locations = locations or VehicleLocations(settings)
     application.state.passport_storage = passport_storage or PassportStorage(settings.passport_storage_root)
     application.state.paypal = PayPalClient(settings)
@@ -156,7 +160,10 @@ def create_app(settings=None, db=None, limiter=None, mailer=None, fcm=None, loca
 
     application.include_router(auth_router)
     application.include_router(admin_signup_router)
+    application.include_router(chat_router)
     application.include_router(management_router)
+    application.include_router(admin_customers_router)
+    application.include_router(notifications_router)
     application.include_router(delivery_router)
     application.include_router(pricing_router)
     application.include_router(vehicles_router)

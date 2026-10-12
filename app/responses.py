@@ -108,6 +108,8 @@ class CustomerDelivery(BaseModel):
 
 
 class CustomerRecord(BaseModel):
+    pickupLocationSnapshot: CustomerLocation | None = None
+    returnLocationSnapshot: CustomerLocation | None = None
     recordType: Literal["RESERVATION", "RENTAL"]
     reservationId: str | None = None
     bookingId: str | None = None
@@ -161,6 +163,8 @@ class PassportUploadResult(Status):
 
 
 class CustomerAvailabilityItem(BaseModel):
+    canRequest: bool
+    cannotRequestReason: str | None
     # 앱의 shopId는 렌탈 지점의 영구 식별자인 spotMasterId와 같은 값이다.
     shopId: str
     modelId: str
@@ -260,6 +264,22 @@ class ShopResult(Status):
     deliveryServiceType: Literal["NONE", "START_ONLY", "START_AND_RETURN"]
 
 
+class ShopProfile(ShopResult):
+    spotCode: str
+    shopName: str
+    companyId: str
+    contact: str | None
+    email: str | None
+    address: str | None
+    location: str | None
+    lat: float | None
+    lng: float | None
+    addressDetail: str | None
+    zipCode: str | None
+    directions: str | None
+    introduction: str | None
+
+
 class HierarchyItem(BaseModel):
     spot_master_id: str
     unit_code: str
@@ -269,11 +289,20 @@ class HierarchyItem(BaseModel):
     region_name: str | None
     is_active: bool
     manager_name: str | None
+    companyId: str
+    parentSpotMasterId: str | None
+    canEditProfile: bool
+    canEditPricing: bool
+    canEditDelivery: bool
+    canCreateChild: bool
 
 
 class Hierarchy(BaseModel):
     items: list[HierarchyItem]
     total: int
+    currentSpotMasterId: str
+    companyId: str
+    isCompanyPrimary: bool
 
 
 class CreatedSpot(BaseModel):
@@ -291,6 +320,8 @@ class CreatedSpot(BaseModel):
     contract_end: date | None
     is_active: bool
     inviteCode: str | None = None
+    email: str | None = None
+    parentSpotMasterId: str | None = None
 
 
 class Applicant(BaseModel):
@@ -304,6 +335,7 @@ class Applicants(Status):
 
 class AdminSignupResult(Status):
     adminId: str
-    requestId: str
+    requestId: str | None
     spotMasterId: str
-    requestStatus: Literal["REQUESTED"] = "REQUESTED"
+    requestStatus: Literal["REQUESTED"] | None
+    accountStatus: Literal["ACTIVE", "PENDING_APPROVAL"]

@@ -384,6 +384,9 @@ def process_event(db, client, stored, snapshot, notifier=None):
         if settled and payment["paid_at"] is None:
             values["paid_at"] = timestamp(capture["create_time"])
         session.execute(update(p).where(p.c.payment_id == payment["payment_id"]).values(**values))
+        from app.notifications import payment_notification
+        if event["event_type"] in ("PAYMENT.CAPTURE.COMPLETED", "PAYMENT.CAPTURE.REFUNDED", "PAYMENT.REFUND.FAILED", "PAYMENT.REFUND.PENDING"):
+            payment_notification(db, session, payment, event["event_type"], "paypal:" + str(row["webhook_event_id"]))
         session.execute(update(e).where(e.c.webhook_event_id == row["webhook_event_id"]).values(payment_id=payment["payment_id"],
             processing_status="PROCESSED", last_error=None, processed_at=now(), updated_at=now(),
             retry_count=row["retry_count"] + (1 if row["processing_status"] == "FAILED" else 0)))
@@ -434,6 +437,8 @@ def execute_refund(db, client, payment_id):
             connection.execute(update(payment_table).where(payment_table.c.payment_id == payment_id,
                 payment_table.c.refund_status == "REQUESTED")
                 .values(refund_status="FAILED", updated_at=now()))
+            from app.notifications import payment_notification
+            payment_notification(db, connection, payment, "REFUND_FAILED", "refund-failed:" + str(payment_id))
         return False
     status = result.get("status") if isinstance(result, dict) else None
     status = status if status in ("PENDING", "COMPLETED", "FAILED") else "PENDING"

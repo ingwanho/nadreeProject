@@ -17,7 +17,37 @@ def test_hierarchy_is_limited_to_descendants(client, signin):
     assert response.json()["total"] == 1
     assert [row["spot_master_id"] for row in response.json()["items"]] == ["child"]
     page = client.get("/api/v1/organizations/spots/hierarchy?offset=1&limit=1", headers=signin())
-    assert page.json() == {"items": [], "total": 1}
+    assert page.json() == {"items": [], "total": 1, "companyId": "root", "currentSpotMasterId": "root", "isCompanyPrimary": True}
+
+
+def test_shop_optional_clear_and_general_delivery_only(client, signin, setup):
+    primary, general = signin(), signin("general")
+    assert client.post("/nadreego/shop/update", headers=primary, json={"introduction": "Hello"}).status_code == 200
+    assert client.post("/nadreego/shop/update", headers=primary, json={"introduction": ""}).status_code == 200
+    profile = client.get("/nadreego/shop/profile", headers=primary)
+    assert profile.json()["introduction"] == "Hello"
+    assert client.post("/nadreego/shop/update", headers=primary, json={"introduction": None}).status_code == 200
+    assert client.get("/nadreego/shop/profile", headers=primary).json()["introduction"] is None
+    assert client.post("/nadreego/shop/update", headers=primary, json={"lat": -8.5}).status_code == 422
+    assert client.post("/nadreego/shop/update", headers=primary, json={"location": None}).status_code == 422
+    assert client.post("/nadreego/shop/update", headers=general, json={"deliveryServiceType": "START_ONLY"}).status_code == 200
+    assert client.post("/nadreego/shop/update", headers=general,
+        json={"deliveryServiceType": "NONE", "shopName": "forbidden"}).status_code == 403
+    assert client.post("/nadreego/shop/update", headers=general,
+        json={"spotMasterId": "child", "deliveryServiceType": "NONE"}).status_code == 403
+    assert client.get("/nadreego/shop/profile", headers=primary, params={"spotMasterId": "foreign"}).status_code == 404
+
+
+def test_nested_spot_creation_requires_profile_and_rejects_duplicate(client, signin):
+    headers = signin()
+    body = {"spot_name": "Nested", "unit_type": "spot", "parent_spot_id": "child"}
+    assert client.post("/api/v1/organizations/spots", headers=headers, json=body).status_code == 422
+    body.update(email="shop@example.com", address="Test entrance", lat=-8.6, lng=115.2)
+    created = client.post("/api/v1/organizations/spots", headers=headers, json=body)
+    assert created.status_code == 200, created.text
+    assert created.json()["parentSpotMasterId"] == "child"
+    duplicate = client.post("/api/v1/organizations/spots", headers=headers, json=body)
+    assert duplicate.status_code == 409 and duplicate.json()["errorCode"] == "DUPLICATE_SPOT_NAME"
 
 
 def test_admin_list_contains_only_current_branch(client, signin):
@@ -162,7 +192,8 @@ def test_shop_profile_length_limits_are_atomic(client, signin, setup, field, lim
 @pytest.mark.parametrize("unit_type", ["region", "local", "spot", "team", "agency"])
 def test_create_child_persists_normalized_rows_and_rental_sidecar(client, signin, setup, unit_type):
     response = client.post("/api/v1/organizations/spots", headers=signin(),
-        json={"spot_name": "New child", "unit_type": unit_type, "parent_spot_id": "root", "lat": -8.65, "lng": 115.2})
+        json={"spot_name": "New child", "unit_type": unit_type, "parent_spot_id": "root", "lat": -8.65, "lng": 115.2,
+              "email": "shop@example.com", "address": "Test address"})
     assert response.status_code == 200, response.text
     result = response.json()
     assert result["unit_code"].startswith("CT1-ORG01-") and result["spot_id"]
@@ -187,7 +218,8 @@ def test_create_child_persists_normalized_rows_and_rental_sidecar(client, signin
 def test_invalid_child_creation_is_atomic(client, signin, setup, body, status):
     before = count(setup, "MSP_SPOT_MASTER")
     result = client.post("/api/v1/organizations/spots", headers=signin(),
-        json={"spot_name": "Child", "parent_spot_id": "root", "unit_type": "spot", **body})
+        json={"spot_name": "Child", "parent_spot_id": "root", "unit_type": "spot",
+              "email": "shop@example.com", "address": "Test address", "lat": -8.65, "lng": 115.2, **body})
     assert result.status_code == status, result.text
     assert count(setup, "MSP_SPOT_MASTER") == before
 

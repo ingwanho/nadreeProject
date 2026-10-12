@@ -15,10 +15,10 @@ from app.config import Settings
 from app.db import Database
 from app.fcm import (FcmSender, queue_payment_deadline_expired,
                      queue_payment_deadline_reminder)
-from app.payment_policy import PAYMENT_DEADLINE
+from app.payment_policy import payment_deadline
 
 OPEN_CONTRACTS = ("ON_RENT", "OVERDUE")
-PAYMENT_REMINDERS = ((2, timedelta(days=1)), (1, timedelta(days=2)))
+PAYMENT_REMINDERS = (2, 1)
 
 
 def _utc_now():
@@ -79,12 +79,13 @@ def expire_unpaid_payments(db, settings, at=None, notifier=None):
         for event in history_rows:
             sent_events.setdefault(event["reservation_id"], set()).add(event["event_type"])
             if event["event_type"] == "APPROVED":
-                approval_at.setdefault(event["reservation_id"], event["created_at"])
+                ident = event["reservation_id"]
+                approval_at[ident] = min(approval_at.get(ident, event["created_at"]), event["created_at"])
         for reservation in rows:
             reservation_id = reservation["reservation_id"]
             if reservation_id in linked_reservations:
                 continue
-            approved_at = approval_at.get(reservation_id) or reservation.get("updated_at") or reservation.get("created_at")
+            approved_at = approval_at.get(reservation_id) or reservation.get("created_at")
             if approved_at is None:
                 continue
             payment_rows = session.execute(select(payments).where(
@@ -94,9 +95,11 @@ def expire_unpaid_payments(db, settings, at=None, notifier=None):
             statuses = {payment["payment_status"] for payment in payment_rows}
             if statuses & {"PAID", "PARTIALLY_REFUNDED", "REFUNDED"} or "PENDING" in statuses:
                 continue
-            deadline = approved_at + PAYMENT_DEADLINE
+            deadline = payment_deadline(approved_at, reservation["start_datetime"])
             events = sent_events.setdefault(reservation_id, set())
             if at >= deadline:
+                from app.chat import FirebaseChat
+                FirebaseChat(settings).block_booking(reservation_id)
                 for payment in payment_rows:
                     if payment["payment_status"] == "CREATED":
                         session.execute(update(payments).where(
@@ -116,12 +119,15 @@ def expire_unpaid_payments(db, settings, at=None, notifier=None):
                     previous_assignment_status=reservation["vehicle_assignment_status"], new_assignment_status="RELEASED",
                     reason="Payment deadline exceeded", changed_by="nadree-job", created_at=at))
                 queue_payment_deadline_expired(db, session, reservation["uid_token"], reservation_id)
+                from app.notifications import record_notification
+                record_notification(db, session, reservation["spot_master_id"], "RESERVATION_EXPIRED",
+                                    "RESERVATION", reservation_id, "reservation:" + reservation_id + ":EXPIRED")
                 events.add("EXPIRED")
                 expired += 1
                 continue
-            for days_remaining, offset in PAYMENT_REMINDERS:
+            for days_remaining in PAYMENT_REMINDERS:
                 event_name = "PAYMENT_DEADLINE_" + str(days_remaining) + "_DAY"
-                if at < approved_at + offset or event_name in events:
+                if not timedelta(days=days_remaining - 1) < deadline - at <= timedelta(days=days_remaining) or event_name in events:
                     continue
                 session.execute(history.insert().values(
                     reservation_id=reservation_id, event_type=event_name,

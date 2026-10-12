@@ -24,6 +24,8 @@ def reservation_view(request, r, item):
         return None
     model = item["model"] if item else None
     return dict(reservationId=r["reservation_id"], startDatetime=iso(request, r["start_datetime"]),
+        pickupLocationSnapshot=(r.get("required_criteria_json") or {}).get("pickupLocationSnapshot"),
+        returnLocationSnapshot=(r.get("required_criteria_json") or {}).get("returnLocationSnapshot"),
         endDatetime=iso(request, r["end_datetime"]), requestedModelId=r["model_id"],
         requestedModelName=model["model_name"] if model else None, assignedVehicleId=r["assigned_vehicle_id"],
         assignedVehicleNo=(item["rental"]["plate_number_full"] or item["vehicle"]["plate_number"]) if item else None,
@@ -32,11 +34,12 @@ def reservation_view(request, r, item):
 
 def rental_view(request, c):
     return dict(rentalContractId=c["rental_contract_id"], actualStartTime=iso(request, c["actual_start_time"]),
+        pickupLocationSnapshot=c.get("pickup_location_snapshot"), returnLocationSnapshot=c.get("return_location_snapshot"),
         actualEndTime=iso(request, c["actual_end_time"]), contractStatus=c["contract_status"],
         plannedEndDate=c["planned_end_date"]) if c else None
 
 
-def record_actions(reservation, contract, sensor=False):
+def record_actions(request, reservation, contract, sensor=False):
     if contract:
         if is_open(contract):
             return ["RETURN"] + (["LOCATION"] if sensor else [])
@@ -44,7 +47,7 @@ def record_actions(reservation, contract, sensor=False):
     if reservation["reservation_status"] == "REQUESTED":
         return ["APPROVE", "REJECT"]
     if reservation["reservation_status"] == "APPROVED":
-        return ["RENT_APPROVE", "CANCEL"]
+        return ["RENT_APPROVE"] + (["CANCEL"] if local_date(request, now()) < local_date(request, reservation["start_datetime"]) else [])
     return []
 
 
@@ -227,7 +230,7 @@ def operation_details(request, session, root, records):
             rentalStatus=rec["contract_status"], user=dict(userId=user["uid_token"], name=user["name"], phone=None,
             gender=user["gender"], age=user["age"], nationality=user["nationality"]) if user else {}, reservation=reservation, rental=rental_view(request, c),
             vehicle=vehicle, payment=payment_view, delivery=delivery, latestHistory=history_view,
-            availableActions=record_actions(r, c, len([s for s in sensors if s["vehicle_id"] == vid]) == 1)))
+            availableActions=record_actions(request, r, c, len([s for s in sensors if s["vehicle_id"] == vid]) == 1)))
     return result
 
 
@@ -340,7 +343,7 @@ def calendar(body: Calendar, request: Request, session: Session = DB):
             warning("UNASSIGNED_RESERVATION", None, key)
         add_event(ident, key, "RESERVATION", r["reservation_id"], None, r["start_datetime"], finish, "PLANNED", r["reservation_status"],
             r["vehicle_assignment_status"], r["reservation_status"] == "APPROVED",
-            r["vehicle_assignment_status"] in MOVABLE + ("SOFT_HOLD",), record_actions(r, None), r["updated_at"])
+            r["vehicle_assignment_status"] in MOVABLE + ("SOFT_HOLD",), record_actions(request, r, None), r["updated_at"])
     for c in contracts:
         ident = c["vehicle_id"]
         if ident not in selected or c["contract_status"] == "CANCELED":
@@ -355,7 +358,7 @@ def calendar(body: Calendar, request: Request, session: Session = DB):
         opened = is_open(c) and (finish is None or finish <= at or c["contract_status"] == "OVERDUE")
         add_event(ident, key, "RENTAL", c["reservation_id"], c["rental_contract_id"], c["actual_start_time"], finish,
             "ACTUAL" if actual else "PLANNED" if finish else "UNKNOWN", c["contract_status"], "RELEASED" if actual else "LOCKED", True, False,
-            record_actions(None, c, len(vehicles[ident]["sensors"]) == 1), c["updated_at"], opened=opened)
+            record_actions(request, None, c, len(vehicles[ident]["sensors"]) == 1), c["updated_at"], opened=opened)
     output = []
     for ident in selected:
         item = vehicles[ident]

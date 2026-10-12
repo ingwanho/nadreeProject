@@ -64,7 +64,8 @@ def schema(engine):
     Table("MSP_SPOT_RENT", metadata, Column("spot_master_id", String(36), primary_key=True),
           Column("legacy_spot_code", String(21), unique=True), Column("invite_code", String(64), unique=True),
           Column("delivery_service_type", String(30), default="NONE"), Column("created_at", DateTime), Column("updated_at", DateTime),
-          Column("introduction", String(500)), Column("contact_email", String(200)))
+          Column("introduction", String(500)), Column("contact_email", String(200)),
+          Column("address_detail", String(200)), Column("directions", String(500)))
     Table("MSP_ADMIN_SPOT_SCOPE", metadata, Column("id", Integer, primary_key=True),
           Column("admin_id", String(36), nullable=False), Column("spot_master_id", String(36)),
           Column("spot_id", String(36)), Column("unit_code", String(60)), Column("access_type", String(20), default="manage"),
@@ -124,6 +125,7 @@ def setup(tmp_path, request):
             values = {"spot_master_id": ident, "contract_id": contract, "org_id": "root" if ident == "child" else ident,
                       "spot_id": ident if level == "spot" else None, "unit_code": code, "spot_name": ident,
                       "unit_name": ident, "org_name": "root" if ident == "child" else ident, "hierarchy_level": level,
+                      "address": "Test shop address", "lat": -8.65, "lng": 115.2,
                       "contract_start": date.today() - timedelta(days=365), "contract_end": date.today() + timedelta(days=365)}
             conn.execute(metadata.tables["MSP_SPOT_MASTER"].insert(), values)
             conn.execute(metadata.tables["MSP_SPOT_RENT"].insert(), {"spot_master_id": ident, "invite_code": "invite-" + ident})

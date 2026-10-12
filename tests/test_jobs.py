@@ -84,7 +84,7 @@ def test_payment_deadline_reminders_and_expiry_notify_once(setup):
         conn.execute(reservation.insert().values(
             reservation_id="deadline-r1", uid_token="deadline-user", spot_master_id="root", model_id="job-m1",
             assigned_vehicle_id="deadline-v1", vehicle_assignment_status="PROVISIONAL",
-            start_datetime=approved_at, end_datetime=approved_at + timedelta(days=3),
+            start_datetime=approved_at + timedelta(days=4), end_datetime=approved_at + timedelta(days=7),
             reservation_status="APPROVED", created_at=approved_at, updated_at=approved_at))
         conn.execute(history.insert().values(
             reservation_id="deadline-r1", event_type="APPROVED",

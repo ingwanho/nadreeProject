@@ -218,7 +218,7 @@ def active_spot(request, session, actor, representative=False, lock=False):
 
 
 def in_subtree(root, candidate, include_root=True):
-    same_contract = candidate["contract_id"] == root["contract_id"]
+    same_contract = candidate["contract_id"] == root["contract_id"] and candidate["org_id"] == root["org_id"]
     return same_contract and ((include_root and candidate["spot_master_id"] == root["spot_master_id"]) or
                              candidate["unit_code"].startswith(root["unit_code"] + "-"))
 

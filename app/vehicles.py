@@ -100,7 +100,8 @@ def create_vehicle(body: VehicleCreate, request: Request, session: Session = DB)
         qr = dict(vehicle_id=ident, qr_id=str(uuid.uuid4()), qr_code_hash=digest, qr_status="ACTIVE", issued_at=at, created_at=at, updated_at=at)
         session.execute(db.table("MSP_VEHICLE_QR").insert().values(**qr))
         qr_history(request, session, qr, actor.admin["admin_id"], "ISSUED")
-    return dict(status="success", vehicleId=ident, iot={"sensorId": body.sensorId, "sensorStatus": "LINKED"} if sensor else {},
+    return dict(status="success", vehicleId=ident, qr={"qrId": qr["qr_id"], "qrStatus": "ACTIVE"},
+                iot={"sensorId": body.sensorId, "sensorStatus": "LINKED" if sensor else "NOT_LINKED"},
                 brand=model["brand"], vehicleName=model["model_name"])
 
 

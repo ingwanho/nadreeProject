@@ -60,12 +60,18 @@ class AdminId(Body):
 
 
 class Shop(Body):
+    spotMasterId: Identifier | None = None
     shopName: Text100 | None = None
     location: Annotated[str, Field(max_length=500)] | None = None
     introduction: Annotated[str, Field(max_length=500)] | None = None
     contact: Annotated[str, Field(max_length=20)] | None = None
     email: Annotated[str, Field(max_length=200)] | None = None
     deliveryServiceType: Literal["NONE", "START_ONLY", "START_AND_RETURN"] | None = None
+    lat: float | None = Field(default=None, ge=-90, le=90, allow_inf_nan=False)
+    lng: float | None = Field(default=None, ge=-180, le=180, allow_inf_nan=False)
+    addressDetail: Annotated[str, Field(max_length=200)] | None = None
+    zipCode: Annotated[str, Field(max_length=10)] | None = None
+    directions: Annotated[str, Field(max_length=500)] | None = None
 
 
 class RequestAction(Email):
@@ -77,6 +83,7 @@ class SpotCreate(Body):
     spot_name: Text100
     unit_type: Literal["org", "region", "local", "spot", "team", "agency"]
     parent_spot_id: Identifier
+    email: EmailStr | None = Field(default=None, max_length=200)
     phone: Annotated[str, Field(max_length=20)] | None = None
     biz_reg_num: Annotated[str, Field(max_length=30)] | None = None
     address: Annotated[str, Field(max_length=500)] | None = None

@@ -144,13 +144,19 @@ def compute_assignment(request, session, spot, vehicles, contracts, *, candidate
 
 
 def reservation_history(request, session, previous, values, event, actor_id, reason=None):
+    from app.notifications import record_notification
     new = {**previous, **values}
+    from app.chat import queue_booking_chat
+    queue_booking_chat(request, session, new["reservation_id"], new["reservation_status"])
     h = request.app.state.db.table("MSP_RESERVATION_HISTORY")
     session.execute(h.insert().values(reservation_id=previous["reservation_id"], event_type=event,
         previous_reservation_status=previous["reservation_status"], new_reservation_status=new["reservation_status"],
         previous_vehicle_id=previous["assigned_vehicle_id"], new_vehicle_id=new["assigned_vehicle_id"],
         previous_assignment_status=previous["vehicle_assignment_status"], new_assignment_status=new["vehicle_assignment_status"],
         reason=reason, changed_by=actor_id, created_at=now()))
+    if event in ("REQUESTED", "APPROVED", "REJECTED", "CANCELLED", "EXPIRED", "HANDED_OVER"):
+        record_notification(request.app.state.db, session, new["spot_master_id"], "RESERVATION_" + event,
+            "RESERVATION", new["reservation_id"], "reservation:" + new["reservation_id"] + ":" + event)
 
 
 def apply_assignments(request, session, assignments, reservations, actor_id, *, skip=None):

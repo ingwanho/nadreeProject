@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 from app.db import transaction
 from app.errors import Problem
 from app.headers import bearer
-from app.rental_common import by_number, context, fleet, resolve_spot, rows
+from app.rental_common import by_number, context, editable_spot, fleet, resolve_spot, rows
 from app.rental_inputs import PriceChange, TierCreate, TierRange
 from app.responses import Status
 from app.security import now
@@ -55,8 +55,8 @@ def change_price(body: PriceChange, request: Request, session: Session = DB):
 
 @router.post("/nadreego/shop/tierCreate")
 def create_tier(body: TierCreate, request: Request, session: Session = DB):
-    _, root = context(request, session, write=True, representative=True)
-    spot = resolve_spot(request, session, root, body.spotCode, lock=True)
+    actor, root = context(request, session, write=True)
+    spot = editable_spot(request, session, actor, root, body.spotCode)
     t = request.app.state.db.table("MSP_RENTAL_TIER")
     tiers = load_tiers(request, session, spot["spot_master_id"])
     bases = [r for r in tiers if r["tier_type"] == "BASE" and r["min_cc"] <= body.minCc <= body.maxCc <= r["max_cc"]]
@@ -87,7 +87,7 @@ def list_tiers(request: Request, spotCode: str | None = Query(None, min_length=1
 
 @router.post("/nadreego/shop/tierDelete")
 def delete_tier(body: TierRange, request: Request, session: Session = DB):
-    _, root = context(request, session, write=True, representative=True)
+    _, root = context(request, session, write=True)
     t = request.app.state.db.table("MSP_RENTAL_TIER")
     condition = (t.c.spot_master_id == root["spot_master_id"]) & (t.c.tier_type == "BASIC") & (t.c.min_cc == body.minCc) & (t.c.max_cc == body.maxCc)
     found = session.execute(select(t).where(condition)).all()

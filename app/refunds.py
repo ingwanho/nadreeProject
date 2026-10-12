@@ -7,9 +7,9 @@ from app.payment_policy import refund_target
 from app.security import now
 
 
-def prepare_booking_refund(request, session, reservation, reason, *, admin_id=None, customer=False):
+def prepare_booking_refund(request, session, reservation, reason, *, admin_id=None, customer=False, rental_day=False):
     table = request.app.state.db.table("MSP_RENTAL_PAYMENT")
-    if "refund_requested_amount" not in table.c:
+    if not {"refund_requested_amount", "cancellation_requested_by_type", "cancellation_requested_by_id", "refund_percentage"}.issubset(table.c.keys()):
         raise Problem(503, "REFUND_POLICY_SCHEMA_UPDATE_REQUIRED")
     payments = session.execute(select(table).where(
         table.c.reservation_id == reservation["reservation_id"],
@@ -24,14 +24,17 @@ def prepare_booking_refund(request, session, reservation, reason, *, admin_id=No
         raise Problem(409, "PAYMENT_STATE_INCONSISTENT")
     payment = captured[0] if captured else None
     at = now()
+    audit = {"cancellation_requested_by_type": "CUSTOMER" if customer else "ADMIN",
+             "cancellation_requested_by_id": reservation["uid_token"] if customer else admin_id,
+             "refund_percentage": (0 if rental_day else 90) if customer else 100}
     result = (None, "NOT_REQUIRED", False, Decimal("0.00"), "NO_COMPLETED_PAYMENT")
     if payment:
         status = payment["payment_status"]
         if (payment["payment_provider"] != "PAYPAL" or not payment["paypal_capture_id"] or
                 status not in ("PAID", "PARTIALLY_REFUNDED", "REFUNDED", "PENDING")):
             raise Problem(409, "PAYMENT_STATE_INCONSISTENT")
-        target = refund_target(payment["total_price"], customer=customer)
-        policy = "CUSTOMER_REFUND_90_PERCENT" if customer else "ADMIN_REFUND_100_PERCENT"
+        target = refund_target(payment["total_price"], customer=customer, rental_day=rental_day)
+        policy = ("CUSTOMER_REFUND_0_PERCENT" if rental_day else "CUSTOMER_REFUND_90_PERCENT") if customer else "ADMIN_REFUND_100_PERCENT"
         refund_status = payment.get("refund_status", "NONE")
         stored_target = payment.get("refund_requested_amount")
         if refund_status in ("REQUESTED", "PENDING"):
@@ -39,15 +42,16 @@ def prepare_booking_refund(request, session, reservation, reason, *, admin_id=No
             if stored_target != target:
                 raise Problem(409, "REFUND_ALREADY_IN_PROGRESS")
         else:
-            refund_status = "COMPLETED" if payment["refunded_amount"] >= target else "REQUESTED"
+            refund_status = "NOT_REQUIRED" if target == 0 else "COMPLETED" if payment["refunded_amount"] >= target else "REQUESTED"
             session.execute(update(table).where(table.c.payment_id == payment["payment_id"]).values(
                 refund_status=refund_status, refund_requested_amount=target,
                 refund_requested_at=at, refund_requested_by_admin_id=admin_id,
-                refund_reason=reason, updated_at=at))
+                refund_reason=reason, updated_at=at, **audit))
         result = (payment["payment_id"], refund_status,
                   refund_status == "REQUESTED" and status in ("PAID", "PARTIALLY_REFUNDED"),
                   target, policy)
     for attempt in payments:
+        session.execute(update(table).where(table.c.payment_id == attempt["payment_id"]).values(**audit))
         if payment and attempt["payment_id"] == payment["payment_id"]:
             continue
         if attempt["payment_status"] in ("CREATED", "PENDING"):

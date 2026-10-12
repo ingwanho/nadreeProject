@@ -4,7 +4,7 @@ from pathlib import Path
 from sqlalchemy import Column, VARCHAR, inspect, select, text
 from sqlalchemy.dialects import mysql
 from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.schema import CreateColumn
+from sqlalchemy.schema import CreateColumn, CreateIndex, CreateTable
 
 from app.config import Settings
 from app.db import Database
@@ -34,11 +34,33 @@ def migration_plan(db):
     inspector = inspect(db.engine)
     tables = set(inspector.get_table_names())
     planned_tables = {"MSP_SPOT_RENT": "001_spot_rent.sql", "MSP_RENTAL_ADMIN_REQUEST": "002_rental_admin_request.sql"}
-    spot_profile = {"introduction": 500, "contact_email": 200}
+    spot_profile = {"introduction": 500, "contact_email": 200, "address_detail": 200, "directions": 500}
     missing_tables = set(REQUIRED) - set(planned_tables) - tables
     if missing_tables:
         raise ValueError("Existing service tables missing: " + ", ".join(sorted(missing_tables)))
     operations = []
+    from app.rental_schema import metadata as rental_metadata
+    if "MSP_RENTAL_NOTIFICATION" not in tables:
+        table = rental_metadata.tables["MSP_RENTAL_NOTIFICATION"]
+        operations.append(("create MSP_RENTAL_NOTIFICATION", str(CreateTable(table).compile(dialect=mysql.dialect())), {}))
+        for index in table.indexes:
+            operations.append(("index " + index.name, str(CreateIndex(index).compile(dialect=mysql.dialect())), {}))
+    else:
+        table = rental_metadata.tables["MSP_RENTAL_NOTIFICATION"]
+        columns = {row["name"] for row in inspector.get_columns(table.name)}
+        if set(table.c.keys()) - columns:
+            raise ValueError("MSP_RENTAL_NOTIFICATION has a legacy definition; manual migration required")
+        unique = {tuple(item["column_names"]) for item in inspector.get_unique_constraints(table.name)}
+        indexes = inspector.get_indexes(table.name)
+        unique.update(tuple(item["column_names"]) for item in indexes if item["unique"])
+        if ("event_key",) not in unique:
+            raise ValueError("MSP_RENTAL_NOTIFICATION missing event_key uniqueness; manual review required")
+        for index in table.indexes:
+            expected = tuple(column.name for column in index.columns)
+            if any(item["name"] == index.name and tuple(item["column_names"]) != expected for item in indexes):
+                raise ValueError(index.name + " has an incompatible definition")
+            if not any(tuple(item["column_names"]) == expected for item in indexes):
+                operations.append(("index " + index.name, str(CreateIndex(index).compile(dialect=mysql.dialect())), {}))
     for name, required in REQUIRED.items():
         if name in planned_tables and name not in tables:
             sql = (Path(__file__).resolve().parent.parent / "migrations" / planned_tables[name]).read_text()
@@ -74,10 +96,10 @@ def migration_plan(db):
                         "ALTER TABLE MSP_ADMIN MODIFY COLUMN " + str(definition.compile(dialect=mysql.dialect())), {}))
         if name == "MSP_SPOT_RENT":
             for column, length in spot_profile.items():
-                if column in missing:
+                if column not in columns:
                     operations.append(("add MSP_SPOT_RENT." + column,
                         f"ALTER TABLE MSP_SPOT_RENT ADD COLUMN {column} VARCHAR({length}) DEFAULT NULL", {}))
-                    missing.remove(column)
+                    missing.discard(column)
                 elif not isinstance(columns[column]["type"], VARCHAR) or (columns[column]["type"].length or 0) < length:
                     raise ValueError("MSP_SPOT_RENT." + column + " has an incompatible type/length; manual review required")
         if missing:
@@ -96,6 +118,9 @@ def migration_plan(db):
             ("refund_requested_by_admin_id", "VARCHAR(36) DEFAULT NULL"),
             ("refund_reason", "VARCHAR(200) DEFAULT NULL"),
             ("refund_requested_amount", "DECIMAL(18,2) DEFAULT NULL"),
+            ("cancellation_requested_by_type", "VARCHAR(20) DEFAULT NULL"),
+            ("cancellation_requested_by_id", "VARCHAR(36) DEFAULT NULL"),
+            ("refund_percentage", "INT DEFAULT NULL"),
         ]
         for column, definition in payment_columns:
             if column not in columns:
@@ -110,6 +135,12 @@ def migration_plan(db):
             operations.append(("constraint MSP_RENTAL_PAYMENT.refund_status",
                 "ALTER TABLE MSP_RENTAL_PAYMENT ADD CONSTRAINT ck_refund_status CHECK "
                 "(refund_status IN ('NONE','NOT_REQUIRED','REQUESTED','PENDING','COMPLETED','FAILED'))", {}))
+    if "MSP_RENTAL_CONTRACT" in tables:
+        columns = {row["name"] for row in inspector.get_columns("MSP_RENTAL_CONTRACT")}
+        for column in ("pickup_location_snapshot", "return_location_snapshot"):
+            if column not in columns:
+                operations.append(("add MSP_RENTAL_CONTRACT." + column,
+                    "ALTER TABLE MSP_RENTAL_CONTRACT ADD COLUMN " + column + " JSON DEFAULT NULL", {}))
     if "MSP_PAYPAL_WEBHOOK_EVENT" in tables:
         webhook_unique = {tuple(item["column_names"]) for item in inspector.get_unique_constraints("MSP_PAYPAL_WEBHOOK_EVENT")}
         webhook_unique.update(tuple(item["column_names"]) for item in inspector.get_indexes("MSP_PAYPAL_WEBHOOK_EVENT") if item["unique"])

@@ -1,6 +1,7 @@
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 import hashlib
 import hmac
+import pytest
 
 from sqlalchemy import Column, DateTime, Integer, MetaData, String, Table
 from sqlalchemy.orm import Session
@@ -86,15 +87,29 @@ def prepare_rental_schema(setup):
         "MSP_VEHICLE_SPOT_HISTORY", "MSP_SENSOR")}
 
 
-def test_nadri_reservation_payment_checkout_and_return(setup, signin):
+@pytest.mark.parametrize("chat_enabled", [False, True])
+def test_nadri_reservation_payment_checkout_and_return(setup, signin, monkeypatch, chat_enabled):
     tables = prepare_rental_schema(setup)
     settings = setup["settings"]
+    chat_events = []
+    if chat_enabled:
+        class ChatBridge:
+            def revoke(self, uid):
+                chat_events.append(("revoke", uid))
+
+            def block_booking(self, ident):
+                chat_events.append(("block", ident))
+
+            def sync_booking(self, db, ident):
+                chat_events.append(("sync", ident))
+        settings.fcm_chat_enabled = True
+        setup["app"].state.chat = ChatBridge()
     fcm = RecordingFcm()
     setup["app"].state.fcm = fcm
     settings.qr_hash_key = SecretStr("isolated-qr-signing-key-with-at-least-32-bytes")
     setup["app"].state.paypal = FakePayPal()
     at = date.today()
-    start = at
+    start = at + timedelta(days=1)
     end = start + timedelta(days=3)
     raw_qr = "qr-rental-flow"
     qr_hash = hmac.new(settings.qr_hash_key.get_secret_value().encode(), raw_qr.encode(), hashlib.sha256).hexdigest()
@@ -179,6 +194,8 @@ def test_nadri_reservation_payment_checkout_and_return(setup, signin):
     assert recovered.json()["shopId"] == "root"
     assert recovered.json()["refundStatus"] == "NONE"
     assert recovered.json()["refundedAmount"] == 0
+    handover_time = datetime.combine(start, datetime.min.time())
+    monkeypatch.setattr("app.rentals.now", lambda: handover_time)
     blocked = client.post("/nadreego/rent/approve", headers=admin_headers,
                           json={"bookedNo": "BO" + reservation_id, "qrCode": raw_qr})
     assert blocked.status_code == 409 and blocked.json()["errorCode"] == "PAYMENT_REQUIRED"
@@ -213,6 +230,9 @@ def test_nadri_reservation_payment_checkout_and_return(setup, signin):
     assert completed_item["price"]["totalTo"] == price
     assert completed_item["price"]["rentalDays"] == (end - start).days
     assert completed_item["delivery"]["startDeliveryFee"] == 0
+    if chat_enabled:
+        assert ("block", reservation_id) in chat_events
+        assert chat_events[-1] == ("sync", reservation_id)
 
 
 def test_calendar_pages_vehicle_details_before_loading_events(setup, signin):

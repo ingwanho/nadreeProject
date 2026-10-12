@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 from app.db import transaction
 from app.errors import Problem
 from app.headers import bearer
-from app.rental_common import context, resolve_spot
+from app.rental_common import context, editable_spot, resolve_spot
 from app.rental_inputs import Delivery, DeliveryDelete
 from app.security import now
 
@@ -15,8 +15,8 @@ DB = Depends(transaction, scope="function")
 
 @router.post("/nadreego/shop/delivery")
 def save_delivery(body: Delivery, request: Request, session: Session = DB):
-    _, root = context(request, session, write=True, representative=True)
-    spot = resolve_spot(request, session, root, body.spotCode, lock=True)
+    actor, root = context(request, session, write=True)
+    spot = editable_spot(request, session, actor, root, body.spotCode)
     db = request.app.state.db
     region, t = db.table("MSP_DELIVERY_REGION"), db.table("MSP_SPOT_DELIVERY_REGION")
     if not session.scalar(select(region.c.delivery_region_id).where(region.c.delivery_region_id == body.deliveryRegionId, region.c.is_active == 1)):
@@ -71,12 +71,12 @@ def list_delivery(request: Request, spotCode: str = Query(..., min_length=1, max
 
 @router.post("/nadreego/shop/deliveryDelete")
 def delete_delivery(body: DeliveryDelete, request: Request, session: Session = DB):
-    _, root = context(request, session, write=True, representative=True)
+    actor, root = context(request, session, write=True)
     t = request.app.state.db.table("MSP_SPOT_DELIVERY_REGION")
     row = session.execute(select(t).where(t.c.spot_delivery_region_id == body.spotDeliveryRegionId)).mappings().first()
     if not row:
         raise Problem(404, "DELIVERY_SETTING_NOT_FOUND")
-    resolve_spot(request, session, root, row["spot_master_id"], lock=True)
+    editable_spot(request, session, actor, root, row["spot_master_id"])
     session.execute(update(t).where(t.c.spot_delivery_region_id == body.spotDeliveryRegionId)
         .values(is_delivery_enabled=False, updated_at=now()))
     return {"status": True}
