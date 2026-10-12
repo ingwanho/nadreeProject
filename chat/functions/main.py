@@ -8,7 +8,7 @@ from firebase_functions import https_fn, scheduler_fn, options
 from chat_core import ChatError, ChatStore
 
 firebase_admin.initialize_app()
-REGION = "asia-northeast3"
+REGION = "asia-southeast2"
 APP_CHECK = os.environ.get("CHAT_ENFORCE_APP_CHECK", "true").lower() == "true"
 options.set_global_options(max_instances=10, timeout_sec=60)
 

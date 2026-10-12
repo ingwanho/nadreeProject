@@ -163,7 +163,7 @@ def test_admin_session_api_uses_only_direct_memberships(client, setup, signin):
     setup["app"].state.chat = Bridge()
     response = client.post("/nadreego/chat/session", headers=signin())
     assert response.status_code == 200, response.text
-    assert response.json()["region"] == "asia-northeast3"
+    assert response.json()["region"] == "asia-southeast2"
     assert client.post("/nadreego/chat/session").status_code == 401
 
 

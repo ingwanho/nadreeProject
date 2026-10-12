@@ -6,7 +6,7 @@
 
 - 로컬 코드와 문서는 작성되었지만 이 변경분의 운영 DB 마이그레이션·Firebase 배포·서버 배포는 완료로 확인되지 않았다.
 - 로컬 Python 테스트 213개 통과, 9개 건너뜀. 건너뛴 Firestore 3개는 별도 에뮬레이터 실행에서 통과했고, Rules 테스트 4개도 통과했다. MySQL 테스트 6개는 미실행이다. 서버 재검증에서는 실제 결과를 새로 기록한다.
-- 신규 채팅은 기존 FCM/Auth Firebase 프로젝트를 사용한다. 함수 리전은 **한국 서울 `asia-northeast3`**다. 차량 위치 프로젝트는 사용하지 않는다.
+- 신규 채팅은 기존 FCM/Auth Firebase 프로젝트를 사용한다. 함수 리전은 **인도네시아 자카르타 `asia-southeast2`**다. 차량 위치 프로젝트는 사용하지 않는다.
 - 신규 코드는 기본 `NADREE_FCM_CHAT_ENABLED=false`다. 배포와 설정 확인 전 활성화하지 않는다.
 - 이 작업은 단순 문서 확인만 남은 상태가 아니다. 아래의 남은 개발 항목은 배포나 테스트 실행으로 자동 해결되지 않는다.
 
@@ -39,7 +39,7 @@
 | --- | --- |
 | 관리자 취소 | 인계 전 APPROVED 예약, 시작일 전만 가능, 100% 환불. 시작일 당일부터 취소 불가 |
 | 고객 취소 | 인계 전 REQUESTED/APPROVED 예약. 시작일 전 90%, 시작일 당일부터 0% 환불 |
-| 당일 판단 | 기본 Asia/Makassar의 시작일 00:00. 서울 함수 리전과 업무 시간대는 별개 |
+| 당일 판단 | 기본 Asia/Makassar의 시작일 00:00. 자카르타 함수 리전과 업무 시간대는 별개 |
 | 감사 정보 | 기존 결제 행에 취소 요청자 유형·ID·환불률 저장. 클라이언트가 비율을 지정하지 않음 |
 | 결제 기한 | 최초 승인+72시간과 렌탈 시작 시각 중 빠른 시각 |
 | 지점가입코드 | 해당 지점 대표관리자로 즉시 가입. 일회용이며 상위지점 권한 없음 |
@@ -158,7 +158,9 @@ npm run test:transactions
 
 실행 계정이 chat 폴더와 백엔드 `.venv`를 사용할 수 있어야 한다. 마지막 테스트는 `../.venv/bin/python`을 사용한다. 프로젝트는 `demo-nadree-chat`로 고정되어 있다. 실제 Firebase 프로젝트 ID로 바꾸지 않는다. 포트 8080 충돌은 기존 서비스를 종료하지 말고 별도 검증 장비로 옮긴다.
 
-## 5 Firebase 서울 리전 배포
+## 5 Firebase 자카르타 리전 배포
+
+기존 Firestore 위치에 맞춰 함수·API 응답·앱 호출 리전을 `asia-southeast2`로 통일한다. 업무 시간대 `Asia/Makassar`는 변경하지 않는다. 이전 서울 리전에 이미 배포한 이력이 있으면 이번 코드 변경만으로 기존 함수가 제거되는 것으로 간주하지 않는다. 기존 함수·만료 스케줄 목록을 확인하고 앱 전환 및 중복 스케줄 방지 계획을 세운 뒤 별도 승인으로 정리한다. 기존 함수 삭제 프롬프트를 자동 승인하지 않는다.
 
 Firebase CLI를 사용할 승인된 배포 계정/장비에서 실행한다. EC2에 사람의 Firebase 로그인 자격증명을 저장할 필요는 없다. 프로젝트 선택은 항상 명시한다. 실제 프로젝트 ID를 확인하고 아래 변수에 입력한다.
 
@@ -175,7 +177,7 @@ firebase functions:list --project "$NADREE_FCM_DEPLOY_PROJECT"
 - 현재 운영 Rules·인덱스와 `chat/firestore.rules`, `chat/firestore.indexes.json`을 비교하여 병합한다. 기존 업무 규칙이나 인덱스를 누락하지 않는다.
 - 전체 허용 catch-all 규칙이 있으면 채팅까지 허용하지 않도록 좁힌다. Firestore의 허용 규칙은 OR로 작동하므로 별도 deny로 기존 allow를 덮어쓸 수 없다.
 - `chat/firebase.json`의 함수 codebase는 nadree-chat, 소스는 functions, 런타임은 python312다.
-- 다섯 callable과 만료 함수의 리전은 소스에서 asia-northeast3로 고정되어 있다.
+- 다섯 callable과 만료 함수의 리전은 소스에서 asia-southeast2로 고정되어 있다.
 - App Check는 기본 강제다. 실제 앱을 등록하고 토큰 발급을 확인한다. 운영에서 테스트 편의를 위해 무조건 해제하지 않는다.
 
 chat 폴더 안에서 Functions용 가상환경을 준비한다. 아래 명령은 Python 3.12가 설치된 배포 장비에서 수행한다.
@@ -193,7 +195,7 @@ firebase deploy --project "$NADREE_FCM_DEPLOY_PROJECT" --only functions:nadree-c
 firebase functions:list --project "$NADREE_FCM_DEPLOY_PROJECT"
 ```
 
-완료 조건: 아래 6개가 서울 리전에 배포되고 필요한 인덱스가 준비됨. 만료 스케줄은 15분 간격이며 관리자 callable이 아니다.
+완료 조건: 아래 6개가 자카르타 리전에 배포되고 필요한 인덱스가 준비됨. 만료 스케줄은 15분 간격이며 관리자 callable이 아니다.
 
 | 함수 | 용도 |
 | --- | --- |
@@ -290,7 +292,7 @@ OpenAPI 경로 존재와 health 응답은 실제 채팅 성공을 증명하지 �
 | --- | --- |
 | 관리자 POST /nadreego/chat/session | 관리자 Bearer만, 본문 없음. 직접 소속 shops·custom token·region 반환 |
 | 고객 POST /api/v1/nadree/user/chat/session | 고객 Bearer와 현재 X-Refresh-Token 필요. managerId=null |
-| Firebase 로그인 | custom token을 signInWithCustomToken으로 교환 후 서울 리전 callable 성공 |
+| Firebase 로그인 | custom token을 signInWithCustomToken으로 교환 후 자카르타 리전 callable 성공 |
 | 권한 | 고객 본인과 직접 지점 직원만 조회, 일반관리자 답변 거절, 대표 답변 성공, 상위 대표의 미소속 하위지점 거절 |
 | 문의 | 같은 고객·지점 열린 방 재사용, 다른 상품은 같은 방의 최근 상품만 변경 |
 | 예약 전환 | 첫 예약에서 유효 문의의 roomId/메시지/읽음 유지. 두 번째 예약은 별도 방 |
@@ -337,7 +339,7 @@ Firestore Rules / 동시성 테스트:
 실제 Auth / App Check / FCM / PayPal Sandbox 결과:
 권한 회수와 종료 경합 결과:
 남은 구현과 미검증 항목:
-프론트 전달 프로젝트 ID / 서울 리전 / API 주소:
+프론트 전달 프로젝트 ID / 자카르타 리전 / API 주소:
 전체 출시 가능 여부와 근거:
 ```
 

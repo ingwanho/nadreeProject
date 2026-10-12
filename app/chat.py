@@ -35,7 +35,7 @@ class ChatSession(BaseModel):
     firebaseUid: str
     managerId: str | None
     shops: list[ChatShop]
-    region: str = "asia-northeast3"
+    region: str = "asia-southeast2"
 
 
 class FirebaseChat:
@@ -102,7 +102,7 @@ class FirebaseChat:
             token = auth.create_custom_token(uid, {"chatSessionId": sid}, app=app)
             return {"firebaseCustomToken": token.decode() if isinstance(token, bytes) else token,
                     "firebaseUid": uid, "managerId": subject if kind == "admin" else None,
-                    "shops": shops, "region": "asia-northeast3"}
+                    "shops": shops, "region": "asia-southeast2"}
         except Problem:
             raise
         except Exception as error:

@@ -5,7 +5,7 @@
 ## 프로젝트·리전
 
 - 기존 고객 Authentication·FCM 프로젝트를 사용한다. 실제 ID는 운영 `NADREE_FCM_PROJECT_ID`에서 확인하여 앱에 전달한다. 서비스 계정 비밀키는 앱/문서에 넣지 않는다.
-- Functions 리전은 사용자 지정 **한국 서울 `asia-northeast3`**. 앱 Functions 인스턴스에도 같은 값을 지정한다.
+- Functions 리전은 사용자 지정 **인도네시아 자카르타 `asia-southeast2`**. 앱 Functions 인스턴스에도 같은 값을 지정한다.
 - 위치 추적 `NADREE_FIRESTORE_PROJECT` / `NADREE_LOCATION_FIREBASE_*`는 사용하지 않는다.
 - Firestore `(default)` 데이터베이스를 사용한다. 함수 리전 설정은 이미 존재하는 Firestore의 위치를 변경하지 않는다.
 - App Check는 기본 강제다. 출시 앱의 App Check 등록을 완료하고 개발은 에뮬레이터를 사용한다.
@@ -27,7 +27,7 @@ Authorization: Bearer <관리자 access token>
   "firebaseUid": "nadree-admin-<관리자 ID SHA256>",
   "managerId": "<영구 관리자 ID>",
   "shops": [{"shopId": "<spotMasterId>", "spotCode": "<unit_code>"}],
-  "region": "asia-northeast3"
+  "region": "asia-southeast2"
 }
 ```
 
@@ -115,7 +115,7 @@ BOOKING_CHAT_SYNC_PENDING이면 예약을 다시 만들지 말고 같은 booking
 firebase deploy --project YOUR_FCM_PROJECT_ID --only functions:nadree-chat,firestore:rules,firestore:indexes
 ```
 
-5. 서울 리전에 다섯 callable과 expireInactiveInquiries가 배포되었는지 확인한다. 만료 스케줄은 15분 간격이다. 앱 App Check를 등록한다.
+5. 자카르타 리전에 다섯 callable과 expireInactiveInquiries가 배포되었는지 확인한다. 만료 스케줄은 15분 간격이다. 앱 App Check를 등록한다.
 6. 백엔드 의존성/이전 DB 마이그레이션 적용 후 `NADREE_FCM_CHAT_ENABLED=true`로 설정하고 API 재시작. 기존 NADREE_FCM_* 계정에 Firestore 읽기/쓰기·Firebase Auth 사용자/토큰 발급 권한이 필요하다. 별도 위치 계정이나 새 프로젝트 자격증명은 필요 없다.
 7. 백엔드 폴더에서 아래 동기화를 실행한다. 업무 데이터의 Firestore 복제 및 알림함 쓰기가 발생한다.
 
@@ -124,7 +124,7 @@ firebase deploy --project YOUR_FCM_PROJECT_ID --only functions:nadree-chat,fires
 ```
 
 8. 매분 단일 cron/systemd 실행 주체로 등록하고 실패 로그·실행시간을 감시한다. 현재는 예약/카탈로그 전량 재확인 방식이다. 한 주기보다 오래 걸리는 규모에서는 중복 실행하지 말고 증분 처리로 보완한다.
-9. 프론트에 실제 프로젝트 ID, 서울 리전, 이 문서, 배포된 OpenAPI를 전달한다. 컬렉션/문서는 콘솔에서 미리 만들 필요 없이 최초 서버 쓰기에서 생성된다.
+9. 프론트에 실제 프로젝트 ID, 자카르타 리전, 이 문서, 배포된 OpenAPI를 전달한다. 컬렉션/문서는 콘솔에서 미리 만들 필요 없이 최초 서버 쓰기에서 생성된다.
 
 채팅을 중단할 때는 환경변수만 false로 바꾸지 않는다. 먼저 채팅 접근 Rules/Functions를 차단하고 활성 chatUsers를 무효화한 뒤 동기화·API 연결을 끈다. 이미 발급된 Firebase 세션이 환경변수 변경만으로 자동 폐기되지는 않는다.
 
