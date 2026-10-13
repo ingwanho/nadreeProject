@@ -98,6 +98,34 @@ def test_inconsistent_multiple_primaries_reject_transfer(client, signin, setup):
     assert result.json()["errorCode"] == "PRIMARY_ADMIN_INCONSISTENT"
 
 
+@pytest.mark.parametrize("path,expected", [
+    ("/nadreego/admin/roleChange", ["primary", "general"]),
+    ("/nadreego/shop/adminDelete", ["general"]),
+])
+def test_admin_change_revokes_chat_before_committing_roles(client, signin, setup, monkeypatch, path, expected):
+    headers = signin()
+    calls = []
+    monkeypatch.setattr("app.chat.revoke_admin_chat", lambda request, admin_id: calls.append(admin_id))
+    assert client.post(path, headers=headers, json={"adminId": "general"}).status_code == 200
+    assert calls == expected
+
+
+@pytest.mark.parametrize("path", ["/nadreego/admin/roleChange", "/nadreego/shop/adminDelete"])
+def test_chat_revocation_failure_rolls_back_role_changes(client, signin, setup, monkeypatch, path):
+    from app.errors import Problem
+    headers = signin()
+    table = setup["db"].table("MSP_ADMIN_ROLE")
+    with setup["engine"].connect() as conn:
+        before = set(conn.execute(select(table.c.admin_id, table.c.role_code)).all())
+    def fail(request, admin_id):
+        raise Problem(503, "CHAT_SYNC_FAILED")
+    monkeypatch.setattr("app.chat.revoke_admin_chat", fail)
+    response = client.post(path, headers=headers, json={"adminId": "general"})
+    assert response.status_code == 503
+    with setup["engine"].connect() as conn:
+        assert set(conn.execute(select(table.c.admin_id, table.c.role_code)).all()) == before
+
+
 def test_admin_removal_preserves_shared_identity_and_web_role(client, signin, setup):
     headers, removed = signin(), signin("general", fcmToken="removed-device")
     mapping = setup["db"].table("MSP_ADMIN_ROLE")

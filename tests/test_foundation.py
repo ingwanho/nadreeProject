@@ -71,7 +71,14 @@ def test_openapi_has_exact_work_group_routes(client):
     assert redoc.status_code == 200 and "redoc" in redoc.text.lower()
     openapi = client.get("/openapi.json").json()
     paths = openapi["paths"]
-    assert len([path for path in paths if not path.startswith("/health/")]) == 61
+    assert len([path for path in paths if not path.startswith("/health/")]) == 63
+    assert "/nadreego/sensor/qr/resolve" not in paths
+    qr_request = paths["/nadreego/vehicle/qr/validate"]["post"]["requestBody"]["content"]["application/json"]
+    assert qr_request["example"] == {"qrCode": "testQr123123"}
+    assert "post" in paths["/nadreego/booking/location-correction"]
+    assert "get" in paths["/nadreego/booking/{booked_no}/location-corrections"]
+    correction = paths["/nadreego/booking/location-correction"]["post"]["requestBody"]["content"]["application/json"]
+    assert correction["example"]["changeType"] == "CORRECTION"
     assert "/nadreego/admin/signup" in paths
     assert "/api/v1/nadree/rental/request/cancel" in paths
     for path in ("/api/v1/nadree/user/login", "/api/v1/nadree/user/profile", "/api/v1/nadree/user/account", "/api/v1/nadree/rental/availability",

@@ -17,9 +17,9 @@ def prepare_booking_refund(request, session, reservation, reason, *, admin_id=No
         .order_by(table.c.payment_id).with_for_update()).mappings().all()
     if customer and any(p["payment_status"] == "PENDING" for p in payments):
         raise Problem(409, "PAYMENT_IN_PROGRESS")
-    captured = [p for p in payments if p["paid_at"] is not None or
+    captured = [p for p in payments if p.get("refund_reason") not in ("LATE_CAPTURE", "DUPLICATE_CAPTURE") and (p["paid_at"] is not None or
                 p["payment_status"] in ("PAID", "PARTIALLY_REFUNDED", "REFUNDED") or
-                (p["payment_status"] == "PENDING" and p["paypal_capture_id"])]
+                (p["payment_status"] == "PENDING" and p["paypal_capture_id"]))]
     if len(captured) > 1:
         raise Problem(409, "PAYMENT_STATE_INCONSISTENT")
     payment = captured[0] if captured else None
@@ -51,6 +51,8 @@ def prepare_booking_refund(request, session, reservation, reason, *, admin_id=No
                   refund_status == "REQUESTED" and status in ("PAID", "PARTIALLY_REFUNDED"),
                   target, policy)
     for attempt in payments:
+        if attempt.get("refund_reason") in ("LATE_CAPTURE", "DUPLICATE_CAPTURE"):
+            continue
         session.execute(update(table).where(table.c.payment_id == attempt["payment_id"]).values(**audit))
         if payment and attempt["payment_id"] == payment["payment_id"]:
             continue

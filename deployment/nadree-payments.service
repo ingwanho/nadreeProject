@@ -1,0 +1,12 @@
+[Unit]
+Description=Nadree payment reconciliation and refund retries
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ec2-user
+WorkingDirectory=/srv/nadree-api
+ExecStart=/srv/nadree-api/.venv/bin/python -m app.jobs payments
+TimeoutStartSec=15min
+UMask=0077

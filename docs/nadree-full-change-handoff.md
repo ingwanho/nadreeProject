@@ -1,5 +1,112 @@
 # Nadree 전체 변경사항 및 인수 문서
 
+## 2026-10-13 추가 보완 — 배포 전 확인
+
+이 절은 이번 로컬 변경분이다. 아래 9월 문서의 과거 정책보다 현재 확정 정책과 이 절이 우선한다. 서버 DB·실제 PayPal·Firebase에는 이번 변경을 적용하지 않았다.
+
+### 차량 QR 조회 — 센서 코드와 분리하는 최종 정정
+
+QR은 차량 식별용이고 센서는 선택 장치다. 차량은 QR만 있는 차량과 QR+센서 차량 두 가지다. 이전 센서 코드 기반 QR 조회 안내는 잘못된 가정이므로 폐기하며 `/nadreego/sensor/qr/resolve`도 제거했다. 프론트는 QR 원문을 전달하고 서버는 기존 `NADREE_QR_HASH_KEY`로 HMAC-SHA256을 계산해 `MSP_VEHICLE_QR.qr_code_hash`를 조회한다. 원문을 해시 컬럼에 그대로 저장하거나 프론트에서 해시를 만들어 보내지 않는다. 센서 코드·ID로 대체 조회하지 않는다.
+
+```http
+POST /nadreego/vehicle/qr/validate
+Authorization: Bearer <관리자 access token>
+Content-Type: application/json
+
+{"qrCode":"testQr123123"}
+```
+
+성공 예시:
+
+```json
+{"status":true,"errorCode":null,"data":{"vehicleId":"example-vehicle-id","qrId":"example-qr-id","qrStatus":"ACTIVE","equipmentType":"QR_ONLY","sensorId":null,"sensorStatus":"NOT_LINKED","vehicle":{"vehicleId":"example-vehicle-id","vehicleNo":"DK-TEST-301","vehicleStatus":"AVAILABLE"},"availableActions":["PRICE_CHANGE","SPOT_CHANGE","REPAIR","QR_DELETE"]}}
+```
+
+위 성공 예시는 주요 필드만 표시했다. 센서가 있으면 `equipmentType=QR_WITH_SENSOR`, `sensorStatus=LINKED`, `sensorId`에 연결 센서 ID가 반환된다. 차량 정보에는 모델·번호·상태 등이 포함되며 QR 원문/해시·센서 코드는 노출하지 않는다. 기존 status/errorCode/data와 vehicleId/qrId/qrStatus를 유지하고 필드를 추가했다. 센서 존재 여부로 QR 조회를 거절하지 않는다.
+
+차량 생성은 기존 `POST /nadreego/vehicle/create`에 QR 원문 `qrToken`을 필수로 보낸다. 센서가 없으면 sensorId 생략/null, 있으면 별도로 확보한 센서 ID를 전달한다. 서버는 QR 해시와 차량을 연결하고 센서 지정 시 소속·이미 연결됨·대여 중 여부를 다시 검증한다. 센서를 분리해도 QR 연결은 유지된다. 조회 후 가격·정비·지점·QR/센서 분리 등의 변경은 기존 API를 사용하며 각 API에서 권한과 최신 상태를 검증한다. availableActions는 화면 표시용이고 변경 권한을 부여하는 토큰이 아니다.
+
+미등록/다른 지점 QR은 `404 QR_NOT_FOUND`, 비활성은 `409 QR_INACTIVE`, 만료는 `410 QR_EXPIRED`다. 한 차량에 활성 센서가 여러 개면 `409 SENSOR_STATE_INCONSISTENT`로 잘못된 연결을 숨기지 않는다. 원문 길이 제한은 기존 API와 동일하게 최대 4096자다. URL/JSON 파싱은 하지 않는다.
+
+새 매핑 테이블·DB 컬럼·env·Firebase 변경은 없다. 테스트하려면 동일 서버 키로 생성된 차량 QR 해시와 차량 지점 이력이 필요하다. 기존 차량 생성 API를 통해 테스트 차량을 등록하면 해시가 저장된다. 이번 작업에서 서버 데이터나 기존 QR 해시·키는 변경하지 않았다. 기존 결제/위치 변경분에 필요한 컬럼 4개 적용은 여전히 별도다.
+
+정정 후 전체 로컬 회귀: **266 passed, 10 skipped**(별도 MySQL 6개·Firestore 4개), 기존 의존성 경고 2개. QR 단독/센서 연결 차량 생성·조회·가격 변경, 센서 분리 후 QR 유지, 센서 코드 조회 거절, 다른 지점 접근·중복 QR·비활성/만료 QR 차단을 검증했다. 아래 252개 결과는 QR 보완 전 기록이다. 서버 적용과 실제 MySQL 동시성 검증은 아직 수행하지 않았다.
+
+### 앱·웹 공통 결제 변경
+
+- 주문/캡처 API 경로·요청 필드는 유지한다. 최신 결제 행만 보는 대신 해당 예약·설정된 SANDBOX/LIVE 환경의 모든 결제를 확인한다. 진행 중 주문은 재사용하며 이전 완료 결제·결과 불명 캡처가 있으면 새 청구를 차단한다.
+- PG 호출 전 DB에 요청 의도를 저장한다. 주문/캡처 응답 유실은 FAILED로 단정하지 않고 동일 식별자로 복구한다. 최초 요청 후 5시간이 지난 결과 불명 주문/캡처는 자동 POST 재전송하지 않는다. PG 멱등 보존 기간에 안전 여유를 둔 처리다. [PayPal Orders 설명](https://developer.paypal.com/api/rest/integration/orders-api/api-use-cases/advanced/).
+- `PAYMENT_ALREADY_PAID`: 기존 결제를 조회한다. `PAYMENT_IN_PROGRESS`: 새 주문을 만들지 말고 기존 결제 상태를 조회한다. `PAYMENT_RECONCILIATION_REQUIRED`: 운영 확인 후 복구한다. `PAYMENT_SCHEMA_UPDATE_REQUIRED`: 서버 마이그레이션을 먼저 확인한다.
+- 늦은 실제 청구와 중복 추가 청구는 각각 `refund_reason=LATE_CAPTURE/DUPLICATE_CAPTURE`, `refund_percentage=100`으로 남긴다. 기존 취소 요청자 필드는 보존하며 시스템 처리를 고객/관리자 요청으로 꾸미지 않는다. 유효 원결제는 유지한다. 웹훅 순서가 뒤바뀌면 선행 시도를 확인하기 전 환불 판정을 보류한다.
+- PG capture의 create_time을 마감/취소 이력과 비교한다. 단순 웹훅 지연·중복은 늦은 신규 청구로 보지 않는다. 기존 취소 정책은 관리자 시작일 전 100%·당일 취소 불가, 고객 시작일 전 90%·당일 인계 전 취소 0%다.
+- `python -m app.jobs payments`가 PG 조회 복구 → 환불 재시도 → 미결제 확인 후 만료를 실행한다. PG 장애/불명 상태는 차량을 임의 해제하지 않는다. 직접 조회 기록은 웹훅 서명 검증 결과와 혼동하지 않도록 `verification_status=API_QUERY`로 구분한다.
+- 환불은 동일 요청의 금액·식별자를 고정한다. PENDING은 기존 refund ID를 조회하며 새 환불을 추가하지 않는다. 실패는 조회로 확정한 뒤 새 시도를 만든다. 최대 5회 자동 호출 이후 운영 확인 표시/알림을 남긴다. 요청 결과가 불명인 경우 새 키로 재시도하지 않는다. 환불 재전송은 보존 기간보다 짧은 44일까지 제한한다. [PayPal 멱등 요청](https://developer.paypal.com/api/make-api-requests/), [환불 API](https://developer.paypal.com/api/payments/v2/captures-refund).
+- 이 방식은 불필요한 중복 청구를 줄이는 것이며 PG 수수료가 절대 발생하지 않음을 보장하지 않는다.
+
+### 관리자 권한·위치 정정
+
+- 퇴사는 `POST /nadreego/shop/adminDelete`로 렌탈 직원 권한을 제거하는 경우다. 장기 미로그인을 자동 퇴사로 판단하지 않는다. 대표는 먼저 `POST /nadreego/admin/roleChange`로 일반관리자에게 대표권한을 양도한다.
+- 두 경로는 기존 채팅 세션을 먼저 회수한다. 회수 실패 시 역할 DB 변경은 롤백한다. 일부 Firebase 회수 후 DB가 롤백되면 사용자는 다시 채팅 세션을 발급받아 현재 DB 권한으로 복구한다. 퇴사자는 재발급 불가, 양도한 대표는 일반관리자 읽기 권한, 새 대표는 답변 권한이다. 직접 MySQL 수정 감시용 별도 서비스는 추가하지 않았다.
+- 추가 POST `/nadreego/booking/location-correction`: 대표만 자기/하위 지점의 인계 전 REQUESTED/APPROVED 예약을 수정한다. `bookedNo`, 선택 `spotMasterId`, `changeType=CORRECTION`, `target=PICKUP|RETURN`, `previousLocation`, `correctedLocation`, `reason`을 사용한다.
+- 위치 형식은 `{address, zipCode, latitude, longitude}`. 이전 위치가 없으면 `previousLocation=null`이다. 화면의 이전 값이 서버와 다르면 `409 LOCATION_SNAPSHOT_CHANGED`로 거절하므로 최신 예약을 조회한다. 인계 후/종료 예약의 기록은 이 API로 바꾸지 않는다.
+- 추가 GET `/nadreego/booking/{booked_no}/location-corrections?spotMasterId=...`: 대표 권한으로 정정 전후 값·작업자·사유·시각을 조회한다. `CORRECTION`은 같은 장소의 주소/핀 보정에만 사용한다. 서버가 실제 장소 동일 여부를 자동 증명하는 기능은 아니다.
+- 실제 매장 이전은 기존 `/nadreego/shop/update`를 사용하며 기존 예약에 전파하지 않는다. 위치 정정도 배송 목적지·요금·확정 견적을 변경하지 않는다. Swagger 설명과 테스트용 요청 예시를 반영했다.
+
+### 서버에서 실행할 순서
+
+먼저 현재 서버의 `NADREE_DATABASE_URL`이 의도한 테스트 DB인지, PayPal 환경이 SANDBOX인지 비밀값을 출력하지 않고 확인한다. 별도 스케줄러가 이미 payments/all을 실행한다면 새 타이머를 중복 설치하지 않는다.
+
+1. 코드 pull 후 마이그레이션 계획 조회:
+
+```sh
+sudo -u ec2-user -H bash -lc 'cd /srv/nadree-api && .venv/bin/python -m app.migrate'
+```
+
+2. 백업·승인 후 적용. `DATABASE_NAME`은 확인한 실제 대상 DB 이름으로 바꾼다. 이 명령은 DB를 변경한다.
+
+```sh
+sudo -u ec2-user -H bash -lc 'cd /srv/nadree-api && .venv/bin/python -m app.migrate --apply --confirm-database DATABASE_NAME'
+sudo -u ec2-user -H bash -lc 'cd /srv/nadree-api && .venv/bin/python -m app.migrate'
+sudo systemctl restart nadree-api.service
+```
+
+3. 승인된 테스트 결제만 있는 환경에서 복구 작업 1회 실행. 이 명령은 실제 PG 환불/DB 상태 변경을 할 수 있다.
+
+```sh
+sudo -u ec2-user -H bash -lc 'cd /srv/nadree-api && .venv/bin/python -m app.jobs payments'
+```
+
+4. 기존 결제 스케줄러가 없는 경우에만, 검증 후 타이머 설치:
+
+```sh
+sudo install -m 644 /srv/nadree-api/deployment/nadree-payments.service /etc/systemd/system/nadree-payments.service
+sudo install -m 644 /srv/nadree-api/deployment/nadree-payments.timer /etc/systemd/system/nadree-payments.timer
+sudo systemctl daemon-reload
+sudo systemctl enable --now nadree-payments.timer
+sudo systemctl status nadree-payments.timer --no-pager
+sudo journalctl -u nadree-payments.service -n 60 --no-pager
+```
+
+신규 env 값·Firebase Functions/Rules 변경은 이번 보완에 없다. 기존 PayPal/채팅 설정과 권한이 정상이어야 한다.
+
+### 운영 환불 재처리
+
+`PAYMENT_ID`를 해당 테스트/운영 결제의 숫자 ID로 바꾼다. 아래 첫 명령은 DB 읽기만 수행한다. 두 번째는 명시적인 운영 승인 후에만 실행하며 외부 환불이 발생할 수 있다.
+
+```sh
+sudo -u ec2-user -H bash -lc 'cd /srv/nadree-api && .venv/bin/python -m app.refund_recovery PAYMENT_ID'
+sudo -u ec2-user -H bash -lc 'cd /srv/nadree-api && .venv/bin/python -m app.refund_recovery PAYMENT_ID --apply'
+```
+
+`--apply`도 임의 금액·기한이 지난 불명 요청의 새 키 생성을 허용하지 않는다. 과거 FAILED/PENDING 환불에 기록이 없거나 요청 식별자 보존 기간이 지났으면 자동 복구 대상이 아니다. PayPal 거래/환불 내역을 먼저 대조하고 수동 처리 범위를 확정한다. DB의 FAILED 표시만 보고 새 환불을 만들지 않는다.
+
+### 서버 검증과 남은 확인
+
+- 이번 변경의 로컬 회귀 결과: **252 passed, 10 skipped**. 건너뛴 항목은 별도 MySQL 6개·Firestore 4개이며 기존 의존성 deprecation 경고 2개가 있다. `git diff --check`도 통과했다. 실제 MySQL 행 잠금 동시성, PayPal Sandbox 승인·캡처·응답 유실·웹훅 역순·환불 실패 복구, Firebase 권한 회수 종단은 서버에서 별도 검증한다.
+- 차량 QR 해시 기반 조회로 정정했다. 실제 서버의 등록 QR·차량 지점 이력과 MySQL 동시 연결 방지 검증은 별도이며 예시 데이터가 자동 배포되지는 않는다.
+- 차량 이동의 기본 성공·타 지점 차단·예약/활성 렌트 차량 이동 차단을 격리 테스트한다. 실제 센서 동반 이동·동시 재배정 및 실제 DB 계층 제약은 별도 인수 항목이다.
+- 앱 화면·App Check·실기기 푸시는 별도 범위다. 위의 배포 명령을 아직 실행하지 않았으며 전체 출시 완료로 판정하지 않는다.
+
 작성 기준: 2026-09-29
 
 이 문서는 Nadree 관광객 앱, NadreeGo 관리자 앱, 공통 백엔드, 기존 RiderLog 연동 범위를 한 문서로 정리한 인수용 문서입니다. 관광객 앱 전용 상세 문서는 `docs/nadree-frontend-handoff.md`에 별도로 유지합니다.

@@ -17,9 +17,11 @@ def cancellation(setup, monkeypatch):
     calls = []
 
     class PayPal:
+        settings = setup["settings"]
+
         def refund(self, capture_id, request_id, currency, amount):
             calls.append((capture_id, currency, amount))
-            return {"id": "refund-1", "status": "COMPLETED"}
+            return {"id": "refund-1", "status": "COMPLETED", "amount": {"currency_code": currency, "value": str(amount)}}
 
         def close(self):
             pass

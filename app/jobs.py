@@ -16,6 +16,8 @@ from app.db import Database
 from app.fcm import (FcmSender, queue_payment_deadline_expired,
                      queue_payment_deadline_reminder)
 from app.payment_policy import payment_deadline
+from app.errors import Problem
+from app.payment_attempts import confirmed_unpaid
 
 OPEN_CONTRACTS = ("ON_RENT", "OVERDUE")
 PAYMENT_REMINDERS = (2, 1)
@@ -56,7 +58,7 @@ def expire_maintenance(db, settings, at=None):
     return changed
 
 
-def expire_unpaid_payments(db, settings, at=None, notifier=None):
+def expire_unpaid_payments(db, settings, at=None, notifier=None, paypal=None):
     """Send payment deadline reminders and expire unpaid approved reservations."""
     at = at or _utc_now()
     payments = db.table("MSP_RENTAL_PAYMENT")
@@ -92,18 +94,30 @@ def expire_unpaid_payments(db, settings, at=None, notifier=None):
                 payments.c.reservation_id == reservation_id,
                 payments.c.payment_environment == settings.paypal_environment).order_by(payments.c.payment_id)
                 .with_for_update()).mappings().all()
-            statuses = {payment["payment_status"] for payment in payment_rows}
-            if statuses & {"PAID", "PARTIALLY_REFUNDED", "REFUNDED"} or "PENDING" in statuses:
+            if any(payment["payment_status"] in ("PAID", "PARTIALLY_REFUNDED", "REFUNDED") and
+                   payment.get("refund_reason") not in ("LATE_CAPTURE", "DUPLICATE_CAPTURE") for payment in payment_rows):
                 continue
             deadline = payment_deadline(approved_at, reservation["start_datetime"])
             events = sent_events.setdefault(reservation_id, set())
             if at >= deadline:
+                confirmed = True
+                for payment in payment_rows:
+                    if payment.get("refund_reason") in ("LATE_CAPTURE", "DUPLICATE_CAPTURE"):
+                        continue
+                    try:
+                        confirmed = confirmed_unpaid(paypal, payment)
+                    except Problem:
+                        confirmed = False
+                    if not confirmed:
+                        break
+                if not confirmed:
+                    continue
                 from app.chat import FirebaseChat
                 FirebaseChat(settings).block_booking(reservation_id)
                 for payment in payment_rows:
-                    if payment["payment_status"] == "CREATED":
+                    if payment["payment_status"] in ("CREATED", "PENDING"):
                         session.execute(update(payments).where(
-                            payments.c.payment_id == payment["payment_id"], payments.c.payment_status == "CREATED")
+                            payments.c.payment_id == payment["payment_id"], payments.c.payment_status.in_(("CREATED", "PENDING")))
                             .values(payment_status="CANCELED", refund_status="NOT_REQUIRED",
                                     refund_reason="Payment deadline exceeded", updated_at=at))
                 values = {"reservation_status": "EXPIRED", "vehicle_assignment_status": "RELEASED",
@@ -223,6 +237,20 @@ def _run_locked(db, name, callback):
             connection.execute(text("SELECT RELEASE_LOCK(:key)"), {"key": key})
 
 
+def payment_maintenance(db, settings, fcm):
+    from app.paypal import PayPalClient
+    from app.payment_recovery import reconcile_payments
+    from app.refund_recovery import retry_refunds
+    client = PayPalClient(settings)
+    try:
+        result = reconcile_payments(db, client, fcm)
+        result["refundsCompleted"] = retry_refunds(db, client)
+        result["reservationsExpired"] = expire_unpaid_payments(db, settings, notifier=fcm, paypal=client)
+        return result
+    finally:
+        client.close()
+
+
 def main():
     parser = argparse.ArgumentParser(description="Nadree rental maintenance jobs")
     parser.add_argument("job", choices=("maintenance", "payments", "inventory", "all"))
@@ -237,12 +265,12 @@ def main():
         if args.job == "maintenance":
             print({"maintenanceReleased": _run_locked(db, "maintenance", lambda: expire_maintenance(db, settings))})
         elif args.job == "payments":
-            print({"reservationsExpired": _run_locked(db, "payments", lambda: expire_unpaid_payments(db, settings, notifier=fcm))})
+            print(_run_locked(db, "payments", lambda: payment_maintenance(db, settings, fcm)))
         elif args.job == "inventory":
             print({"inventoryRows": _run_locked(db, "inventory", lambda: rebuild_daily_inventory(db, settings, args.days))})
         else:
             print({"maintenanceReleased": _run_locked(db, "maintenance", lambda: expire_maintenance(db, settings)),
-                   "reservationsExpired": _run_locked(db, "payments", lambda: expire_unpaid_payments(db, settings, notifier=fcm)),
+                   "payments": _run_locked(db, "payments", lambda: payment_maintenance(db, settings, fcm)),
                    "inventoryRows": _run_locked(db, "inventory", lambda: rebuild_daily_inventory(db, settings, args.days))})
     finally:
         fcm.close(wait=True)

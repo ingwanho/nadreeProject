@@ -15,6 +15,10 @@ from app.security import now
 class FakePayPal:
     environment = "SANDBOX"
 
+    def get(self, resource, order_id):
+        return {"id": order_id, "status": "APPROVED",
+                "links": [{"rel": "approve", "href": "https://www.sandbox.paypal.com/checkoutnow?token=" + order_id}]}
+
     def create_order(self, request_id, currency, value, reference_id):
         return {"id": "ORDER-1", "status": "CREATED",
                 "links": [{"rel": "approve", "href": "https://www.sandbox.paypal.com/checkoutnow?token=ORDER-1"}]}
@@ -73,7 +77,8 @@ def prepare_rental_schema(setup):
           Column("is_active", Integer, nullable=False, default=1))
     Table("MSP_VEHICLE_SPOT_HISTORY", extra,
           Column("history_id", Integer, primary_key=True, autoincrement=True), Column("vehicle_id", String(36), nullable=False),
-          Column("spot_master_id", String(36), nullable=False), Column("released_at", DateTime))
+          Column("spot_master_id", String(36), nullable=False), Column("released_at", DateTime), Column("assigned_at", DateTime),
+          Column("assigned_by", String(36)), Column("reason", String(200)))
     Table("MSP_SENSOR", extra,
           Column("sensor_id", String(36), primary_key=True), Column("vehicle_id", String(36), nullable=False),
           Column("is_active", Integer, nullable=False, default=1))

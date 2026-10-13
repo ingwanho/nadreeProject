@@ -1,5 +1,67 @@
 # Nadree DB 변경 안내
 
+## 차량 QR 테스트 데이터 추가 (위치 조회 제외)
+
+[test_seed_vehicle_qr.sql](test_seed_vehicle_qr.sql)은 기존 테스트 지점·모델을 재사용해 다음 데이터를 추가한다. 실제 DB에는 아직 실행하지 않았다.
+
+| 차량 ID | 구성 | QR 원문 예시 |
+| --- | --- | --- |
+| NRTEST-QR-ONLY-001 | QR 전용, 센서 없음 | testQr123123 |
+| NRTEST-QR-SENSOR-001 | QR + 센서 NRTEST-SENSOR-QR-001 | testQr456456 |
+
+두 차량 모두 AVAILABLE, PREMIUM 일 가격 45이며 QR·지점 연결 이력도 함께 생성한다. 센서 코드는 QR과 별개이며 Firebase 위치 데이터는 생성하지 않는다. 기존 예약·결제·계정·권한·재고는 변경하지 않는다.
+
+선행 조건은 `test_seed_top_level.sql`의 지점/관리자와 `test_seed_web_requirements.sql`의 `NRTEST-WEB-MODEL-125`다. 이미 적용했다면 이전 시드를 다시 실행할 필요가 없다. 대상은 `RIDERLOG_V2_DATA_TEST`, 서버는 MySQL 8.0.16 이상이다. 실제 DB 구조가 저장소 스키마와 같은지 먼저 확인한다.
+
+### 1. 서버에서 QR 해시 계산
+
+프론트는 QR 원문을 전송하지만 DB에는 서버 키로 계산한 HMAC-SHA256을 저장한다. 아래 예시 원문을 테스트에 사용할 값으로 바꾸면 된다. `.env`의 키 자체를 복사하거나 출력하지 않는다. 키가 변경되면 기존 QR 검증에도 영향을 주므로 테스트 때문에 키를 변경하지 않는다.
+
+```sh
+cd /srv/nadree-api
+sudo -u ec2-user .venv/bin/python - <<'PY'
+import hashlib
+import hmac
+from app.config import Settings
+
+key = Settings().qr_hash_key.get_secret_value().encode()
+if len(key) < 32:
+    raise SystemExit("NADREE_QR_HASH_KEY 설정을 확인하세요 (최소 32바이트).")
+for label, raw in (("QR_ONLY", "testQr123123"), ("QR_WITH_SENSOR", "testQr456456")):
+    print(label, hmac.new(key, raw.encode(), hashlib.sha256).hexdigest())
+PY
+```
+
+### 2. 승인된 테스트 DB에 추가
+
+아래 두 자리표시자를 위에서 출력한 각각의 64자리 해시로 바꾼다. DB 비밀번호는 프롬프트에서 입력한다.
+
+```sh
+cd /srv/nadree-api
+mysql -h www.riderlog-lte.com -P 50020 -u Datateam -p \
+  --init-command="SET @nr_qr_only_hash='QR_ONLY_64자리_해시', @nr_qr_sensor_hash='QR_WITH_SENSOR_64자리_해시'" \
+  RIDERLOG_V2_DATA_TEST < migrations/test_seed_vehicle_qr.sql
+```
+
+반드시 위처럼 배치 입력으로 실행하며 `--force`나 개별 문장 실행을 사용하지 않는다. 선행 데이터 누락·잘못된 해시 형식·기존 식별자 충돌이면 중단한다. 업무 테이블은 모두 InnoDB인지 확인하며, 배치 오류로 연결이 종료되면 미완료 트랜잭션은 롤백된다. 재실행도 충돌로 중단하므로 기존 행을 삭제하거나 덮어써서 반복하지 않는다.
+
+성공하면 마지막 조회에 차량 2대와 각각 `QR_ONLY`, `QR_WITH_SENSOR`가 출력된다. 이후 해당 지점 권한을 가진 관리자로 `POST /nadreego/vehicle/qr/validate`에 각각의 원문을 `qrCode`로 전달해 차량/센서 연결 응답을 확인한다. 이 시드는 위치 조회나 예약·결제 전체 시나리오의 검증 완료를 의미하지 않는다.
+
+## 2026-10-13 결제 복구·위치 정정 — 서버 미적용
+
+`app.migrate`가 다음 nullable 컬럼을 없을 때만 추가한다. 과거 결제 요청 정보를 추정해서 채우지 않는다.
+
+| 테이블 | 컬럼 | 목적 |
+| --- | --- | --- |
+| MSP_RENTAL_PAYMENT | order_requested_at DATETIME | 주문 외부 호출 전 시각·재전송 가능 기간 |
+| MSP_RENTAL_PAYMENT | capture_requested_at DATETIME | 캡처 외부 호출 의도 기록·결과 불명 보호 |
+| MSP_RENTAL_PAYMENT | refund_attempt_state JSON | 환불 요청 식별자·불변 금액·시도 횟수·PG 상태·운영 확인 표시 |
+| MSP_RESERVATION_HISTORY | details JSON | 위치 정정 전후 스냅샷·정정 대상 |
+
+백업·대상 DB 확인 → 읽기 전용 계획 조회 → 승인된 마이그레이션 → API 재시작 → 결제 작업 1회 검증 → 단일 결제 타이머 적용 순서다. 이번 로컬 작업에서 서버 DB 변경은 수행하지 않았다. 기존 `FAILED/PENDING` 환불에 요청 금액·식별자 기록이 없으면 자동 새 환불을 만들지 않으며 PayPal 거래 내역으로 먼저 확인한다.
+
+결제 행/감사 이력은 롤백 시에도 삭제하지 않는다. 구버전 결제 코드로 즉시 되돌리면 결과 불명 요청의 안전 장치를 잃으므로, 문제가 있으면 결제 처리를 중지하고 기록과 PG 결과를 대조한 뒤 복구한다. 명령은 [인수 문서](../docs/nadree-full-change-handoff.md)의 최신 절 참조.
+
 ## 2026-10-12 추가 변경 — 미적용
 
 아래는 새 코드에 필요한 변경이며 운영 DB에는 실행하지 않았다. 과거 알림 테이블 제외·삭제 안내와 이전 취소 정책보다 이 절이 우선한다.

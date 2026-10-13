@@ -48,7 +48,25 @@ def vehicle_view(request, item, contracts):
         vehicleImageKey=rv["vehicle_image_key"], vehicleStatus=effective_state(request, item, contracts))
 
 
-@router.post("/nadreego/vehicle/create")
+def available_sensor(request, session, root, sensor_id):
+    db = request.app.state.db
+    sensors, history = db.table("MSP_SENSOR"), db.table("MSP_SENSOR_SPOT_HISTORY")
+    sensor = session.execute(select(sensors).where(sensors.c.sensor_id == sensor_id,
+        sensors.c.is_active == 1).with_for_update()).mappings().first()
+    memberships = session.execute(select(history).where(history.c.sensor_id == sensor_id,
+        history.c.released_at.is_(None)).with_for_update()).mappings().all()
+    if not sensor or len(memberships) != 1 or memberships[0]["spot_master_id"] != root["spot_master_id"]:
+        raise Problem(404, "SENSOR_NOT_FOUND")
+    if sensor["vehicle_id"] is not None:
+        raise Problem(409, "SENSOR_ALREADY_LINKED")
+    contracts = db.table("MSP_RENTAL_CONTRACT")
+    if session.execute(select(contracts.c.rental_contract_id).where(contracts.c.sensor_id == sensor_id,
+        contracts.c.contract_status.in_(("ON_RENT", "OVERDUE")), contracts.c.actual_end_time.is_(None))).first():
+        raise Problem(409, "SENSOR_IN_USE")
+    return sensor
+
+
+@router.post("/nadreego/vehicle/create", description="차량 QR 원문 qrToken은 필수이고 sensorId는 선택입니다. QR은 기존 서버 HMAC-SHA256 방식으로 MSP_VEHICLE_QR.qr_code_hash에 저장합니다. 센서 코드와 QR은 별개이며 센서 없이도 차량 등록·QR 조회가 가능합니다. 센서 지정 시 소속·연결·대여 상태를 재검증합니다.")
 def create_vehicle(body: VehicleCreate, request: Request, session: Session = DB):
     actor, root = context(request, session, write=True)
     db = request.app.state.db
@@ -64,14 +82,9 @@ def create_vehicle(body: VehicleCreate, request: Request, session: Session = DB)
         .where(or_(v.c.plate_number == plate, rv.c.plate_number_full == plate))).first():
         raise Problem(409, "VEHICLE_NUMBER_EXISTS")
     sensor = None
-    st, sh = db.table("MSP_SENSOR"), db.table("MSP_SENSOR_SPOT_HISTORY")
+    st = db.table("MSP_SENSOR")
     if body.sensorId:
-        sensor = session.execute(select(st).where(st.c.sensor_id == body.sensorId, st.c.is_active == 1).with_for_update()).mappings().first()
-        memberships = rows(session, sh, sh.c.sensor_id == body.sensorId, sh.c.released_at.is_(None))
-        if not sensor or len(memberships) != 1 or memberships[0]["spot_master_id"] != root["spot_master_id"]:
-            raise Problem(404, "SENSOR_NOT_FOUND")
-        if sensor["vehicle_id"] is not None:
-            raise Problem(409, "SENSOR_ALREADY_LINKED")
+        sensor = available_sensor(request, session, root, body.sensorId)
     digest = None
     if body.qrToken:
         digest = qr_digest(request, body.qrToken.get_secret_value())
@@ -105,14 +118,25 @@ def create_vehicle(body: VehicleCreate, request: Request, session: Session = DB)
                 brand=model["brand"], vehicleName=model["model_name"])
 
 
-@router.post("/nadreego/vehicle/qr/validate")
+@router.post("/nadreego/vehicle/qr/validate", summary="차량 QR로 차량 정보·선택 센서 조회",
+             description="프론트가 QR 원문을 qrCode로 전달합니다. 서버가 기존 키로 HMAC-SHA256을 계산하여 MSP_VEHICLE_QR.qr_code_hash와 비교합니다. sensor_code를 조회하지 않습니다. QR_ONLY/QR_WITH_SENSOR를 구분하며 QR_ONLY도 조회·변경 가능합니다. 변경은 기존 업무 API에서 권한·현재 상태를 다시 검증합니다. QR_NOT_FOUND/QR_INACTIVE/QR_EXPIRED 및 다중 활성 센서 SENSOR_STATE_INCONSISTENT를 반환할 수 있습니다.")
 def validate_qr(body: Qr, request: Request, session: Session = DB):
     actor, root = context(request, session)
     limiter = request.app.state.limiter
     limiter.check("qr-admin:" + actor.admin["admin_id"], limit=60, seconds=60)
     limiter.check("qr-ip:" + (request.client.host if request.client else "unknown"), limit=120, seconds=60)
     qr = verify_qr(request, session, root, body.qrCode.get_secret_value())
-    return dict(status=True, errorCode=None, data=dict(vehicleId=qr["vehicle_id"], qrId=qr["qr_id"], qrStatus="ACTIVE"))
+    item = fleet(request, session, root, vehicle_ids=[qr["vehicle_id"]]).get(qr["vehicle_id"])
+    if item is None:
+        raise Problem(404, "VEHICLE_NOT_FOUND")
+    if len(item["sensors"]) > 1:
+        raise Problem(409, "SENSOR_STATE_INCONSISTENT")
+    sensor = item["sensors"][0] if item["sensors"] else None
+    contracts = contracts_for(request, session, [qr["vehicle_id"]])
+    return dict(status=True, errorCode=None, data=dict(vehicleId=qr["vehicle_id"], qrId=qr["qr_id"], qrStatus="ACTIVE",
+        equipmentType="QR_WITH_SENSOR" if sensor else "QR_ONLY", sensorId=sensor["sensor_id"] if sensor else None,
+        sensorStatus="LINKED" if sensor else "NOT_LINKED", vehicle=vehicle_view(request, item, contracts),
+        availableActions=available_actions(request, item, contracts)))
 
 
 @router.post("/nadreego/sensor/delete", response_model=Status)

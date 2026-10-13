@@ -1,0 +1,10 @@
+[Unit]
+Description=Reconcile Nadree payments and refunds every minute
+
+[Timer]
+OnBootSec=1min
+OnUnitInactiveSec=1min
+Unit=nadree-payments.service
+
+[Install]
+WantedBy=timers.target

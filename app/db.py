@@ -76,6 +76,20 @@ def lock_email(session, email):
     session.info.setdefault("named_locks", []).append(name)
 
 
+def payment_transaction(request: Request):
+    """Payment intents may checkpoint before an irreversible provider request."""
+    db = request.app.state.db
+    if db.engine is None:
+        raise Problem(503, "DATABASE_NOT_CONFIGURED")
+    with Session(db.engine) as session:
+        try:
+            yield session
+            session.commit()
+        except Exception:
+            session.rollback()
+            raise
+
+
 def require_columns(table, values):
     for name, value in values.items():
         if name not in table.c:

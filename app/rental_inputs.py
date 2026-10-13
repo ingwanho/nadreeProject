@@ -63,6 +63,23 @@ class VehicleNumber(Body):
     vehicleNumber: Plate
 
 
+class BookingLocation(Body):
+    address: Annotated[str, Field(min_length=1, max_length=500, pattern=r"\S")]
+    zipCode: Annotated[str, Field(max_length=20)] | None = None
+    latitude: Annotated[float, Field(ge=-90, le=90, allow_inf_nan=False)]
+    longitude: Annotated[float, Field(ge=-180, le=180, allow_inf_nan=False)]
+
+
+class BookingLocationCorrection(Body):
+    bookedNo: Annotated[str, Field(min_length=3, max_length=52, pattern=r"^BO.+$")]
+    spotMasterId: Identifier | None = None
+    changeType: Literal["CORRECTION"]
+    target: Literal["PICKUP", "RETURN"]
+    previousLocation: BookingLocation | None
+    correctedLocation: BookingLocation
+    reason: Annotated[str, Field(min_length=1, max_length=200, pattern=r"\S")]
+
+
 class VehicleCreate(Body):
     sensorId: Identifier | None = None
     qrToken: SecretStr = Field(min_length=1, max_length=4096)

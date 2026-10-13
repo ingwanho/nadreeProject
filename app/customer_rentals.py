@@ -10,13 +10,14 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.availability import compute_assignment, reservation_history
-from app.db import require_columns, transaction
+from app.db import payment_transaction, require_columns, transaction
 from app.errors import Problem
 from app.fcm import queue_reservation_request
 from app.headers import fcm_header, refresh_header
 from app.paypal import execute_refund, identifier
 from app.refunds import prepare_booking_refund
 from app.payment_policy import payment_deadline
+from app.payment_attempts import attempts, guard_other_attempts, inspect_order, replay_allowed
 from app.pricing import daily_price, load_tiers
 from app.rental_common import contracts_for, day_end, fleet, iso, local_date, location_snapshot, lock_key, midnight
 from app.rental_inputs import (NadriAvailability, NadriLogin, NadriPaymentCapture,
@@ -29,6 +30,7 @@ from app.security import fingerprint, now, sign_user_access, user_principal
 router = APIRouter(prefix="/api/v1/nadree/rental", tags=["Nadree customer rentals"])
 user_router = APIRouter(prefix="/api/v1/nadree/user", tags=["Nadree customer users"])
 DB = Depends(transaction, scope="function")
+PAYMENT_DB = Depends(payment_transaction, scope="function")
 USER_REFRESH_PREFIX = "nadri.rt."
 firebase_id_token = HTTPBearer(auto_error=False, scheme_name="FirebaseIDToken",
                                description="고객 로그인에 사용하는 Firebase ID Token")
@@ -808,46 +810,33 @@ def _payment_result(payment, approval_url=None, payment_window=None):
 
 @router.post("/payment/order", response_model=CustomerPayment,
              summary="승인 예약의 PayPal Sandbox 주문 생성",
-             description="APPROVED 예약만 호출할 수 있습니다. 테스트 결제 통화는 USD이며 응답의 approvalUrl을 사용합니다.",
+             description="APPROVED 예약의 모든 결제 시도를 먼저 확인합니다. 진행 중 주문은 재사용하며 완료·결과 불명 결제가 있으면 새 청구를 차단합니다. PAYMENT_RECONCILIATION_REQUIRED는 운영 확인이 필요합니다.",
              dependencies=[Depends(customer_access_token)])
-def nadree_payment_order(body: NadriPaymentOrder, request: Request, session: Session = DB):
+def nadree_payment_order(body: NadriPaymentOrder, request: Request, session: Session = PAYMENT_DB):
     user = user_principal(request, session)
     reservation = _reservation_for_payment(request, session, user, body.reservationId)
     db = _db(request)
     table = db.table("MSP_RENTAL_PAYMENT")
-    existing = session.execute(select(table).where(table.c.reservation_id == reservation["reservation_id"],
-        table.c.payment_environment == request.app.state.settings.paypal_environment).order_by(table.c.payment_id.desc()).with_for_update()).mappings().first()
-    if existing:
-        if existing["payment_status"] in ("PAID", "PARTIALLY_REFUNDED", "REFUNDED"):
-            raise Problem(409, "PAYMENT_ALREADY_PAID")
+    rows = attempts(db, session, reservation["reservation_id"], request.app.state.settings.paypal_environment)
+    existing = next((row for row in reversed(rows) if row["payment_status"] in ("CREATED", "PENDING")), None)
+    guard_other_attempts(rows, existing["payment_id"] if existing else None, request.app.state.paypal)
     payment_window = _ensure_payment_window(request, session, reservation, existing)
     if existing:
         if existing["payment_status"] in ("CREATED", "PENDING") and existing.get("paypal_order_id"):
-            approval, provider_order = None, None
-            try:
-                provider_order = request.app.state.paypal.get("orders", existing["paypal_order_id"])
-                provider_status = provider_order.get("status")
-                if provider_status in ("CREATED", "APPROVED"):
-                    approval = request.app.state.paypal.approval_url(provider_order)
-                elif provider_status in ("EXPIRED", "CANCELED", "VOIDED"):
-                    provider_order = None
-                else:
-                    raise Problem(409, "PAYMENT_STATE_INVALID")
-            except (AttributeError, SQLAlchemyError):
-                return _payment_result(dict(existing, _shop_master_id=reservation["spot_master_id"]), payment_window=payment_window)
-            except Problem:
-                # A provider read failure is not proof that an order expired;
-                # leave the attempt intact and let the expiry job decide.
-                raise
-            if provider_order is not None:
+            provider_order = inspect_order(request.app.state.paypal, existing)
+            if provider_order["status"] in ("CREATED", "SAVED", "PAYER_ACTION_REQUIRED", "APPROVED"):
+                if existing.get("capture_requested_at"):
+                    raise Problem(409, "PAYMENT_IN_PROGRESS")
+                approval = request.app.state.paypal.approval_url(provider_order)
                 return _payment_result(dict(existing, _shop_master_id=reservation["spot_master_id"]), approval, payment_window)
-            if existing["payment_status"] == "PENDING":
-                return _payment_result(dict(existing, _shop_master_id=reservation["spot_master_id"]), payment_window=payment_window)
+            if existing.get("capture_requested_at") or existing["payment_status"] == "PENDING":
+                raise Problem(409, "PAYMENT_RECONCILIATION_REQUIRED")
             # The PayPal order can expire independently of this service. Close
             # the internal attempt and create a fresh order on the next call.
             session.execute(update(table).where(table.c.payment_id == existing["payment_id"],
                                                 table.c.payment_status.in_(("CREATED", "PENDING")))
                             .values(payment_status="CANCELED", refund_status="NOT_REQUIRED", updated_at=now()))
+            existing = None
     quote = _revalidate_reservation_quote(request, session, reservation)
     if quote.get("requestedTotal") is None:
         raise Problem(409, "PAYMENT_QUOTE_UNAVAILABLE")
@@ -858,40 +847,51 @@ def nadree_payment_order(body: NadriPaymentOrder, request: Request, session: Ses
         payment_environment=request.app.state.settings.paypal_environment, payment_status="CREATED", paypal_order_id=None,
         paypal_capture_id=None, total_price=total, currency=quote.get("currency", request.app.state.settings.rental_currency),
         refunded_amount=Decimal("0"), refund_status="NONE", created_at=now(), updated_at=now())
-    session.execute(table.insert().values(**payment_values))
-    session.flush()
-    payment = session.execute(select(table).where(table.c.reservation_id == reservation["reservation_id"],
-        table.c.paypal_order_id.is_(None)).order_by(table.c.payment_id.desc()).with_for_update()).mappings().first()
-    if not payment:
+    if existing:
+        replay_allowed(existing.get("order_requested_at"))
+        payment_id = existing["payment_id"]
+        if not existing.get("order_requested_at"):
+            session.execute(update(table).where(table.c.payment_id == payment_id).values(order_requested_at=now()))
+    else:
+        payment_values["order_requested_at"] = now()
+        payment_id = session.execute(table.insert().values(**payment_values)).inserted_primary_key[0]
+    # Persist the request identity before an irreversible external operation.
+    session.commit()
+    reservation = _reservation_for_payment(request, session, user, body.reservationId)
+    rows = attempts(db, session, reservation["reservation_id"], request.app.state.settings.paypal_environment)
+    guard_other_attempts(rows, payment_id, request.app.state.paypal)
+    payment = next(row for row in rows if row["payment_id"] == payment_id)
+    payment_window = _ensure_payment_window(request, session, reservation, payment)
+    if payment["payment_status"] != "CREATED":
+        raise Problem(409, "PAYMENT_IN_PROGRESS")
+    if payment.get("paypal_order_id"):
+        result = inspect_order(request.app.state.paypal, payment)
+    else:
+        replay_allowed(payment["order_requested_at"])
+        result = request.app.state.paypal.create_order("nadree-order-" + str(payment_id), payment["currency"], payment["total_price"], reservation["reservation_id"])
+    order_id = identifier(result.get("id")) if isinstance(result, dict) and result.get("id") else None
+    if not order_id:
         raise Problem(503, "PAYPAL_SERVICE_UNAVAILABLE")
-    try:
-        result = request.app.state.paypal.create_order("nadree-order-" + str(payment["payment_id"]), payment["currency"], total, reservation["reservation_id"])
-        order_id = identifier(result.get("id")) if isinstance(result, dict) and result.get("id") else None
-        if not order_id:
-            raise Problem(503, "PAYPAL_SERVICE_UNAVAILABLE")
-    except Problem:
-        session.execute(update(table).where(table.c.payment_id == payment["payment_id"]).values(payment_status="FAILED", updated_at=now()))
-        raise
+    session.execute(update(table).where(table.c.payment_id == payment_id).values(paypal_order_id=order_id, updated_at=now()))
+    session.commit()
     try:
         approval = request.app.state.paypal.approval_url(result)
     except (Problem, AttributeError):
-        session.execute(update(table).where(table.c.payment_id == payment["payment_id"]).values(
-            paypal_order_id=order_id, payment_status="FAILED", updated_at=now()))
         raise Problem(503, "PAYPAL_APPROVAL_URL_MISSING")
-    session.execute(update(table).where(table.c.payment_id == payment["payment_id"]).values(paypal_order_id=order_id, updated_at=now()))
     payment = dict(payment, paypal_order_id=order_id, _shop_master_id=reservation["spot_master_id"])
     return _payment_result(payment, approval, payment_window)
 
 
 @router.post("/payment/capture", response_model=CustomerPayment,
              summary="PayPal 결제 캡처",
-             description="캡처 직후 PENDING이면 반복 호출하지 말고 결제 상태 조회 API를 사용합니다.",
+             description="기존 결제와 PayPal 주문을 확인한 뒤 동일 요청 식별자로 캡처합니다. PENDING·PAYMENT_IN_PROGRESS이면 상태 조회를 사용하고, PAYMENT_RECONCILIATION_REQUIRED이면 운영 확인 전 새 결제를 만들지 않습니다.",
              dependencies=[Depends(customer_access_token)])
-def nadree_payment_capture(body: NadriPaymentCapture, request: Request, session: Session = DB):
+def nadree_payment_capture(body: NadriPaymentCapture, request: Request, session: Session = PAYMENT_DB):
     user = user_principal(request, session)
     db = _db(request)
     table = db.table("MSP_RENTAL_PAYMENT")
-    payment = session.execute(select(table).where(table.c.payment_id == body.paymentId).with_for_update()).mappings().first()
+    payment = session.execute(select(table).where(table.c.payment_id == body.paymentId,
+        table.c.payment_environment == request.app.state.settings.paypal_environment)).mappings().first()
     if not payment:
         raise Problem(404, "PAYMENT_NOT_FOUND")
     reservation = _reservation_for_payment(request, session, user, payment["reservation_id"]) if payment.get("reservation_id") else None
@@ -903,6 +903,8 @@ def nadree_payment_capture(body: NadriPaymentCapture, request: Request, session:
         raise Problem(409, "PAYMENT_STATE_INVALID")
     if not reservation:
         raise Problem(404, "PAYMENT_NOT_FOUND")
+    rows = attempts(db, session, reservation["reservation_id"], request.app.state.settings.paypal_environment)
+    payment = next(row for row in rows if row["payment_id"] == body.paymentId)
     if payment["payment_status"] in ("PAID", "PARTIALLY_REFUNDED", "REFUNDED"):
         return _payment_result(dict(payment, _shop_master_id=reservation["spot_master_id"]),
                                payment_window=_payment_window(request, session, reservation, payment))
@@ -911,12 +913,28 @@ def nadree_payment_capture(body: NadriPaymentCapture, request: Request, session:
                                payment_window=_payment_window(request, session, reservation, payment))
     if payment["payment_status"] not in ("CREATED", "PENDING") or not payment.get("paypal_order_id"):
         raise Problem(409, "PAYMENT_STATE_INVALID")
+    guard_other_attempts(rows, payment["payment_id"], request.app.state.paypal)
     payment_window = _ensure_payment_window(request, session, reservation, payment)
-    try:
-        result = request.app.state.paypal.capture_order(payment["paypal_order_id"], "nadree-capture-" + str(payment["payment_id"]))
-    except Problem:
-        session.execute(update(table).where(table.c.payment_id == payment["payment_id"]).values(payment_status="FAILED", updated_at=now()))
-        raise
+    replay_allowed(payment.get("capture_requested_at"))
+    if not payment.get("capture_requested_at"):
+        session.execute(update(table).where(table.c.payment_id == payment["payment_id"]).values(
+            capture_requested_at=now(), payment_status="PENDING", updated_at=now()))
+    session.commit()
+    reservation = _reservation_for_payment(request, session, user, payment["reservation_id"])
+    rows = attempts(db, session, reservation["reservation_id"], request.app.state.settings.paypal_environment)
+    payment = next(row for row in rows if row["payment_id"] == body.paymentId)
+    guard_other_attempts(rows, payment["payment_id"], request.app.state.paypal)
+    if payment["payment_status"] in ("PAID", "PARTIALLY_REFUNDED", "REFUNDED") or payment.get("paypal_capture_id"):
+        return _payment_result(dict(payment, _shop_master_id=reservation["spot_master_id"]),
+                               payment_window=_payment_window(request, session, reservation, payment))
+    if payment["payment_status"] != "PENDING":
+        raise Problem(409, "PAYMENT_STATE_INVALID")
+    payment_window = _ensure_payment_window(request, session, reservation, payment)
+    replay_allowed(payment["capture_requested_at"])
+    provider_order = inspect_order(request.app.state.paypal, payment)
+    if provider_order["status"] != "APPROVED":
+        raise Problem(409, "PAYMENT_STATE_INVALID")
+    result = request.app.state.paypal.capture_order(payment["paypal_order_id"], "nadree-capture-" + str(payment["payment_id"]))
     capture_id = request.app.state.paypal.capture_reference_from_order(result)
     capture_status = result.get("status") if isinstance(result, dict) else None
     status = "FAILED" if capture_status in ("DECLINED", "DENIED") else "PENDING"

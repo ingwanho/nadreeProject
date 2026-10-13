@@ -1,6 +1,6 @@
 import uuid
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Request, Response
+from fastapi import APIRouter, BackgroundTasks, Depends, Query, Request, Response
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
@@ -15,8 +15,8 @@ from app.pricing import daily_price, load_tiers
 from app.paypal import execute_refund
 from app.refunds import prepare_booking_refund
 from app.rental_common import (OPEN, action_result, context, contracts_for, day_end, effective_state,
-                               expire_maintenance, fleet, is_open, iso, local_date, location_snapshot, lock_key, rows, verify_qr)
-from app.rental_inputs import BookingAction, PassportUpload, Qr, RentApprove
+                               expire_maintenance, fleet, is_open, iso, local_date, location_snapshot, lock_key, resolve_spot, rows, verify_qr)
+from app.rental_inputs import BookingAction, BookingLocationCorrection, PassportUpload, Qr, RentApprove
 from app.responses import PassportUploadResult
 from app.security import now
 
@@ -37,6 +37,56 @@ def require_no_contract(request, session, reservation):
     t = request.app.state.db.table("MSP_RENTAL_CONTRACT")
     if session.execute(select(t.c.rental_contract_id).where(t.c.reservation_id == reservation["reservation_id"])).first():
         raise Problem(409, "RESERVATION_ALREADY_HANDED_OVER")
+
+
+@router.post("/nadreego/booking/location-correction", summary="인계 전 예약의 매장 위치 오류 정정",
+             description="대표관리자만 자기/하위 지점의 REQUESTED·APPROVED 예약을 정정합니다. changeType=CORRECTION은 같은 장소의 주소·핀 오류 수정에만 사용합니다. 실제 이전은 shop/update만 사용하며 기존 예약에 전파하지 않습니다. previousLocation은 현재 스냅샷과 일치해야 합니다. 배송 목적지·요금·견적은 변경하지 않습니다.")
+def correct_booking_location(body: BookingLocationCorrection, request: Request, session: Session = DB):
+    actor, root = context(request, session, write=True, representative=True)
+    root = resolve_spot(request, session, root, body.spotMasterId, lock=True)
+    reservation = booking(request, session, root, body.bookedNo)
+    require_no_contract(request, session, reservation)
+    if reservation["reservation_status"] not in ("REQUESTED", "APPROVED"):
+        raise Problem(409, "RESERVATION_STATE_INVALID")
+    db = request.app.state.db
+    history = db.table("MSP_RESERVATION_HISTORY")
+    if "details" not in history.c:
+        raise Problem(503, "LOCATION_HISTORY_SCHEMA_UPDATE_REQUIRED")
+    criteria = dict(reservation["required_criteria_json"] or {})
+    key = "pickupLocationSnapshot" if body.target == "PICKUP" else "returnLocationSnapshot"
+    before = criteria.get(key)
+    expected = body.previousLocation.model_dump() if body.previousLocation else None
+    after = body.correctedLocation.model_dump()
+    if before != expected:
+        raise Problem(409, "LOCATION_SNAPSHOT_CHANGED")
+    if before == after:
+        return {"status": "success", "bookedNo": body.bookedNo, "changed": False, "location": after}
+    criteria[key] = after
+    at = now()
+    table = db.table("MSP_RESERVATION")
+    session.execute(update(table).where(table.c.reservation_id == reservation["reservation_id"]).values(
+        required_criteria_json=criteria, updated_at=at))
+    session.execute(history.insert().values(reservation_id=reservation["reservation_id"], event_type="LOCATION_CORRECTED",
+        previous_reservation_status=reservation["reservation_status"], new_reservation_status=reservation["reservation_status"],
+        changed_by=actor.admin["admin_id"], reason=body.reason, created_at=at,
+        details={"changeType": "CORRECTION", "target": body.target, "before": before, "after": after}))
+    return {"status": "success", "bookedNo": body.bookedNo, "changed": True, "location": after}
+
+
+@router.get("/nadreego/booking/{booked_no}/location-corrections", summary="대표관리자 예약 위치 정정 이력")
+def booking_location_corrections(booked_no: str, request: Request, spotMasterId: str | None = Query(None), session: Session = DB):
+    _, root = context(request, session, representative=True)
+    root = resolve_spot(request, session, root, spotMasterId)
+    if not booked_no.startswith("BO"):
+        raise Problem(404, "RESERVATION_NOT_FOUND")
+    reservation = booking(request, session, root, booked_no)
+    table = request.app.state.db.table("MSP_RESERVATION_HISTORY")
+    if "details" not in table.c:
+        raise Problem(503, "LOCATION_HISTORY_SCHEMA_UPDATE_REQUIRED")
+    rows = session.execute(select(table).where(table.c.reservation_id == reservation["reservation_id"],
+        table.c.event_type == "LOCATION_CORRECTED").order_by(table.c.history_id)).mappings()
+    return {"status": "success", "items": [{"historyId": row["history_id"], "changedBy": row["changed_by"],
+        "reason": row["reason"], "createdAt": iso(request, row["created_at"]), **row["details"]} for row in rows]}
 
 
 def customer(request, session, ident):

@@ -261,7 +261,7 @@ OPENAPI_EXAMPLES = {
     },
     "VehicleNumber": {"vehicleNumber": "DK-TEST-301"},
     "VehicleCreate": {
-        "qrToken": "<server-generated-qr-token>",
+        "qrToken": "testQr123123",
         "brand": "Honda",
         "vehicleName": "Vario 125",
         "modelId": "NRTEST-MODEL-125",
@@ -270,10 +270,14 @@ OPENAPI_EXAMPLES = {
     },
     "Detach": {"vehicleNumber": "DK-TEST-301", "division": "QR"},
     "PriceChange": {"vehicleNumber": "DK-TEST-301", "priceType": "BASIC", "priceInfo": None},
-    "Qr": {"qrCode": "<server-issued-qr-code>"},
+    "Qr": {"qrCode": "testQr123123"},
     "Repair": {"vehicleNumber": "DK-TEST-302", "date": "2026-10-03", "reason": "정기 점검"},
     "Move": {"vehicleNumber": "DK-TEST-301", "spotCode": TEST_SPOT["spotCode"]},
     "BookingAction": {"bookedNo": "BONRTEST-RES-REQ-001", "action": "APPROVE"},
+    "BookingLocationCorrection": {"bookedNo": "BONRTEST-RES-APP-001", "changeType": "CORRECTION", "target": "PICKUP",
+        "previousLocation": TEST_SPOT["location"],
+        "correctedLocation": {**TEST_SPOT["location"], "latitude": -8.65001},
+        "reason": "같은 매장 출입구의 핀 위치 보정"},
     "ReservationCancel": {"reservationId": "NRTEST-RES-REQ-001", "reason": "테스트 취소"},
     "RentApprove": {"qrCode": "<server-issued-qr-code>", "bookedNo": "BONRTEST-RES-APP-001"},
     "PassportUpload": {
@@ -507,7 +511,10 @@ OPENAPI_RESPONSE_EXAMPLES = {
     },
     ("POST", "/nadreego/vehicle/qr/validate"): {
         "status": True, "errorCode": None,
-        "data": {"vehicleId": "NRTEST-VEHICLE-301", "qrId": "<qr-id>", "qrStatus": "ACTIVE"},
+        "data": {"vehicleId": "NRTEST-VEHICLE-301", "qrId": "<qr-id>", "qrStatus": "ACTIVE",
+                 "equipmentType": "QR_ONLY", "sensorId": None, "sensorStatus": "NOT_LINKED",
+                 "vehicle": {"vehicleId": "NRTEST-VEHICLE-301", "vehicleNo": "DK-TEST-301", "vehicleStatus": "AVAILABLE"},
+                 "availableActions": ["PRICE_CHANGE", "SPOT_CHANGE", "REPAIR", "QR_DELETE"]},
     },
     ("POST", "/nadreego/vehicle/location"): {
         "status": "success", "geopoint": {"latitude": -8.65, "longitude": 115.216},

@@ -43,6 +43,26 @@ def test_migration_plan_does_not_repurpose_legacy_notification_table(setup):
         migration_plan(setup["db"])
 
 
+def test_payment_safety_and_location_columns_are_planned_without_writes(setup):
+    from app.rental_schema import metadata
+    metadata.create_all(setup["engine"])
+    expected = {("MSP_RENTAL_PAYMENT", name) for name in ("order_requested_at", "capture_requested_at", "refund_attempt_state")}
+    expected.add(("MSP_RESERVATION_HISTORY", "details"))
+    with setup["engine"].begin() as conn:
+        for table, column in expected:
+            conn.execute(text("ALTER TABLE " + table + " DROP COLUMN " + column))
+    labels = {"add " + table + "." + column for table, column in expected}
+    plan = migration_plan(setup["db"])
+    assert labels.issubset({label for label, _, _ in plan})
+    for table, column in expected:
+        assert column not in {item["name"] for item in inspect(setup["engine"]).get_columns(table)}
+    with setup["engine"].begin() as conn:
+        for label, sql, params in plan:
+            if label in labels:
+                conn.execute(text(sql), params)
+    assert not labels.intersection({label for label, _, _ in migration_plan(setup["db"])})
+
+
 def test_migration_plan_adds_rental_performance_indexes_once(setup):
     with setup["engine"].begin() as conn:
         conn.execute(text("""

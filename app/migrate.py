@@ -121,6 +121,9 @@ def migration_plan(db):
             ("cancellation_requested_by_type", "VARCHAR(20) DEFAULT NULL"),
             ("cancellation_requested_by_id", "VARCHAR(36) DEFAULT NULL"),
             ("refund_percentage", "INT DEFAULT NULL"),
+            ("order_requested_at", "DATETIME DEFAULT NULL"),
+            ("capture_requested_at", "DATETIME DEFAULT NULL"),
+            ("refund_attempt_state", "JSON DEFAULT NULL"),
         ]
         for column, definition in payment_columns:
             if column not in columns:
@@ -135,6 +138,11 @@ def migration_plan(db):
             operations.append(("constraint MSP_RENTAL_PAYMENT.refund_status",
                 "ALTER TABLE MSP_RENTAL_PAYMENT ADD CONSTRAINT ck_refund_status CHECK "
                 "(refund_status IN ('NONE','NOT_REQUIRED','REQUESTED','PENDING','COMPLETED','FAILED'))", {}))
+    if "MSP_RESERVATION_HISTORY" in tables:
+        columns = {row["name"] for row in inspector.get_columns("MSP_RESERVATION_HISTORY")}
+        if "details" not in columns:
+            operations.append(("add MSP_RESERVATION_HISTORY.details",
+                "ALTER TABLE MSP_RESERVATION_HISTORY ADD COLUMN details JSON DEFAULT NULL", {}))
     if "MSP_RENTAL_CONTRACT" in tables:
         columns = {row["name"] for row in inspector.get_columns("MSP_RENTAL_CONTRACT")}
         for column in ("pickup_location_snapshot", "return_location_snapshot"):

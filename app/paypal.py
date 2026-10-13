@@ -2,7 +2,7 @@ import hashlib
 import json
 import re
 from datetime import datetime, timezone
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from threading import Lock
 from time import monotonic
 from urllib.parse import urlsplit
@@ -282,7 +282,7 @@ class PayPalClient:
         self.http.close()
 
 
-def save_event(db, environment, event, raw, headers):
+def save_event(db, environment, event, raw, headers, *, verification_status="SUCCESS"):
     t = db.table("MSP_PAYPAL_WEBHOOK_EVENT")
     with Session(db.engine) as session, session.begin():
         where = (t.c.payment_environment == environment) & (t.c.paypal_event_id == event["id"])
@@ -292,7 +292,7 @@ def save_event(db, environment, event, raw, headers):
         try:
             with session.begin_nested():
                 session.execute(t.insert().values(paypal_event_id=event["id"], payment_environment=environment,
-                    event_type=event["event_type"], raw_body=raw, verification_headers=headers, verification_status="SUCCESS",
+                    event_type=event["event_type"], raw_body=raw, verification_headers=headers, verification_status=verification_status,
                     processing_status="PENDING", retry_count=0, received_at=now(), updated_at=now()))
         except IntegrityError:
             pass
@@ -312,9 +312,16 @@ def process_event(db, client, stored, snapshot, notifier=None):
             return
         order, capture = snapshot["order"], snapshot["capture"]
         payment = session.execute(select(p).where(p.c.payment_environment == row["payment_environment"],
-            p.c.paypal_order_id == order["id"]).with_for_update()).mappings().first()
+            p.c.paypal_order_id == order["id"])).mappings().first()
         if payment is None:
             raise Problem(500, "PAYMENT_NOT_MATCHED")
+        reservation = None
+        if payment["reservation_id"]:
+            reservation_table = db.table("MSP_RESERVATION")
+            reservation = session.execute(select(reservation_table).where(
+                reservation_table.c.reservation_id == payment["reservation_id"]).with_for_update()).mappings().first()
+        # Match order/capture/cancellation lock order: reservation, then payment.
+        payment = session.execute(select(p).where(p.c.payment_id == payment["payment_id"]).with_for_update()).mappings().one()
         if payment["payment_provider"] != "PAYPAL" or (payment["currency"], payment["total_price"]) != snapshot["amount"]:
             raise Problem(500, "PAYMENT_AMOUNT_MISMATCH")
         if capture and payment["paypal_capture_id"] not in (None, capture["id"]):
@@ -323,9 +330,7 @@ def process_event(db, client, stored, snapshot, notifier=None):
             raise Problem(500, "PAYMENT_SUBJECT_INVALID")
         reservation_status = None
         if payment["reservation_id"]:
-            reservation_table = db.table("MSP_RESERVATION")
-            reservation_status = session.scalar(select(reservation_table.c.reservation_status).where(
-                reservation_table.c.reservation_id == payment["reservation_id"]))
+            reservation_status = reservation["reservation_status"] if reservation else None
             if reservation_status is None:
                 raise Problem(500, "PAYMENT_SUBJECT_INVALID")
         if payment["rental_contract_id"]:
@@ -356,19 +361,55 @@ def process_event(db, client, stored, snapshot, notifier=None):
         if settled:
             status = "REFUNDED" if refunded == payment["total_price"] else "PARTIALLY_REFUNDED" if refunded else "PAID"
         elif payment["paid_at"] is None and status not in ("PAID", "PARTIALLY_REFUNDED", "REFUNDED", "REVERSED"):
-            if capture_status in ("DECLINED", "DENIED") or event["event_type"] == "CHECKOUT.PAYMENT-APPROVAL.REVERSED":
+            if capture_status in ("DECLINED", "DENIED", "FAILED") or event["event_type"] == "CHECKOUT.PAYMENT-APPROVAL.REVERSED":
                 status = "FAILED"
             elif capture_status == "PENDING" or order.get("status") == "APPROVED":
                 status = "PENDING"
         if payment["payment_status"] == "REVERSED" or event["event_type"] == "PAYMENT.CAPTURE.REVERSED":
             status = "REVERSED"
         values = dict(payment_status=status, refunded_amount=refunded, updated_at=now())
+        refund_target = payment.get("refund_requested_amount")
+        exceptional = payment.get("refund_reason") in ("LATE_CAPTURE", "DUPLICATE_CAPTURE")
+        if settled and reservation:
+            from app.payment_policy import payment_deadline
+            from app.payment_attempts import confirmed_unpaid
+            older_attempts = session.execute(select(p).where(
+                p.c.reservation_id == payment["reservation_id"], p.c.payment_environment == payment["payment_environment"],
+                p.c.payment_id < payment["payment_id"], p.c.paid_at.is_(None)).order_by(p.c.payment_id).with_for_update()).mappings()
+            for older in older_attempts:
+                if not confirmed_unpaid(client, older, terminal=True):
+                    # Out-of-order webhooks must not turn the original charge into the duplicate.
+                    raise Problem(503, "PAYMENT_PRIOR_ATTEMPT_UNRESOLVED")
+            history = db.table("MSP_RESERVATION_HISTORY")
+            events = list(session.execute(select(history).where(
+                history.c.reservation_id == reservation["reservation_id"])).mappings())
+            approvals = [item["created_at"] for item in events if item["event_type"] == "APPROVED"]
+            terminal = [item["created_at"] for item in events if item["new_reservation_status"] in ("CANCELED", "EXPIRED")]
+            captured_at = timestamp(capture["create_time"])
+            deadline = payment_deadline(min(approvals) if approvals else reservation["created_at"], reservation["start_datetime"])
+            late = captured_at >= deadline or bool(terminal and captured_at >= min(terminal))
+            other = session.execute(select(p.c.payment_id).where(
+                p.c.reservation_id == payment["reservation_id"], p.c.payment_environment == payment["payment_environment"],
+                p.c.payment_id != payment["payment_id"], p.c.paid_at.is_not(None),
+                (p.c.refund_reason.is_(None) | p.c.refund_reason.not_in(("LATE_CAPTURE", "DUPLICATE_CAPTURE"))))
+                .with_for_update()).first()
+            if late or other or exceptional:
+                exceptional = True
+                refund_target = payment["total_price"]
+                values.update(refund_requested_amount=refund_target, refund_percentage=100,
+                              refund_reason=payment["refund_reason"] if payment["refund_reason"] in ("LATE_CAPTURE", "DUPLICATE_CAPTURE") else "LATE_CAPTURE" if late else "DUPLICATE_CAPTURE",
+                              refund_requested_at=payment["refund_requested_at"] or now())
+            elif reservation_status == "CANCELED" and payment.get("refund_percentage") is not None:
+                # A delayed webhook for a pre-cancellation capture keeps the cancellation policy.
+                refund_target = (payment["total_price"] * Decimal(payment["refund_percentage"]) / 100).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+                values["refund_requested_amount"] = refund_target
         refund_status = payment.get("refund_status", "NONE")
-        if event["event_type"] == "PAYMENT.CAPTURE.REFUNDED":
+        provider_refund_status = (snapshot.get("refund") or {}).get("status")
+        if provider_refund_status == "COMPLETED":
             refund_status = "COMPLETED"
-        elif event["event_type"] == "PAYMENT.REFUND.PENDING":
+        elif provider_refund_status == "PENDING":
             refund_status = "PENDING"
-        elif event["event_type"] == "PAYMENT.REFUND.FAILED":
+        elif provider_refund_status in ("FAILED", "CANCELLED"):
             refund_status = "FAILED"
         elif (capture_status == "COMPLETED" and reservation_status in ("CANCELED", "EXPIRED")
               and payment.get("refund_requested_amount") is not None
@@ -376,9 +417,17 @@ def process_event(db, client, stored, snapshot, notifier=None):
               and refund_status not in ("NOT_REQUIRED", "COMPLETED", "PENDING")):
             refund_status = "REQUESTED"
             values["refund_requested_at"] = now()
+        if settled and refund_target is not None:
+            if refunded >= refund_target:
+                refund_status = "COMPLETED" if refund_target else "NOT_REQUIRED"
+            elif refund_status not in ("PENDING", "FAILED"):
+                refund_status = "REQUESTED"
         values["refund_status"] = refund_status
         if snapshot.get("refund"):
             values["paypal_refund_id"] = snapshot["refund"]["id"]
+            if provider_refund_status == "COMPLETED" and refund_status == "REQUESTED" and not payment.get("refund_attempt_state"):
+                # A repeated completed-refund event must not block the known remaining balance.
+                values["paypal_refund_id"] = None
         if capture:
             values["paypal_capture_id"] = capture["id"]
         if settled and payment["paid_at"] is None:
@@ -390,7 +439,7 @@ def process_event(db, client, stored, snapshot, notifier=None):
         session.execute(update(e).where(e.c.webhook_event_id == row["webhook_event_id"]).values(payment_id=payment["payment_id"],
             processing_status="PROCESSED", last_error=None, processed_at=now(), updated_at=now(),
             retry_count=row["retry_count"] + (1 if row["processing_status"] == "FAILED" else 0)))
-        if notifier and event["event_type"] == "PAYMENT.CAPTURE.COMPLETED" and settled and payment["reservation_id"] and reservation_status != "EXPIRED":
+        if notifier and event["event_type"] == "PAYMENT.CAPTURE.COMPLETED" and settled and not exceptional and payment["reservation_id"] and reservation_status not in ("EXPIRED", "CANCELED"):
             reservation = session.execute(select(reservation_table.c.uid_token, reservation_table.c.spot_master_id).where(
                 reservation_table.c.reservation_id == payment["reservation_id"])).mappings().first()
             if reservation:
@@ -404,51 +453,8 @@ def process_event(db, client, stored, snapshot, notifier=None):
 
 
 def execute_refund(db, client, payment_id):
-    payment_table = db.table("MSP_RENTAL_PAYMENT")
-    with Session(db.engine) as session, session.begin():
-        payment = session.execute(select(payment_table).where(payment_table.c.payment_id == payment_id)
-                                 .with_for_update()).mappings().first()
-        if not payment:
-            return False
-        refund_status = payment.get("refund_status", "NONE")
-        if refund_status in ("PENDING", "COMPLETED", "NOT_REQUIRED"):
-            return refund_status == "COMPLETED"
-        if refund_status != "REQUESTED":
-            return False
-        requested = payment.get("refund_requested_amount")
-        target = payment["total_price"] if requested is None else requested
-        remaining = target - payment["refunded_amount"]
-        if target <= 0:
-            session.execute(update(payment_table).where(payment_table.c.payment_id == payment_id)
-                            .values(refund_status="NOT_REQUIRED", updated_at=now()))
-            return False
-        if remaining <= 0:
-            session.execute(update(payment_table).where(payment_table.c.payment_id == payment_id)
-                            .values(refund_status="COMPLETED", updated_at=now()))
-            return True
-        if not payment["paypal_capture_id"]:
-            # A capture can still be pending. The capture-completed webhook retries this path.
-            return False
-        capture_id, currency = payment["paypal_capture_id"], payment["currency"]
-    try:
-        result = client.refund(capture_id, "nadree-refund-" + str(payment_id), currency, remaining)
-    except (Problem, SQLAlchemyError):
-        with db.engine.begin() as connection:
-            connection.execute(update(payment_table).where(payment_table.c.payment_id == payment_id,
-                payment_table.c.refund_status == "REQUESTED")
-                .values(refund_status="FAILED", updated_at=now()))
-            from app.notifications import payment_notification
-            payment_notification(db, connection, payment, "REFUND_FAILED", "refund-failed:" + str(payment_id))
-        return False
-    status = result.get("status") if isinstance(result, dict) else None
-    status = status if status in ("PENDING", "COMPLETED", "FAILED") else "PENDING"
-    values = {"refund_status": status, "updated_at": now()}
-    if isinstance(result, dict) and result.get("id"):
-        values["paypal_refund_id"] = identifier(result["id"])
-    with db.engine.begin() as connection:
-        connection.execute(update(payment_table).where(payment_table.c.payment_id == payment_id,
-            payment_table.c.refund_status == "REQUESTED").values(**values))
-    return status == "COMPLETED"
+    from app.refund_recovery import execute_refund as recover
+    return recover(db, client, payment_id)
 
 
 def handle_webhook(db, client, raw, event, headers, notifier=None, replay_store=None):
