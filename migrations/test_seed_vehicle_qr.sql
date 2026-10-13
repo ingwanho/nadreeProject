@@ -116,9 +116,9 @@ SELECT vehicle_id, @nr_qr_seed_spot, @nr_qr_seed_now, @nr_qr_seed_admin, 'QR equ
   FROM nr_qr_seed_rows WHERE @nr_qr_seed_ok = 1;
 
 INSERT INTO MSP_SENSOR
-    (sensor_id, vehicle_id, spot_id, legacy_sensor_code, sensor_type, sensor_code,
+    (sensor_id, vehicle_id, spot_master_id, legacy_sensor_code, sensor_type, sensor_code,
      is_active, created_by, created_at, updated_at)
-SELECT @nr_qr_seed_sensor, 'NRTEST-QR-SENSOR-001', org_id, 'NRTEST-LEGACY-SENSOR-001',
+SELECT @nr_qr_seed_sensor, 'NRTEST-QR-SENSOR-001', spot_master_id, 'NRTEST-LEGACY-SENSOR-001',
        'lte', 'NRTEST-LOCATION-SENSOR-001', 1, @nr_qr_seed_admin, @nr_qr_seed_now, @nr_qr_seed_now
   FROM MSP_SPOT_MASTER WHERE spot_master_id = @nr_qr_seed_spot AND @nr_qr_seed_ok = 1;
 

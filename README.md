@@ -6,6 +6,8 @@
 
 ## 현재 상태
 
+2026-10-13 최신 서버 적용: 테스트 DB 컬럼 4개와 API 재시작 완료. 파일별 격리 자동 테스트 272개, 별도 Firestore 4개·Rules 4개·함수 업무 핸들러 통과. 실제 API 검사 54개(임시 QR 키 설정 차단 2개 포함)·웹 읽기 3개는 기대 응답과 일치했다. 실제 QR 성공·결제 타이머/외부 PG·App Check/앱 화면 인수는 보류·미검증이다. [최신 서버 결과](docs/server-apply-verification-2026-10-13.md).
+
 ### 2026-10-13 추가 보완 — 로컬 구현, 서버 미적용
 
 QR은 센서 코드가 아니라 차량 식별값이다. 프론트는 `testQr123123` 같은 QR 원문을 기존 `POST /nadreego/vehicle/qr/validate`의 `qrCode`로 전달한다. 서버는 기존 HMAC-SHA256으로 `MSP_VEHICLE_QR.qr_code_hash`를 조회한다. 응답은 차량 정보와 `QR_ONLY`/`QR_WITH_SENSOR`, 선택 센서 ID를 제공한다. 센서 코드 조회 API는 잘못된 가정으로 추가했던 것이므로 제거했다. 차량 생성의 qrToken은 필수·sensorId는 선택이며 센서 없이도 QR 조회·변경이 가능하다. 새 매핑 테이블·컬럼·env·Firebase 변경은 없다.

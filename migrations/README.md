@@ -1,5 +1,7 @@
 # Nadree DB 변경 안내
 
+2026-10-13 실제 서버 반영: RIDERLOG_V2_DATA_TEST에서 접근 제한 백업 후 결제 복구·위치 정정 nullable 컬럼 4개를 적용하고 No pending changes를 확인했다. QR 시드는 임시 키 조건으로 미적용이며 실제 MSP_SENSOR의 spot_master_id에 맞춰 SQL만 정정했다. 아래 과거 “미적용”은 작성 당시 기록이다. [서버 적용·검증 결과](../docs/server-apply-verification-2026-10-13.md).
+
 ## 차량 QR 테스트 데이터 추가 (위치 조회 제외)
 
 [test_seed_vehicle_qr.sql](test_seed_vehicle_qr.sql)은 기존 테스트 지점·모델을 재사용해 다음 데이터를 추가한다. 실제 DB에는 아직 실행하지 않았다.
