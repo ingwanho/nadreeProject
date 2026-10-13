@@ -62,3 +62,34 @@ def test_expiry_and_committed_close_reject_new_messages(chat):
     store.sync_booking(booking, uid, shop, "APPROVED")
     with pytest.raises(ChatError, match="CHAT_READ_ONLY"):
         store.send(uid, "sid", room, str(uuid4()), "reopen")
+
+
+def test_admin_permissions_read_positions_and_event_deduplication(chat):
+    store, uid, shop = chat
+    primary, staff, outsider = [str(uuid4()) for _ in range(3)]
+    for admin in (primary, staff, outsider):
+        store.ref("chatUsers/" + admin).set({"active": True, "kind": "admin", "sessionId": "sid", "expiresAt": utcnow() + timedelta(hours=1)})
+    for admin, can_reply in ((primary, True), (staff, False)):
+        store.ref(f"chatShops/{shop}/members/{admin}").set({"active": True, "canReply": can_reply})
+    booking = str(uuid4())
+    room = store.sync_booking(booking, uid, shop, "REQUESTED")["roomId"]
+    assert store.ensure_booking(staff, "sid", booking)["roomId"] == room
+    with pytest.raises(ChatError, match="CHAT_ACCESS_DENIED"):
+        store.ensure_booking(outsider, "sid", booking)
+    with pytest.raises(ChatError, match="CHAT_ACCESS_DENIED"):
+        store.send(staff, "sid", room, str(uuid4()), "denied")
+    message = str(uuid4())
+    assert store.send(primary, "sid", room, message, "reply")["sequence"] == 1
+    assert store.send(primary, "sid", room, message, "reply")["sequence"] == 1
+    assert store.unread(uid, "sid", shop) == {"unreadMessages": 1, "unreadRooms": 1}
+    assert store.mark_read(uid, "sid", room, message) == {"position": 1}
+    assert store.mark_read(uid, "sid", room, message) == {"position": 1}
+    assert store.unread(uid, "sid", shop) == {"unreadMessages": 0, "unreadRooms": 0}
+    from google.cloud.firestore_v1.base_query import FieldFilter
+    events = list(store.db.collection("chatPushEvents").where(filter=FieldFilter("roomId", "==", room)).stream())
+    assert len(events) == 1
+    with pytest.raises(ChatError, match="CHAT_SESSION_REQUIRED"):
+        store.unread(uid, "wrong-session", shop)
+    store.ref("chatUsers/" + uid).set({"expiresAt": utcnow() - timedelta(seconds=1)}, merge=True)
+    with pytest.raises(ChatError, match="CHAT_SESSION_REQUIRED"):
+        store.send(uid, "sid", room, str(uuid4()), "expired")

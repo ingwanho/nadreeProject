@@ -6,6 +6,10 @@
 
 ## 현재 상태
 
+2026-10-13 백엔드 실제 검증: 사용자 env 수정과 승인된 API 재시작 후 이전 로그인 503은 해결됐다. 실제 인증·고객/관리자 로그인·채팅 세션·refresh·권한·오류 응답 검사 48개가 모두 통과했다. 격리 API 회귀 219개, Firestore 통합 4개·Rules 4개와 Python 6개 함수의 업무 핸들러도 통과했다. 실제 예약 생성/취소는 격리 검증으로 구분하며 App Check 종단·앱 화면·기기 푸시는 별도 미검증이다. [백엔드 검증 결과](docs/backend-api-verification-2026-10-13.md).
+
+2026-10-13 신규 채팅 실제 적용: 승인된 Node.js 함수 7개를 정리하고 Python callable 5개를 재생성·만료 함수 1개를 갱신했다. bail-472405/asia-southeast2의 Python 6개 ACTIVE, Rules 일치·인덱스 4개 READY, 15분 만료 실행과 API 재시작·단일 동기화 타이머를 확인했다. 최초 동기화는 지점 24개·예약방 8개 생성 성공이다. 전체 Python 회귀 219개 및 별도 Firestore 3개·Rules 4개가 통과했다. 실제 계정·유효 App Check·실기기 푸시/앱 인수는 아직 미검증이다. [실제 적용 결과](docs/chat-new-build-deployment-result-2026-10-13.md)에 완료·잔여 항목을 구분했다.
+
 2026-10-13 채팅 방향 확정: [채팅 계약](chat/chat-contract.md)과 현재 Python 구현을 정본으로 신규 구축한다. 기존 데이터 이전·구버전 호환 코드는 만들지 않는다. 기존 Node.js 채팅 함수 7개의 정리와 Python 함수 6개의 적용은 [신규 구축 실행안](docs/chat-new-build-deployment-plan-2026-10-13.md)의 정확한 목록으로 별도 승인을 받는다. 현재는 운영 적용·실제 앱 연동 인수 전이며 기존 FCM/Auth·차량 위치·채팅 외 데이터와 규칙을 보존한다.
 
 2026-10-12 채팅 추가: 기존 소스가 없다는 사용자 확인에 따라 [채팅 연동 계약](chat/chat-contract.md), 자카르타 `asia-southeast2` Functions·Rules·인덱스, 관리자/고객 채팅 세션 API 및 업무 동기화 코드를 신규 작성했다. 아래 과거 “채팅 소스 미제공” 상태를 대체한다. 기본 비활성이며 실제 Firebase 배포·운영 실연동은 별도다.

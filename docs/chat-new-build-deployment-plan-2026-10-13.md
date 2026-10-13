@@ -1,6 +1,6 @@
 # 나드리 채팅 신규 구축과 함수 정리 실행안
 
-기준일: 2026-10-13 UTC. 상태: 사용자 방향 확정, 삭제·배포 실행 승인 대기. 정본은 [채팅 계약](../chat/chat-contract.md)과 현재 Python 구현이다. 기존 데이터 이전·구버전 앱 호환·Node.js 호환 코드 없이 신규 구축한다. 이 문서 작성은 삭제·재배포·서버 재시작·동기화 실행이 아니다.
+기준일: 2026-10-13 UTC. **최신 상태: 권한 재검증 후 사용자 승인 범위의 함수 정리·Python 6개·Rules/인덱스/만료·API 재시작·동기화/타이머 적용 완료. 실제 계정·App Check·실기기 앱 인수는 미검증.** 실제 결과는 [적용 결과](chat-new-build-deployment-result-2026-10-13.md)를 따른다. 아래는 적용 전 실행안과 준비 점검 기록이며 권한 부족/미실행 문구는 당시 상태다. 정본은 [채팅 계약](../chat/chat-contract.md)과 현재 Python 구현이다. 기존 데이터 이전·구버전 앱 호환·Node.js 호환 코드 없이 신규 구축한다.
 
 ## 확인한 대상과 보존 범위
 
@@ -37,6 +37,8 @@ firebase functions:delete notifyBookingChatMessage setChatStatus ensureInquiryCh
 ```
 
 ## Python 함수 6개의 배포 순서
+
+삭제 전에 Functions 전용 venv의 requirements 설치·pip check, SDK 소스 분석으로 6개 endpoint와 자카르타 리전·스케줄 manifest 확인, 실제 배포 계정의 create/update/delete/upload/호출 정책 설정·서비스 계정 actAs·필수 API 상태를 모두 검증한다. 이 준비에 실패하면 기존 함수나 API 상태를 바꾸지 않는다.
 
 조건: 정본 코드·필수 의존성·비밀값 없는 백업 목록을 확정하고, 기존 일곱 함수 정리와 Rules/인덱스 확인을 승인받은 뒤 실행한다. 함수는 모두 nadree-chat / python312 / asia-southeast2다.
 
@@ -85,3 +87,41 @@ firebase deploy --project bail-472405 --only functions:nadree-chat:ensureInquiry
 기존 Node.js의 확인된 보안 문제를 그대로 복원하는 자동 rollback은 하지 않는다. 필요 시 접근 차단을 유지한 채 운영 담당자와 안전한 복구 범위를 결정한다. 기존 채팅 데이터 이전이나 구버전 호환을 복구 수단으로 추가하지 않는다. 새로운 채팅 테스트 자료 삭제도 대상 목록을 기록하고 테스트 자료에 한정한다.
 
 현재 승인 요청 범위는 **정확한 Node.js 7개 삭제, Python callable 5개 재생성, Python 만료 함수 확인/갱신과 15분 스케줄, 비채팅 보존을 전제로 한 Rules/인덱스 적용, API 필요 설정/재시작, 최초 동기화·단일 스케줄 적용**이다. 기존 데이터 전체 삭제, Auth 사용자 삭제, 공유 DB 마이그레이션, 채팅 외 함수/규칙/인덱스/스케줄 변경은 포함하지 않는다. 승인 전 이 운영 작업은 실행하지 않는다.
+
+## 삭제 전 사전 점검 결과와 교체 통제
+
+사용자는 Python 준비·배포 권한 점검과 활성 채팅 통제에 문제가 없으면 실행하도록 승인했다. 이번 점검 결과는 다음과 같다.
+
+| 항목 | 결과 |
+| --- | --- |
+| Functions 의존성 | requirements 설치 확인. firebase-functions 0.6.0, firebase-admin 6.9.0, pip check: No broken requirements found. API .venv는 변경하지 않음 |
+| SDK 소스 분석 | Firebase Python SDK의 get_functions/functions_as_yaml로 분석 성공. 예상 함수 6개 정확히 발견, 모두 gcfv2/asia-southeast2, maxInstances 10/timeout 60. 만료는 every 15 minutes/UTC/retry 3 |
+| 소스 App Check | 현재 main.py는 기본 true. 운영 환경값으로 해제하지 않는 것을 배포 전후 확인 |
+| 실제 배포 계정 | Firebase CLI 인증 qwer886901@gmail.com. FCM 서비스 계정과 구분 |
+| 배포 권한 | 프로젝트 testIamPermissions에서 아래 정책 설정 권한 2개 부족. 다른 검사한 Functions CRUD/upload/operation, Cloud Build, Cloud Run CRUD, Scheduler, Rules, 인덱스 권한은 반환됨 |
+| 서비스 계정 actAs | 실제 runtime/build 계정 272033658852-compute@developer.gserviceaccount.com 및 앱 기본 서비스 계정에 actAs 확인. 존재하지 않는 legacy Cloud Build 계정은 사용 대상이 아님 |
+| 필수 API | Functions/Cloud Build/Artifact Registry/Cloud Run/Cloud Scheduler/Firestore 모두 ENABLED |
+| 서버 | nadree-api.service, ec2-user, active. Settings chat_enabled=True. 서비스 유닛에 채팅 설정의 환경변수 override 없음 |
+| DB | RIDERLOG_V2_DATA_TEST, 읽기 전용 migrate No pending changes |
+| 현재 채팅 상태 | chatUsers/chatRoomAccess/chatRooms/chatPushEvents 각 최상위 문서 수 0. 실행 중 app.chat_sync PID 없음 |
+| 로컬 동기화 등록 | nadree 타이머 없음. cron 명령 미설치. cron/systemd 등록 파일을 읽기 검색해 app.chat_sync 등록 발견 못함. 외부 장비/운영자의 수동 실행까지 부재를 보장하지 않음 |
+
+부족한 권한과 목적:
+
+| 권한 | 필요한 이유 |
+| --- | --- |
+| cloudfunctions.functions.setIamPolicy | Firebase CLI의 신규 HTTPS/callable 생성 전 호출 정책 설정 검사를 통과해야 함. 실제 CLI checkIam 구현이 프로젝트 권한을 검사 |
+| run.services.setIamPolicy | 2세대 callable의 Cloud Run HTTP 호출 정책 설정. Firebase Auth/App Check 검사는 Python handler에서 계속 강제 |
+
+권한을 임의 추가하지 않았다. 적절한 배포 계정으로 전환하거나 위 계정에 필요한 두 권한을 운영 담당자가 적용한 뒤 같은 방식으로 재검증해야 한다. 기존 서비스 FCM 계정에 배포 관리자 권한을 부여하는 작업은 필요하지 않다. testIamPermissions는 사전 조건 확인이며 실제 빌드/배포 성공 전체를 보장하지 않는다.
+
+교체 통제 순서는 다음과 같다. **배포 권한이 준비되기 전에는 이 통제 변경도 시작하지 않는다.**
+
+1. 적용 직전 채팅 전용 Scheduler 전체 실행 주체, 동기화 프로세스·등록, chatUsers·대기 이벤트를 다시 확인한다. 발견된 동기화 타이머/cron만 정지하고 실행 중 작업의 종료를 기다린다. 만료 job이 있으면 그 채팅 job만 pause하고 기존 상태를 기록한다. 채팅 외 작업은 정지하지 않는다.
+2. 비공개 .env의 기존 NADREE_FCM_CHAT_ENABLED 값을 백업하고 false로 바꾼 뒤 API를 재시작한다. 새 프로세스의 설정 반영을 확인한다. 새 세션 발급은 CHAT_NOT_CONFIGURED로 차단되고 예약 후 채팅 동기화·업무 채팅 연결은 비활성이다. app.chat_sync 수동 진입점도 false일 때 작업 전에 종료한다. API 재시작 중에는 짧은 서비스 중단이 있으나 다른 업무 기능을 장기간 정지하지 않는다.
+3. 환경변수만으로 이전 Firebase 세션을 폐기했다고 간주하지 않는다. 현재 chatUsers가 0이므로 유효 채팅 세션 문서가 없지만 설정 전환 직후 다시 확인한다. 사이에 활성 문서가 생성됐으면 이 승인 범위의 세션 무효화 방식과 영향을 보고하고, 전송/조회 통제를 확인하기 전 삭제하지 않는다. 기존 Auth 사용자 자체는 삭제/비활성화하지 않는다.
+4. gate를 확인한 뒤 정확한 Node.js 7개를 정리하고 Python 6개/Rules/인덱스/만료를 적용한다. 허가된 운영자도 채팅 env를 임의 override하여 별도 sync를 실행하지 않도록 단일 적용 주체를 유지한다.
+5. 전체 callable 준비·App Check·스키마·IAM 확인 후 true 복원과 재시작을 수행한다. 최초 동기화·인수는 승인된 테스트 대상과 대기 이벤트 수신자를 확인한 뒤 실행한다. 테스트 푸시는 테스트 계정 기기에만 전달한다. 외부 연동 자료가 부족하면 성공을 추정하지 않고 미검증으로 보고한다.
+6. 단일 서버 동기화 타이머와 하나의 만료 스케줄을 활성화하고 상태·실행 결과를 확인한다. 배포/검증 실패 시 gate를 유지하고 실패 범위를 기록하며 기존 Node.js 보안 문제를 자동 복원하지 않는다.
+
+지금은 권한 부족 때문에 기존 함수 7개·만료 함수·스케줄·Rules·DB·API env·서비스 상태를 변경하지 않았다. 의존성 검증과 로컬 소스 분석, 읽기 전용 준비 점검만 완료했다.

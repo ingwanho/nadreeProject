@@ -1,0 +1,12 @@
+[Unit]
+Description=Nadree chat reconciliation
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ec2-user
+WorkingDirectory=/srv/nadree-api
+ExecStart=/srv/nadree-api/.venv/bin/python -m app.chat_sync
+TimeoutStartSec=15min
+UMask=0077

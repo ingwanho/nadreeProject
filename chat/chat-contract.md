@@ -4,6 +4,8 @@
 
 함수별 정리 대상·적용 순서·보존 범위는 [신규 구축 실행안](../docs/chat-new-build-deployment-plan-2026-10-13.md), 고객·관리자 앱 요구사항은 [앱 연동 안내](../docs/chat-app-integration-requirements-2026-10-13.md)를 따른다. 기존 FCM·Authentication 사용자·차량 위치 기능과 채팅 외 데이터·규칙은 보존한다. 신규 구축 결정은 기존 함수나 데이터의 무승인 삭제를 허용하지 않는다.
 
+2026-10-13 적용 상태: 사용자 승인 후 Node.js 채팅 7개 정리, Python 6개·Rules/인덱스·만료 스케줄·API/동기화 적용을 완료했다. 실제 계정·유효 App Check·실기기 앱 인수는 미검증이며 [실제 적용 결과](../docs/chat-new-build-deployment-result-2026-10-13.md)를 따른다.
+
 ## 프로젝트·리전
 
 - 기존 고객 Authentication·FCM 프로젝트를 사용한다. 실제 ID는 운영 `NADREE_FCM_PROJECT_ID`에서 확인하여 앱에 전달한다. 서비스 계정 비밀키는 앱/문서에 넣지 않는다.

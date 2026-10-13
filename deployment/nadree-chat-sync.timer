@@ -1,0 +1,10 @@
+[Unit]
+Description=Run Nadree chat reconciliation
+
+[Timer]
+OnBootSec=1min
+OnUnitInactiveSec=1min
+Unit=nadree-chat-sync.service
+
+[Install]
+WantedBy=timers.target
