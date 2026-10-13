@@ -1,5 +1,50 @@
 # 최신 변경 서버 적용·검증 결과
 
+PayPal 후속 검증: 현재 Sandbox 키 인증·웹훅 등록 조회·USD 1.00 주문 생성/조회·재사용은 성공했다. 관련 자동 테스트 59개·격리 API 11개·실제 서비스 오류 검사 4개 통과. Merchant ID는 실제 판매자와 불일치하여 사용자 요청으로 제외했고 실제 구매자 승인 상태가 CREATED라 캡처·환불/웹훅 정산 성공은 미검증이다. [PayPal 실제 검증 결과](paypal-sandbox-verification-2026-10-13.md).
+
+## QR 후속 적용 완료 — 새 키 반영 후
+
+사용자가 새 QR 키 저장 후 테스트 시드 추가·API 재시작을 명시적으로 승인했다. 키 값이나 해시는 출력하지 않았고 키를 수정하지 않았다. 최소 32바이트 조건 충족, DB RIDERLOG_V2_DATA_TEST, 전체 MSP_VEHICLE_QR/MSP_VEHICLE_QR_HISTORY 각 0개, 시드의 모든 식별자/해시 충돌·선행 데이터 조건 충족을 읽기 전용으로 확인했다. 아래 이전 “임시 QR 키/시드 보류”는 과거 기록이다.
+
+05:32:34 UTC nadree-api.service를 재시작했다(MainPID 1632587, active/running). 실행 환경과 dotenv Settings가 모두 일치했고 /health/live 및 /health/ready는 200이었다. 기존 MFA_FLOW_NOT_IMPLEMENTED 제한은 유지된다.
+
+시드 INSERT의 8개 테이블 컬럼을 실제 DB와 비교했고 MSP_SENSOR.spot_master_id가 반영됐음을 확인했다. 센서 코드는 실제 스키마에서 legacy_sensor_code 기반 생성 컬럼이므로 직접 INSERT하지 않도록 SQL을 추가 정정했다. DB 스키마는 변경하지 않았다.
+
+### 백업·시드 적용
+
+기존 승인에 따라 시드 실행 직전 관련 10개 테이블의 새 single-transaction 백업을 생성했다. 파일은 `build/server-apply-2026-10-13/pre-apply-053400.private.sql`, 874,944 bytes, mode 600(부모 디렉터리 700), SHA-256 `1f706f60b60fe0c428eda493df3913016b7fd0e61857e7df9c212dc5ecbfee0d`다. 10개 CREATE TABLE과 체크섬을 확인했다. 백업 원문·자격정보는 문서/로그에 기록하지 않았다. 실제 복원 리허설은 수행하지 않았으며 복원은 별도 범위 확인 후 승인받아 진행한다.
+
+현재 서버 키로 testQr123123 / testQr456456의 HMAC-SHA256을 메모리에서 계산하고 SQL 세션 변수에 전달했다. 조건 guard와 지점 잠금·트랜잭션을 유지하여 아래 행 증가만 확인하고 커밋했다. 기존 행 UPDATE/DELETE나 다른 시드 재실행은 없었다.
+
+| 테이블 | 추가 행 |
+| --- | --- |
+| MSP_VEHICLE / MSP_RENTAL_VEHICLE / MSP_VEHICLE_STATUS / MSP_VEHICLE_SPOT_HISTORY | 각각 2 |
+| MSP_SENSOR / MSP_SENSOR_SPOT_HISTORY | 각각 1 |
+| MSP_VEHICLE_QR / MSP_VEHICLE_QR_HISTORY | 각각 2 |
+| MSP_RENTAL_PAYMENT / MSP_RESERVATION_HISTORY | 0, 기존 행 수 유지 |
+
+중간 실행 두 번은 각각 MySQL 1270(collation 혼합), 3105(sensor_code 생성 컬럼 직접 입력)로 **커밋 전 롤백**됐다. 롤백 후 QR/식별자 없음과 모든 조건 충족을 재확인했다. 연결 collation을 해시 변수 설정 전에 SQL과 같게 지정하고 생성 컬럼 직접 입력을 제거한 최종 실행이 성공했다. 재실행 시에도 같은 결과를 얻도록 저장소 SQL에 입력 해시 세션 변수의 collation 정규화를 추가했다. 해시 내용·키·조건 검사는 바꾸지 않았다. 초기 읽기 전용 검사 스크립트가 조건식 대신 초기화 0을 읽은 오류도 수정했으며 실제 사전 조건은 충족했다.
+
+### 실제 QR 검증 결과
+
+승인된 대표 nadree.test.admin 및 일반관리자 nadree.test.manager로 실행했다. health 2개, 무인증 1개, 각 계정 로그인·정상 QR 2개·없는 QR·센서 코드 대체 조회·로그아웃 6개씩, **총 15개 모두 통과**했다. access/refresh·비밀번호·키는 출력하지 않았다. 마지막에 테스트 세션을 로그아웃했고 계정이나 권한은 삭제/변경하지 않았다.
+
+| 입력/검사 | 실제 결과 — 대표·일반관리자 각각 |
+| --- | --- |
+| testQr123123 | 200, vehicleId NRTEST-QR-ONLY-001, equipmentType QR_ONLY, sensorId null, sensorStatus NOT_LINKED, qrStatus ACTIVE |
+| testQr456456 | 200, vehicleId NRTEST-QR-SENSOR-001, equipmentType QR_WITH_SENSOR, sensorId NRTEST-SENSOR-QR-001, sensorStatus LINKED, qrStatus ACTIVE |
+| 미등록 QR | 404 QR_NOT_FOUND |
+| 실제 생성 센서 코드 NRTEST-LEGACY-SENSOR-001을 QR로 전달 | 404 QR_NOT_FOUND |
+| 인증 없이 등록 QR 조회 | 401 AUTH_REQUIRED |
+
+vehicle.vehicleId 일치, sensor 유무에 따른 LOCATION 표시, QR 해시/원문·센서 코드 비노출도 응답에서 확인했다. 비밀값 없는 재현 결과는 `build/test-runtime/latest-live-qr-results.json`에 보관했다. 재시작 이후 서비스 로그의 오류 종류 필터에서 새 API Traceback/SQL/Firebase 초기화 오류는 발견하지 못했다.
+
+**실제 타 지점 QR 차단은 미검증**이다. 두 승인 계정이 모두 같은 지점 소속이고 별도 테스트 계정이 없으며, 사용자가 해당 실제 검증 보류를 선택했다. 기존 격리 QR 테스트의 타 지점/무인증 차단 통과와 구분한다. 운영 계정을 임의 사용하거나 기존 지점·권한을 변경하여 검증하지 않았다.
+
+이번 후속 작업에서 결제 타이머·환불·푸시 발송·Firebase 배포·위치 조회·App Check 실기기 검증은 실행하지 않았다. 실제 QR 시드와 조회는 이제 완료됐으며, 남은 사용자 작업은 원할 경우 타 지점의 승인된 테스트 관리자 자료를 제공하는 것이다.
+
+## 이전 서버 적용 기록
+
 대상 커밋: `7b94277` (`프론트 추가사항`). 수행일: 2026-10-13 UTC. 기준: AGENTS.md, 최신 [전체 인수 문서](nadree-full-change-handoff.md), [마이그레이션 안내](../migrations/README.md), [QR 시드](../migrations/test_seed_vehicle_qr.sql), 고객 앱·웹 전달 문서. 부모 명세 파일 `/srv/rental-project-master.md`, `/srv/rental-api-review-decisions.md`는 이 서버에 없어 직접 대조하지 못했다.
 
 **테스트 DB 마이그레이션 4개와 API 재시작은 완료했다. 자동 테스트는 파일별 격리 실행에서 272개 통과했고 별도 Firestore 4개·Rules 4개·함수 업무 핸들러도 통과했다. 실제 API 검사 54개, 웹 읽기 검사 3개가 기대 응답과 일치했다. 실제 QR 정상 조회와 결제 타이머는 아래 사유로 보류했으므로 전체 인수 완료로 표시하지 않는다.**

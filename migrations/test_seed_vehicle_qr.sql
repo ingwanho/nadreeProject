@@ -12,6 +12,10 @@
 -- sensor_code는 위 QR 원문/해시와 다른 별도 장치 식별값이다.
 
 SET NAMES utf8mb4 COLLATE utf8mb4_unicode_ci;
+-- init-command에서 전달한 세션 변수도 같은 collation으로 맞춘다.
+-- 해시 내용과 사전 조건은 바꾸지 않는다.
+SET @nr_qr_only_hash = CONVERT(@nr_qr_only_hash USING utf8mb4) COLLATE utf8mb4_unicode_ci;
+SET @nr_qr_sensor_hash = CONVERT(@nr_qr_sensor_hash USING utf8mb4) COLLATE utf8mb4_unicode_ci;
 SET @nr_qr_seed_ok = 0;
 SET @nr_qr_seed_now = UTC_TIMESTAMP();
 SET @nr_qr_seed_spot = '00000000-0000-4000-8000-000000000101';
@@ -116,10 +120,12 @@ SELECT vehicle_id, @nr_qr_seed_spot, @nr_qr_seed_now, @nr_qr_seed_admin, 'QR equ
   FROM nr_qr_seed_rows WHERE @nr_qr_seed_ok = 1;
 
 INSERT INTO MSP_SENSOR
-    (sensor_id, vehicle_id, spot_master_id, legacy_sensor_code, sensor_type, sensor_code,
+-- 실제 DB의 sensor_code는 legacy_sensor_code에서 계산되는 생성 컬럼이다.
+-- 생성 컬럼에 값을 직접 쓰지 않는다.
+    (sensor_id, vehicle_id, spot_master_id, legacy_sensor_code, sensor_type,
      is_active, created_by, created_at, updated_at)
 SELECT @nr_qr_seed_sensor, 'NRTEST-QR-SENSOR-001', spot_master_id, 'NRTEST-LEGACY-SENSOR-001',
-       'lte', 'NRTEST-LOCATION-SENSOR-001', 1, @nr_qr_seed_admin, @nr_qr_seed_now, @nr_qr_seed_now
+       'lte', 1, @nr_qr_seed_admin, @nr_qr_seed_now, @nr_qr_seed_now
   FROM MSP_SPOT_MASTER WHERE spot_master_id = @nr_qr_seed_spot AND @nr_qr_seed_ok = 1;
 
 INSERT INTO MSP_SENSOR_SPOT_HISTORY

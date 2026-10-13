@@ -6,6 +6,10 @@
 
 ## 현재 상태
 
+PayPal Sandbox 후속 검증: 인증·주문 생성/조회 연결 확인, 자동 회귀 59개·격리 API 11개·실제 서비스 오류 응답 4개 통과. Merchant ID 설정과 실제 구매자 승인(APPROVED)이 없어 캡처·환불/정산 성공은 아직 미검증이다. [PayPal 검증 결과](docs/paypal-sandbox-verification-2026-10-13.md).
+
+QR 후속 적용 완료: 사용자 설정 키를 변경하지 않고 테스트 차량 2대·센서 1개와 QR/연결 이력을 추가했다. 대표·일반관리자의 QR_ONLY/QR_WITH_SENSOR 실제 조회와 오류/인증 검사 등 15개가 통과했다. 실제 타 지점 QR 차단은 별도 승인 계정이 없어 보류했다. [최신 QR 적용 결과](docs/server-apply-verification-2026-10-13.md).
+
 2026-10-13 최신 서버 적용: 테스트 DB 컬럼 4개와 API 재시작 완료. 파일별 격리 자동 테스트 272개, 별도 Firestore 4개·Rules 4개·함수 업무 핸들러 통과. 실제 API 검사 54개(임시 QR 키 설정 차단 2개 포함)·웹 읽기 3개는 기대 응답과 일치했다. 실제 QR 성공·결제 타이머/외부 PG·App Check/앱 화면 인수는 보류·미검증이다. [최신 서버 결과](docs/server-apply-verification-2026-10-13.md).
 
 ### 2026-10-13 추가 보완 — 로컬 구현, 서버 미적용

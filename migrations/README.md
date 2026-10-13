@@ -1,5 +1,7 @@
 # Nadree DB 변경 안내
 
+QR 후속 적용: 새 서버 키 조건 확인·백업·API 재시작 후 테스트 차량 2대/센서 1개·QR 이력을 추가했다. 실제 대표/일반관리자 조회는 성공했으며 전체 후속 검사 15개 통과다. MSP_SENSOR.sensor_code는 실제 생성 컬럼이므로 SQL은 직접 값을 넣지 않고, 전달 해시 세션 변수의 collation을 정규화한다. 키 변경·기존 행 덮어쓰기는 하지 않았다. 아래 “QR 미적용”은 이전 기록이며 [최신 QR 결과](../docs/server-apply-verification-2026-10-13.md)를 따른다.
+
 2026-10-13 실제 서버 반영: RIDERLOG_V2_DATA_TEST에서 접근 제한 백업 후 결제 복구·위치 정정 nullable 컬럼 4개를 적용하고 No pending changes를 확인했다. QR 시드는 임시 키 조건으로 미적용이며 실제 MSP_SENSOR의 spot_master_id에 맞춰 SQL만 정정했다. 아래 과거 “미적용”은 작성 당시 기록이다. [서버 적용·검증 결과](../docs/server-apply-verification-2026-10-13.md).
 
 ## 차량 QR 테스트 데이터 추가 (위치 조회 제외)
