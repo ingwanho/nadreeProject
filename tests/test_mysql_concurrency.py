@@ -50,24 +50,33 @@ def test_mysql_role_transfer_rechecks_role_after_waiting_for_spot_lock(client, s
 def test_mysql_child_code_allocation_is_serialized(client, signin):
     headers = signin()
     results = race(lambda name: client.post("/api/v1/organizations/spots", headers=headers,
-        json={"spot_name": name, "unit_type": "spot", "parent_spot_id": "root"}), ["One", "Two"])
+        json={"spot_name": name, "unit_type": "spot", "parent_spot_id": "root",
+              "email": "shop@example.com", "address": "Isolated test shop",
+              "lat": -8.65, "lng": 115.2}), ["One", "Two"])
     assert [result.status_code for result in results] == [200, 200]
     assert len({result.json()["unit_code"] for result in results}) == 2
 
 
-def test_mysql_email_change_serializes_new_email_claim(client, signin, monkeypatch):
+def test_mysql_email_change_serializes_new_email_claim(client, signin, setup, monkeypatch):
     headers = [signin("general"), signin("general2")]
     gate = Barrier(2)
-    original = auth.lock_email
+    original = auth.principal
 
-    def synchronized_lock(session, email):
+    def synchronized_principal(request, session):
+        actor = original(request, session)
+        # Meet before account/refresh row locks. A barrier after those locks
+        # can deadlock the test itself when a token lookup locks scanned rows.
         gate.wait(timeout=10)
-        original(session, email)
+        return actor
 
-    monkeypatch.setattr(auth, "lock_email", synchronized_lock)
+    monkeypatch.setattr(auth, "principal", synchronized_principal)
     results = race(lambda header: client.post("/nadreego/admin/update", headers=header,
         json={"email": "same-new@example.com"}), headers)
     assert sorted(result.status_code for result in results) == [200, 409]
+    admins = setup["db"].table("MSP_ADMIN")
+    with setup["engine"].connect() as conn:
+        assert conn.scalar(select(func.count()).select_from(admins)
+                           .where(admins.c.email == "same-new@example.com")) == 1
 
 
 def test_mysql_request_approval_and_rejection_only_process_once(client, signin, applicant, setup):

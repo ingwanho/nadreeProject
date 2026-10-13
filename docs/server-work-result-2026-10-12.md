@@ -53,3 +53,23 @@ Read-only plan; no database writes.
 별도 개발 잔여 항목도 그대로 남아 있다: PG 상태 불명확 만료 처리, 늦은/중복 결제 자동 전액 환불, 실패 환불 재시도·재처리, 예약 위치 정정 계약·이력, 센서 QR 변환·차량 이동, 공유 서버 권한 변경 시 즉시 채팅 회수. 필수 상위 정책 문서 확보 후 구현 범위와 계약을 확인해야 한다.
 
 프론트 전달 후보 설정: 프로젝트 `bail-472405`, 리전 `asia-northeast3`, API `https://na-dree.com`. 채팅 실사용 가능한 배포 상태로 전달하면 안 된다.
+
+## 후속 검증: 건너뛴 테스트 실행 완료
+
+2026-10-12 08:03 UTC 추가 기록. 위 내용은 최초 점검 시점의 상태이며, 최신 Firebase/DB 배포 상태는 `firebase-deployment-trace-and-replacement-plan-2026-10-12.md`를 따른다. 현재 계약의 함수 리전은 자카르타 `asia-southeast2`다.
+
+| 테스트 | 실제 결과 | 격리 환경 |
+| --- | --- | --- |
+| MySQL 동시성 6개 | 6 passed, 0 skipped, 2 deprecation warnings, 5.85초 | 공식 MySQL Community 8.4.6, 네트워크 비활성, 임시 디렉터리 전용 Unix socket, 새 `nadree_w02_test_*` DB |
+| Firestore 트랜잭션 3개 | 3 passed, 0 skipped, 2 deprecation warnings, 8.76초 | demo-nadree-chat, Firestore emulator 1.19.8, 127.0.0.1:18080 |
+| Firestore Rules 4개 | 4 passed, 0 failed/skipped | 같은 demo 에뮬레이터, 현재 저장소 Rules |
+
+기존 Python 213 passed/9 skipped에서 건너뛴 9개는 이번에 모두 별도 실행했다. 전체 222개를 한 번에 실행했다고 보고하지는 않는다. Rules 4개는 Python 테스트와 별도다. Rules 출력의 PERMISSION_DENIED는 금지된 클라이언트 쓰기의 거절을 확인하는 기대 결과다.
+
+MySQL 최초 실행은 4 passed/2 failed였다. 지점 생성 테스트는 최신 필수 이메일·주소·좌표가 없어 422였으며 테스트 요청을 수정했다. 이메일 경쟁 테스트는 account/refresh row lock 뒤의 barrier 때문에 두 요청이 만나지 못해 BrokenBarrierError였다. barrier를 principal 확인 직후, DB 잠금 이전으로 이동하고 최종 동일 이메일 소유자가 1명인지 검증을 추가했다. 수정 범위는 `tests/test_mysql_concurrency.py`이며 서비스 코드·정책은 변경하지 않았다. 재실행에서 6개 모두 통과했다.
+
+Java는 공식 Amazon Corretto 17.0.20.12.1, Node는 기존 22.23.2, Firebase CLI는 기존 13.35.1이다. 시스템 패키지를 설치하거나 기존 API 가상환경을 갱신하지 않고 `build/test-runtime/`에 검증 런타임을 풀었다. Firebase 설정은 별도 파일과 demo 프로젝트를 사용하고 실제 자격증명/NADREE 환경변수는 테스트에 전달하지 않았다. CLI의 Rules 경로 제한을 해결하기 위해 현재 Rules/인덱스와 바이트 동일한 파일을 검증 설정 디렉터리에 복사했고 최종 실행은 경로 경고 없이 성공했다.
+
+테스트용 MySQL 두 인스턴스와 Firestore 에뮬레이터는 종료했다. 런타임·임시 DB 파일은 git에서 제외되는 `build/test-runtime/`에 남아 있다. 공유 DB 변경·운영 Firebase 배포·채팅 활성화·API 재시작·실제 결제/환불/고객 푸시는 수행하지 않았다.
+
+검증 범위는 현재 Python 구현/SQL API 동시성과 저장소 Rules다. 기존 배포 Node.js callable과 현재 계약의 불일치, 출시 앱과 실제 Auth/App Check/FCM·PayPal Sandbox 인수는 이 테스트 통과로 해결되거나 완료되지 않는다.
