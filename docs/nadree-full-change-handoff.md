@@ -46,6 +46,14 @@ deliveryRequestType=START_ONLY면 전달 주소 필수·반환 주소 null/생�
 
 ### PayPal 판매자 연결 — 별도 테이블 없음
 
+#### 2026-10-19 앱 복귀 역할 분담 — 프론트 전달
+
+- 대상은 관리자 앱이다. PASS처럼 PayPal 로그인·판매자 연결 동의 후 기존 앱 화면으로 돌아오는 UX를 프론트에서 구현한다. 백엔드는 별도 홈페이지나 임의 복귀 URL을 만들지 않으며 이번 작업에서 실제 env 값을 추가·변경하지 않는다.
+- 앱 복귀 링크와 연결 화면 종료 처리는 프론트 담당이다. 현재 지원하는 HTTPS App Link/Universal Link 등 복귀 방식을 정하고, 사용할 HTTPS URL을 서버 담당자에게 전달한다. 커스텀 스킴을 선택하면 현재 HTTPS 제한과 호환되는지 사전 협의가 필요하다.
+- PayPal 완료/앱 복귀만으로 저장 성공으로 판단하지 않는다. 프론트가 state와 기존 관리자 인증으로 verify를 호출하고, 서버의 판매자 검증·DB 저장 성공 응답을 받은 뒤 연결 화면을 종료하고 기존 화면에 완료 상태를 표시한다. 실패·취소는 완료로 표시하지 않는다. 예약 승인은 별도 재요청이다.
+- 백엔드는 현재 start/verify 계약을 유지한다. `NADREE_PAYPAL_ONBOARDING_RETURN_URL`을 제거하는 결정이 아니라 프론트 확정 전 설정을 보류하는 결정이다. URL을 전달받으면 실제 연동 전에 서버 설정에 반영해야 한다. 미설정 상태의 start는 `503 PAYPAL_ONBOARDING_RETURN_URL_REQUIRED`이며, URL 없이 자동 복귀되는 것으로 안내하지 않는다.
+- 인수 확인: 실제 Android/iOS에서 복귀, state 전달, 같은 관리자 로그인 세션 유지, verify 성공 후 화면 종료, 실패·사용자 취소 처리를 확인한다. 현재 프론트 구현·기기 검증은 완료로 간주하지 않는다.
+
 사용자 결정으로 온보딩 테이블·상태 복구 CLI·전용 타이머는 제외한다. 기존 MSP_SPOT_RENT.paypal_merchant_id에 검증된 판매자를 저장하며 같은 ID를 여러 지점에 허용한다. Sandbox/Live 혼동 방지용 paypal_environment와 원거래 환불 대상을 보존하는 MSP_RENTAL_PAYMENT.paypal_merchant_id는 기존 설계대로 유지한다. 추가 세션 컬럼은 없다.
 
 프론트 흐름:
@@ -53,7 +61,7 @@ deliveryRequestType=START_ONLY면 전달 주소 필수·반환 주소 null/생�
 1. 예약 APPROVE 시 ID가 없으면 409 SHOP_PAYPAL_MERCHANT_REQUIRED. 예약 상태는 REQUESTED로 유지하고 거절은 가능하다. 프론트는 ‘PayPal 판매자 연결이 필요합니다’와 연결 버튼을 표시한다. 일반관리자는 직접 지점 대표에게 연결을 요청한다.
 2. 직접 지점 대표가 POST `/nadreego/shop/paypal-onboarding/start`, `{ "spotMasterId":"..." }`를 호출한다. 응답의 actionUrl을 연다. URL 발급을 승인 오류 처리 안에서 자동 실행하거나 백엔드가 UI를 띄우지는 않는다.
 3. start 응답은 state/actionUrl/expiresAt/paymentEnvironment다. state는 서버가 서명한 30분 유효값이며 관리자 로그인 세션·지점·환경·PayPal tracking ID에 연결된다. DB에 저장하지 않는다. 반복 start는 새 연결 URL을 발급한다. 이미 ID가 있으면 SHOP_PAYPAL_ALREADY_CONNECTED다.
-4. PayPal 로그인·동의 후 env에 설정한 HTTPS 프론트 복귀 페이지로 이동한다. 프론트는 복귀 query의 state와 관리자 인증으로 POST `/nadreego/shop/paypal-onboarding/verify`, `{ "spotMasterId":"...", "state":"..." }`를 호출한다. 서버는 서명·만료·현재 대표 권한을 확인하고 PayPal tracking 조회로 판매자 ID 및 수취/이메일/플랫폼 권한을 검증한 뒤 지점 컬럼에 저장한다. 브라우저 merchantId/merchantIdInPayPal 값을 직접 저장하지 않는다.
+4. PayPal 로그인·동의 후 프론트가 정하여 env에 반영한 HTTPS 앱 복귀 주소로 이동한다. 별도 홈페이지 화면을 보여줄 필요는 없다. 프론트는 복귀 query의 state와 관리자 인증으로 POST `/nadreego/shop/paypal-onboarding/verify`, `{ "spotMasterId":"...", "state":"..." }`를 호출한다. 서버는 서명·만료·현재 대표 권한을 확인하고 PayPal tracking 조회로 판매자 ID 및 수취/이메일/플랫폼 권한을 검증한 뒤 지점 컬럼에 저장한다. 브라우저 merchantId/merchantIdInPayPal 값을 직접 저장하지 않는다.
 5. verify 성공 응답은 spotMasterId/merchantId/paymentEnvironment다. 프론트에서 기존 승인 요청을 다시 실행한다. 연결 완료만으로 예약을 자동 승인하지 않는다.
 
 저장값 조회는 기존 GET `/nadreego/shop/paypal-merchant?spotMasterId=...`, 연결 해제는 PUT 같은 경로에 `{ "spotMasterId":"...", "merchantId":null }`이다. 임의 판매자 ID 입력은 거절한다. 새 /status·/refresh API는 제외한다. Sandbox ID가 남은 채 Live로 전환하면 환경 불일치로 승인/결제를 차단하며 대표가 기존 연결을 해제하고 Live로 다시 연결해야 한다.
@@ -77,7 +85,7 @@ state 만료는 410 PAYPAL_ONBOARDING_STATE_EXPIRED, 변조/다른 지점·환�
 ### 서버 적용 순서 — 아래 명령은 아직 실행하지 않음
 
 1. 사용자 변경을 보존하여 코드 배포. DB 백업과 대상 DB 이름을 먼저 확인한다.
-2. ec2-user가 읽을 수 있는 `/srv/nadree-api/.env`에 기존 Platform Client ID/Secret/Webhook/Partner Merchant ID와 `NADREE_PAYPAL_ONBOARDING_RETURN_URL='https://프론트복귀페이지'`를 설정한다. URL에는 query/fragment를 넣지 않는다. `NADREE_CORS_ORIGINS`에는 필요한 기존 origin을 유지하면서 `https://www.riderlog-lte.com:50045`를 쉼표로 구분해 포함한다.
+2. ec2-user가 읽을 수 있는 `/srv/nadree-api/.env`의 기존 Platform Client ID/Secret/Webhook/Partner Merchant ID를 확인한다. 복귀 URL은 지금 임의로 추가하지 않는다. 프론트에서 HTTPS 앱 복귀 주소를 전달받은 뒤 실제 연결 테스트 전에 `NADREE_PAYPAL_ONBOARDING_RETURN_URL`에 설정한다. URL에는 query/fragment를 넣지 않는다. 미설정 동안 온보딩 start는 사용할 수 없다. `NADREE_CORS_ORIGINS`에는 필요한 기존 origin을 유지하면서 `https://www.riderlog-lte.com:50045`를 쉼표로 구분해 포함한다.
 3. 마이그레이션 계획을 확인한다. 이번 요청 결과·개인정보·온보딩 관련 신규 테이블은 모두 제외했다. 판매자 연결은 기존 지점/결제 컬럼만 사용한다. 이전 미적용 판매자 컬럼 등도 계획에 포함될 수 있다.
 
 ```sh
