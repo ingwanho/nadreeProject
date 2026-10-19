@@ -6,6 +6,8 @@
 
 ## 현재 상태
 
+2026-10-19 현재 서버 검증: 읽기 전용 마이그레이션 pending 없음, 기본 회귀 314 passed/10 skipped 재현. MySQL 포함 320 passed/4 skipped 및 별도 Firestore 4개 통과. 실제 가격 수정/원복·권한/state 차단은 통과했으나 현재 Sandbox OAuth는 401 invalid_client이며 복귀 URL은 설정 대기다. 실제 PG/탈퇴/App Check 종단과 결제 복구 운영 등록은 별도 확인이 필요하다. [요구사항 검증 결과](docs/server-requirements-verification-2026-10-19.md).
+
 2026-10-18 온보딩 테이블까지 제외한 뒤 로컬 회귀는 314개 통과·10개 건너뜀(MySQL 6·Firestore 4)이다. 신규 기능은 아직 운영 배포/실 PG·Firebase 인수 전이다.
 
 2026-10-18: BASE/BASIC 부분 구간 우선·배열 저장, 가격 옵션 스냅샷, 지점 귀책 당일 관리자 취소, 기존 예약 중복 검증, 종료 내역/직접 조회, PayPal URL 연결·기존 지점 컬럼 저장, 기존 탈퇴 처리 검증, App Check 디버그 검증 도구를 추가했다. 이메일 가입은 승인 대기, 일회성 지점 가입코드는 대표 즉시 활성화로 유지한다. 배송 주소 자동 구역 판정은 사용자 결정으로 제외했다. 요청 결과·개인정보·온보딩 신규 테이블 3개와 전용 타이머는 모두 제외했다. 기존 판매자 컬럼 변경만 유지하며 서버 미적용이다. **최신 계약·프론트 예시·서버 적용은 [전체 인수 문서의 2026-10-18 절](docs/nadree-full-change-handoff.md)을 우선한다.** 실제 MySQL/Firebase/PayPal 연동 인수는 별도다.
