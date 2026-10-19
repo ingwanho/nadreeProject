@@ -15,6 +15,7 @@ from app.errors import Problem
 from app.fcm import queue_reservation_request
 from app.headers import fcm_header, refresh_header
 from app.paypal import execute_refund, identifier
+from app.merchant_accounts import payment_client, spot_merchant
 from app.refunds import prepare_booking_refund
 from app.payment_policy import payment_deadline
 from app.payment_attempts import attempts, guard_other_attempts, inspect_order, replay_allowed
@@ -24,7 +25,7 @@ from app.rental_inputs import (NadriAvailability, NadriLogin, NadriPaymentCaptur
                                NadriPaymentOrder, NadriProfile, NadriRentalRequest, ReservationCancel)
 from app.responses import (CustomerAccountDeletion, CustomerAvailability, CustomerCancellation, CustomerLogin,
                            CustomerPage, CustomerPayment, CustomerProfileResult,
-                           CustomerRequest, Status, Tokens)
+                           CustomerRequest, CustomerReservationDetail, Status, Tokens)
 from app.security import fingerprint, now, sign_user_access, user_principal
 
 router = APIRouter(prefix="/api/v1/nadree/rental", tags=["Nadree customer rentals"])
@@ -151,12 +152,13 @@ def _model_view(model):
             "modelImageKey": model.get("model_image_key")}
 
 
-def _delivery(request, session, spot, model, pickup, returned, *, required=False):
+def _delivery(request, session, spot, model, pickup, returned, *, required=False, region_id=None, delivery_type=None):
     if not required:
         return {"deliveryRegionId": None, "deliveryStartFee": 0, "deliveryReturnFee": 0,
                 "deliveryTotalFee": 0, "deliveryRequestType": "PICKUP"}
     service = (spot.get("rent") or {}).get("delivery_service_type") or "NONE"
-    if service != "START_AND_RETURN" or model.get("is_delivery_supported") != 1:
+    kind = delivery_type or ("START_AND_RETURN" if returned else "START_ONLY")
+    if service not in ("START_ONLY", "START_AND_RETURN") or model.get("is_delivery_supported") != 1 or (kind == "START_AND_RETURN" and service != "START_AND_RETURN"):
         raise Problem(409, "DELIVERY_NOT_SUPPORTED")
     db = _db(request)
     link, region = db.table("MSP_SPOT_DELIVERY_REGION"), db.table("MSP_DELIVERY_REGION")
@@ -166,26 +168,17 @@ def _delivery(request, session, spot, model, pickup, returned, *, required=False
     if not configured:
         raise Problem(409, "DELIVERY_NOT_SUPPORTED")
 
-    def matches(address, row):
-        raw = (address or "").casefold()
-        return any(token and token.casefold() in raw for token in (row.get("region_name"), row.get("region_code")))
-
-    pick = [row for row in configured if matches(pickup, row)]
-    ret = [row for row in configured if matches(returned, row)]
-    common = [row for row in configured if (not pick or row in pick) and (not ret or row in ret)]
-    if pick and ret:
-        common = [row for row in pick if row in ret]
-    if len(common) != 1:
-        if len(configured) == 1:
-            common = configured
-        else:
-            raise Problem(409, "DELIVERY_REGION_NOT_SUPPORTED")
-    row = dict(common[0])
+    # Region selection chooses a fee schedule, not proof of geographic coverage.
+    selected = [row for row in configured if row["delivery_region_id"] == region_id] if region_id is not None else configured
+    if len(selected) != 1:
+        raise Problem(409, "DELIVERY_REGION_REQUIRED" if region_id is None else "DELIVERY_REGION_NOT_SUPPORTED")
+    row = dict(selected[0])
+    return_fee = int(row.get("return_delivery_fee") or 0) if kind == "START_AND_RETURN" else 0
     return {"deliveryRegionId": row["delivery_region_id"],
             "deliveryStartFee": int(row.get("start_delivery_fee") or 0),
-            "deliveryReturnFee": int(row.get("return_delivery_fee") or 0),
-            "deliveryTotalFee": int(row.get("start_delivery_fee") or 0) + int(row.get("return_delivery_fee") or 0),
-            "deliveryRequestType": "START_AND_RETURN"}
+            "deliveryReturnFee": return_fee,
+            "deliveryTotalFee": int(row.get("start_delivery_fee") or 0) + return_fee,
+            "deliveryRequestType": kind}
 
 
 def _price_groups(request, session, spot, model_id, start, end, *, check_availability=True):
@@ -256,6 +249,8 @@ def _price_view(request, groups, start_date, return_date, delivery, requested_to
             tier = {"priceType": kind, "tierType": row["tier_type"] if row else "BASIC",
                     "minCc": row["min_cc"] if row else None, "maxCc": row["max_cc"] if row else None,
                     "dailyPriceFrom": price, "dailyPriceTo": price}
+        tier["priceOptionId"] = kind + ":" + str(price)
+        tier["totalPrice"] = price * days + delivery["deliveryTotalFee"]
         tiers.append(tier)
     return {"currency": currency, "rentalDays": days, "dailyFrom": min(daily), "dailyTo": max(daily),
             "dailyPriceFrom": min(daily), "dailyPriceTo": max(daily),
@@ -284,9 +279,10 @@ def _availability_for(request, session, body, *, selected_spot=None, selected_mo
                 continue
             try:
                 delivery = _delivery(request, session, spot, model, getattr(body, "pickupLocation", None),
-                                     getattr(body, "returnLocation", None), required=body.deliveryRequested)
+                                     getattr(body, "returnLocation", None), required=body.deliveryRequested,
+                                     region_id=body.deliveryRegionId, delivery_type=body.deliveryRequestType)
             except Problem as error:
-                if selected_spot or error.code not in ("DELIVERY_NOT_SUPPORTED", "DELIVERY_REGION_NOT_SUPPORTED"):
+                if selected_spot or error.code not in ("DELIVERY_NOT_SUPPORTED", "DELIVERY_REGION_NOT_SUPPORTED", "DELIVERY_REGION_REQUIRED"):
                     raise
                 continue
             request._nadri_session, request._nadri_spot = session, spot
@@ -317,6 +313,18 @@ def _quote_for_request(request, session, body):
     price = item["price"]
     if body.totalPrice not in set(price.get("totalOptions", [price["totalFrom"], price["totalTo"]])):
         raise Problem(409, "PRICE_QUOTE_MISMATCH")
+    candidates = [tier for tier in price["pricingTiers"] if tier["totalPrice"] == body.totalPrice]
+    if body.priceOptionId is not None:
+        candidates = [tier for tier in candidates if tier["priceOptionId"] == body.priceOptionId]
+    if len(candidates) != 1:
+        raise Problem(409, "PRICE_OPTION_INVALID" if body.priceOptionId else "PRICE_OPTION_REQUIRED")
+    chosen = candidates[0]
+    price["pricingTiers"] = [chosen]
+    price["dailyFrom"] = price["dailyTo"] = chosen["dailyPriceFrom"]
+    price["dailyPriceFrom"] = price["dailyPriceTo"] = chosen["dailyPriceFrom"]
+    price["rentalFrom"] = price["rentalTo"] = chosen["dailyPriceFrom"] * price["rentalDays"]
+    price["totalFrom"] = price["totalTo"] = body.totalPrice
+    price["totalOptions"] = [body.totalPrice]
     return item
 
 
@@ -441,7 +449,8 @@ def _customer_records(request, session, uid, *, completed=False, page=1, size=20
     if completed:
         contracts = [c for c in contracts if c["contract_status"] == "RETURNED" and c["actual_end_time"] is not None]
         linked_ids = {c.get("reservation_id") for c in contracts if c.get("reservation_id")}
-        reservations = [dict(row) for row in session.execute(select(rt).where(rt.c.reservation_id.in_(linked_ids), rt.c.uid_token == uid)).mappings()] if linked_ids else []
+        reservations = [r for r in reservations if r["reservation_id"] in linked_ids or
+                        r["reservation_status"] in ("CANCELED", "REJECTED", "EXPIRED", "RETURNED")]
     else:
         reservations = [r for r in reservations if r["reservation_status"] in ("REQUESTED", "APPROVED", "HANDED_OVER")]
         contracts = [c for c in contracts if c["contract_status"] in ("ON_RENT", "OVERDUE") and c["actual_end_time"] is None]
@@ -472,12 +481,11 @@ def _customer_records(request, session, uid, *, completed=False, page=1, size=20
         payment = _latest_payment(request, session, reservation_id=contract.get("reservation_id"), contract_id=contract["rental_contract_id"])
         spot_id = reservation["spot_master_id"] if reservation else contract["pickup_spot_master_id"]
         records.append(_record_view(request, reservation, contract, payment, spots.get(spot_id), model))
-    if not completed:
-        for reservation in reservations:
-            if reservation["reservation_id"] in linked:
-                continue
-            payment = _latest_payment(request, session, reservation_id=reservation["reservation_id"])
-            records.append(_record_view(request, reservation, None, payment, spots.get(reservation["spot_master_id"]), models.get(reservation["model_id"])))
+    for reservation in reservations:
+        if reservation["reservation_id"] in linked:
+            continue
+        payment = _latest_payment(request, session, reservation_id=reservation["reservation_id"])
+        records.append(_record_view(request, reservation, None, payment, spots.get(reservation["spot_master_id"]), models.get(reservation["model_id"])))
     if completed:
         records.sort(key=lambda item: (item.get("actualEndTime") or "", item.get("rentalContractId") or ""), reverse=True)
     else:
@@ -678,9 +686,11 @@ def nadree_availability(body: NadriAvailability, request: Request, session: Sess
 
 @router.post("/request", response_model=CustomerRequest,
              summary="렌탈 예약 요청",
-             description="예약은 REQUESTED로 생성되고 관리자 승인 전에는 결제할 수 없습니다. 동일 기간의 마지막 차량은 먼저 잠금을 획득한 요청만 성공합니다.",
+             description="동일 고객·지점·모델·기간의 60초 이내 활성 예약 중복을 검사합니다. 요청 키 결과 복구는 제공하지 않습니다. 배송지역은 요금표 선택이며 실제 주소 구역 검증은 제공하지 않습니다.",
              dependencies=[Depends(customer_access_token)])
 def nadree_request(body: NadriRentalRequest, request: Request, session: Session = DB):
+    user = user_principal(request, session)
+    lock_key(session, "nadri-user", user.uid_token)
     user = user_principal(request, session)
     db = _db(request)
     # Different users must share the same resource lock. A user-specific lock
@@ -710,7 +720,8 @@ def nadree_request(body: NadriRentalRequest, request: Request, session: Session 
     quote["calculatedTotalTo"] = quote["totalTo"]
     criteria = {"source": "nadri.rental.availability", "availabilityRequest": availability_request,
                 "pickupLocationSnapshot": item["spot"]["location"], "returnLocationSnapshot": item["spot"]["location"],
-                "selected": {"spotMasterId": body.spotMasterId, "modelId": body.modelId}, "quote": quote,
+                "selected": {"spotMasterId": body.spotMasterId, "modelId": body.modelId,
+                             "priceOptionId": item["price"]["pricingTiers"][0]["priceOptionId"]}, "quote": quote,
                 "priceType": item["price"]["pricingTiers"][0]["priceType"], "dailyPrice": item["price"]["dailyFrom"]}
     values = dict(reservation_id=reservation_id, uid_token=user.uid_token, spot_master_id=body.spotMasterId, model_id=body.modelId,
                   assigned_vehicle_id=None, vehicle_assignment_status="SOFT_HOLD", required_criteria_json=criteria,
@@ -809,7 +820,7 @@ def _payment_result(payment, approval_url=None, payment_window=None):
 
 
 @router.post("/payment/order", response_model=CustomerPayment,
-             summary="승인 예약의 PayPal Sandbox 주문 생성",
+             summary="승인 예약의 지점 판매자 PayPal 주문 생성",
              description="APPROVED 예약의 모든 결제 시도를 먼저 확인합니다. 진행 중 주문은 재사용하며 완료·결과 불명 결제가 있으면 새 청구를 차단합니다. PAYMENT_RECONCILIATION_REQUIRED는 운영 확인이 필요합니다.",
              dependencies=[Depends(customer_access_token)])
 def nadree_payment_order(body: NadriPaymentOrder, request: Request, session: Session = PAYMENT_DB):
@@ -817,6 +828,9 @@ def nadree_payment_order(body: NadriPaymentOrder, request: Request, session: Ses
     reservation = _reservation_for_payment(request, session, user, body.reservationId)
     db = _db(request)
     table = db.table("MSP_RENTAL_PAYMENT")
+    merchant_id = spot_merchant(db, session, reservation["spot_master_id"], request.app.state.settings.paypal_environment)
+    if "paypal_merchant_id" not in table.c:
+        raise Problem(503, "PAYPAL_MERCHANT_SCHEMA_UPDATE_REQUIRED")
     rows = attempts(db, session, reservation["reservation_id"], request.app.state.settings.paypal_environment)
     existing = next((row for row in reversed(rows) if row["payment_status"] in ("CREATED", "PENDING")), None)
     guard_other_attempts(rows, existing["payment_id"] if existing else None, request.app.state.paypal)
@@ -826,11 +840,11 @@ def nadree_payment_order(body: NadriPaymentOrder, request: Request, session: Ses
             provider_order = inspect_order(request.app.state.paypal, existing)
             if provider_order["status"] in ("CREATED", "SAVED", "PAYER_ACTION_REQUIRED", "APPROVED"):
                 if existing.get("capture_requested_at"):
-                    raise Problem(409, "PAYMENT_IN_PROGRESS")
+                    raise Problem(409, "PAYMENT_IN_PROGRESS", payment_id=existing["payment_id"])
                 approval = request.app.state.paypal.approval_url(provider_order)
                 return _payment_result(dict(existing, _shop_master_id=reservation["spot_master_id"]), approval, payment_window)
             if existing.get("capture_requested_at") or existing["payment_status"] == "PENDING":
-                raise Problem(409, "PAYMENT_RECONCILIATION_REQUIRED")
+                raise Problem(409, "PAYMENT_RECONCILIATION_REQUIRED", payment_id=existing["payment_id"])
             # The PayPal order can expire independently of this service. Close
             # the internal attempt and create a fresh order on the next call.
             session.execute(update(table).where(table.c.payment_id == existing["payment_id"],
@@ -844,6 +858,7 @@ def nadree_payment_order(body: NadriPaymentOrder, request: Request, session: Ses
     if total <= 0:
         raise Problem(409, "PAYMENT_QUOTE_UNAVAILABLE")
     payment_values = dict(reservation_id=reservation["reservation_id"], rental_contract_id=None, payment_provider="PAYPAL",
+        paypal_merchant_id=merchant_id,
         payment_environment=request.app.state.settings.paypal_environment, payment_status="CREATED", paypal_order_id=None,
         paypal_capture_id=None, total_price=total, currency=quote.get("currency", request.app.state.settings.rental_currency),
         refunded_amount=Decimal("0"), refund_status="NONE", created_at=now(), updated_at=now())
@@ -861,6 +876,7 @@ def nadree_payment_order(body: NadriPaymentOrder, request: Request, session: Ses
     rows = attempts(db, session, reservation["reservation_id"], request.app.state.settings.paypal_environment)
     guard_other_attempts(rows, payment_id, request.app.state.paypal)
     payment = next(row for row in rows if row["payment_id"] == payment_id)
+    spot_merchant(db, session, reservation["spot_master_id"], request.app.state.settings.paypal_environment)
     payment_window = _ensure_payment_window(request, session, reservation, payment)
     if payment["payment_status"] != "CREATED":
         raise Problem(409, "PAYMENT_IN_PROGRESS")
@@ -868,7 +884,9 @@ def nadree_payment_order(body: NadriPaymentOrder, request: Request, session: Ses
         result = inspect_order(request.app.state.paypal, payment)
     else:
         replay_allowed(payment["order_requested_at"])
-        result = request.app.state.paypal.create_order("nadree-order-" + str(payment_id), payment["currency"], payment["total_price"], reservation["reservation_id"])
+        seller_client = payment_client(request.app.state.paypal, payment)
+        seller_client.verify_merchant(payment["paypal_merchant_id"])
+        result = seller_client.create_order("nadree-order-" + str(payment_id), payment["currency"], payment["total_price"], reservation["reservation_id"])
     order_id = identifier(result.get("id")) if isinstance(result, dict) and result.get("id") else None
     if not order_id:
         raise Problem(503, "PAYPAL_SERVICE_UNAVAILABLE")
@@ -913,6 +931,7 @@ def nadree_payment_capture(body: NadriPaymentCapture, request: Request, session:
                                payment_window=_payment_window(request, session, reservation, payment))
     if payment["payment_status"] not in ("CREATED", "PENDING") or not payment.get("paypal_order_id"):
         raise Problem(409, "PAYMENT_STATE_INVALID")
+    spot_merchant(db, session, reservation["spot_master_id"], request.app.state.settings.paypal_environment)
     guard_other_attempts(rows, payment["payment_id"], request.app.state.paypal)
     payment_window = _ensure_payment_window(request, session, reservation, payment)
     replay_allowed(payment.get("capture_requested_at"))
@@ -934,7 +953,9 @@ def nadree_payment_capture(body: NadriPaymentCapture, request: Request, session:
     provider_order = inspect_order(request.app.state.paypal, payment)
     if provider_order["status"] != "APPROVED":
         raise Problem(409, "PAYMENT_STATE_INVALID")
-    result = request.app.state.paypal.capture_order(payment["paypal_order_id"], "nadree-capture-" + str(payment["payment_id"]))
+    spot_merchant(db, session, reservation["spot_master_id"], request.app.state.settings.paypal_environment)
+    payment_client(request.app.state.paypal, payment).verify_merchant(payment["paypal_merchant_id"])
+    result = payment_client(request.app.state.paypal, payment).capture_order(payment["paypal_order_id"], "nadree-capture-" + str(payment["payment_id"]))
     capture_id = request.app.state.paypal.capture_reference_from_order(result)
     capture_status = result.get("status") if isinstance(result, dict) else None
     status = "FAILED" if capture_status in ("DECLINED", "DENIED") else "PENDING"
@@ -1001,13 +1022,34 @@ def nadree_ongoing(request: Request, page: int = Query(1, ge=1), pageSize: int =
 
 
 @router.get("/completed", response_model=CustomerPage,
-            summary="완료 렌트 목록",
+            summary="종료 내역: 반납·취소·거절·만료",
             dependencies=[Depends(customer_access_token)])
 def nadree_completed(request: Request, page: int = Query(1, ge=1), pageSize: int = Query(20, ge=1, le=100), session: Session = DB):
     user = user_principal(request, session)
     items, total = _customer_records(request, session, user.uid_token, completed=True, page=page, size=pageSize)
     return {"status": "success", "items": items, "page": page, "pageSize": pageSize, "totalCount": total,
             "hasNext": page * pageSize < total}
+
+
+@router.get("/reservations/{reservation_id}", response_model=CustomerReservationDetail, dependencies=[Depends(customer_access_token)],
+            summary="고객 본인 예약 ID 직접 조회 (종료 상태 포함)")
+def nadree_reservation_detail(reservation_id: str, request: Request, session: Session = DB):
+    user = user_principal(request, session)
+    db = _db(request)
+    rt, ct = db.table("MSP_RESERVATION"), db.table("MSP_RENTAL_CONTRACT")
+    row = session.execute(select(rt).where(rt.c.reservation_id == reservation_id,
+                                           rt.c.uid_token == user.uid_token)).mappings().first()
+    if row is None:
+        raise Problem(404, "RESERVATION_NOT_FOUND")
+    reservation = dict(row)
+    contract = session.execute(select(ct).where(ct.c.reservation_id == reservation_id,
+                                                ct.c.uid_token == user.uid_token)).mappings().first()
+    payment = _latest_payment(request, session, reservation_id=reservation_id,
+                              contract_id=contract["rental_contract_id"] if contract else None)
+    model_table = db.table("MSP_VEHICLE_MODEL")
+    model = session.execute(select(model_table).where(model_table.c.model_id == reservation["model_id"])).mappings().first()
+    return {"status": "success", "item": _record_view(request, reservation, dict(contract) if contract else None,
+        payment, _spot(request, session, reservation["spot_master_id"], active=False), dict(model) if model else None)}
 
 
 @router.post("/request/cancel", response_model=CustomerCancellation,

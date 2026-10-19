@@ -5,9 +5,10 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 
 class Problem(Exception):
-    def __init__(self, status: int, code: str):
+    def __init__(self, status: int, code: str, *, payment_id=None):
         self.status = status
         self.code = code
+        self.payment_id = payment_id
 
 
 def install_handlers(app: FastAPI):
@@ -17,6 +18,9 @@ def install_handlers(app: FastAPI):
 
     @app.exception_handler(Problem)
     async def problem_handler(request: Request, error: Problem):
+        if error.payment_id is not None:
+            return JSONResponse({"status": "fail", "errorCode": error.code, "paymentId": error.payment_id},
+                                status_code=error.status, headers={"Cache-Control": "no-store"})
         return response(error.status, error.code)
 
     @app.exception_handler(RequestValidationError)

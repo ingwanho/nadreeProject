@@ -29,6 +29,13 @@ def payments(setup):
     class PayPal:
         settings = setup["settings"]
 
+        def for_merchant(self, merchant_id):
+            self.merchant_id = merchant_id
+            return self
+
+        def verify_merchant(self, merchant_id):
+            pass
+
         def __init__(self):
             self.orders, self.captures, self.refunds = [], [], []
             self.fail_order = self.fail_capture = self.fail_refund = False
@@ -42,7 +49,8 @@ def payments(setup):
 
         def get(self, resource, ident):
             assert resource == "orders"
-            return {"id": ident, "status": self.order_status}
+            return {"id": ident, "status": self.order_status,
+                    "purchase_units": [{"payee": {"merchant_id": self.merchant_id}}]}
 
         def approval_url(self, order):
             return "https://www.sandbox.paypal.com/checkoutnow?token=" + order["id"]
@@ -73,7 +81,7 @@ def payments(setup):
 
 def insert_payment(ctx, **values):
     defaults = dict(reservation_id="safe-booking", payment_environment="SANDBOX", payment_status="CREATED",
-                    total_price=100, currency="USD")
+                    total_price=100, currency="USD", paypal_merchant_id="SELLER1234567")
     defaults.update(values)
     with ctx["engine"].begin() as conn:
         return conn.execute(metadata.tables["MSP_RENTAL_PAYMENT"].insert().values(**defaults)).inserted_primary_key[0]
@@ -193,7 +201,7 @@ def test_refund_retries_stop_and_leave_manual_marker(payments, monkeypatch):
 def complete_event(ctx, order_id, capture_id, captured_at):
     event = {"id": "event-" + capture_id, "event_type": "PAYMENT.CAPTURE.COMPLETED", "resource": {"id": capture_id}}
     stored = save_event(ctx["db"], "SANDBOX", event, json.dumps(event), {})
-    snapshot = {"order": {"id": order_id}, "capture": {"id": capture_id, "status": "COMPLETED",
+    snapshot = {"order": {"id": order_id, "purchase_units": [{"payee": {"merchant_id": "SELLER1234567"}}]}, "capture": {"id": capture_id, "status": "COMPLETED",
         "create_time": captured_at.isoformat() + "Z"}, "refunds": {}, "refund": None, "amount": ("USD", Decimal("100"))}
     return process_event(ctx["db"], ctx["pg"], stored, snapshot)
 
@@ -262,7 +270,7 @@ def test_refund_expired_unknown_request_never_gets_new_key(payments, monkeypatch
 def test_pg_read_reconciliation_is_distinguished_from_webhook(payments, monkeypatch):
     from app.payment_recovery import reconcile_payments
     insert_payment(payments, paypal_order_id="safe-order", payment_status="PENDING")
-    snapshot = {"order": {"id": "safe-order"}, "capture": {"id": "safe-capture", "status": "COMPLETED",
+    snapshot = {"order": {"id": "safe-order", "purchase_units": [{"payee": {"merchant_id": "SELLER1234567"}}]}, "capture": {"id": "safe-capture", "status": "COMPLETED",
         "create_time": payments["at"].isoformat() + "Z"}, "refunds": {}, "refund": None, "amount": ("USD", Decimal("100"))}
     monkeypatch.setattr(payments["pg"], "snapshot", lambda event: snapshot, raising=False)
     assert reconcile_payments(payments["db"], payments["pg"]) == {"checked": 1, "failed": 0}
@@ -312,7 +320,7 @@ def test_delayed_refund_pending_event_uses_current_pg_completed_status(payments)
     refund = {"id": "old-refund", "status": "COMPLETED", "amount": {"currency_code": "USD", "value": "90.00"}}
     event = {"id": "late-refund-event", "event_type": "PAYMENT.REFUND.PENDING", "resource": refund}
     stored = save_event(payments["db"], "SANDBOX", event, json.dumps(event), {})
-    snapshot = {"order": {"id": "safe-order"}, "capture": {"id": "capture", "status": "PARTIALLY_REFUNDED",
+    snapshot = {"order": {"id": "safe-order", "purchase_units": [{"payee": {"merchant_id": "SELLER1234567"}}]}, "capture": {"id": "capture", "status": "PARTIALLY_REFUNDED",
         "create_time": payments["at"].isoformat() + "Z"}, "refunds": {"old-refund": ("USD", Decimal("90"))},
         "refund": refund, "amount": ("USD", Decimal("100"))}
     process_event(payments["db"], payments["pg"], stored, snapshot)

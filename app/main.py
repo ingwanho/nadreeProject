@@ -22,6 +22,7 @@ from app.openapi_examples import (OPENAPI_EXAMPLES, OPENAPI_REQUEST_EXAMPLES,
                                    OPENAPI_RESPONSE_EXAMPLES)
 from app.delivery import router as delivery_router
 from app.paypal import PayPalClient, router as paypal_router
+from app.paypal_onboarding import router as paypal_onboarding_router
 from app.passport import PassportStorage
 from app.customer_rentals import router as customer_rentals_router, user_router as customer_users_router
 from app.pricing import router as pricing_router
@@ -107,7 +108,7 @@ def create_app(settings=None, db=None, limiter=None, mailer=None, fcm=None, loca
         openapi_tags=OPENAPI_TAGS,
         contact={"name": "Nadree API"},
         lifespan=lifespan,
-        responses={code: {"model": Error} for code in [401, 403, 404, 409, 422, 429, 503]})
+        responses={code: {"model": Error} for code in [401, 403, 404, 409, 410, 422, 429, 503]})
     cors_origins = [origin.strip().rstrip("/") for origin in settings.cors_origins.split(",") if origin.strip()]
     if cors_origins:
         application.add_middleware(
@@ -170,6 +171,7 @@ def create_app(settings=None, db=None, limiter=None, mailer=None, fcm=None, loca
     application.include_router(rentals_router)
     application.include_router(readmodels_router)
     application.include_router(paypal_router)
+    application.include_router(paypal_onboarding_router)
     application.include_router(customer_rentals_router)
     application.include_router(customer_users_router)
 

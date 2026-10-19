@@ -11,6 +11,13 @@ class Status(BaseModel):
 class Error(BaseModel):
     status: Literal["fail"] = "fail"
     errorCode: str
+    paymentId: int | None = None
+
+
+class ShopPayPalMerchantResult(Status):
+    spotMasterId: str
+    merchantId: str | None
+    paymentEnvironment: Literal["SANDBOX", "LIVE"] | None
 
 
 class Admin(BaseModel):
@@ -65,6 +72,8 @@ class CustomerModel(BaseModel):
 
 class CustomerPricingTier(BaseModel):
     priceType: str
+    priceOptionId: str | None = None
+    totalPrice: int | float | None = None
     tierType: str | None = None
     minCc: int | None = None
     maxCc: int | None = None
@@ -202,6 +211,10 @@ class CustomerPage(Status):
     pageSize: int
     totalCount: int
     hasNext: bool
+
+
+class CustomerReservationDetail(Status):
+    item: CustomerRecord
 
 
 class CustomerPayment(Status):

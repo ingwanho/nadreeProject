@@ -34,7 +34,8 @@ def migration_plan(db):
     inspector = inspect(db.engine)
     tables = set(inspector.get_table_names())
     planned_tables = {"MSP_SPOT_RENT": "001_spot_rent.sql", "MSP_RENTAL_ADMIN_REQUEST": "002_rental_admin_request.sql"}
-    spot_profile = {"introduction": 500, "contact_email": 200, "address_detail": 200, "directions": 500}
+    spot_profile = {"introduction": 500, "contact_email": 200, "address_detail": 200, "directions": 500,
+                    "paypal_merchant_id": 13, "paypal_environment": 10}
     missing_tables = set(REQUIRED) - set(planned_tables) - tables
     if missing_tables:
         raise ValueError("Existing service tables missing: " + ", ".join(sorted(missing_tables)))
@@ -112,6 +113,7 @@ def migration_plan(db):
     if "MSP_RENTAL_PAYMENT" in tables:
         columns = {row["name"] for row in inspector.get_columns("MSP_RENTAL_PAYMENT")}
         payment_columns = [
+            ("paypal_merchant_id", "VARCHAR(13) DEFAULT NULL"),
             ("refund_status", "VARCHAR(20) NOT NULL DEFAULT 'NONE'"),
             ("paypal_refund_id", "VARCHAR(50) DEFAULT NULL"),
             ("refund_requested_at", "DATETIME DEFAULT NULL"),

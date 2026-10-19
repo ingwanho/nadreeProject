@@ -5,6 +5,7 @@ from sqlalchemy import select
 
 from app.errors import Problem
 from app.security import now
+from app.merchant_accounts import payment_client
 
 SETTLED = ("PAID", "PARTIALLY_REFUNDED", "REFUNDED")
 # Stay below the default six-hour Orders idempotency retention window.
@@ -22,11 +23,12 @@ def attempts(db, session, reservation_id, environment):
 
 def guard_other_attempts(rows, current_id=None, client=None):
     others = [row for row in rows if row["payment_id"] != current_id]
-    if any(row["payment_status"] in SETTLED or row.get("paid_at") for row in others):
-        raise Problem(409, "PAYMENT_ALREADY_PAID")
+    paid = next((row for row in others if row["payment_status"] in SETTLED or row.get("paid_at")), None)
+    if paid:
+        raise Problem(409, "PAYMENT_ALREADY_PAID", payment_id=paid["payment_id"])
     for row in others:
         if row["payment_status"] not in ("FAILED", "CANCELED") or not confirmed_unpaid(client, row, terminal=True):
-            raise Problem(409, "PAYMENT_IN_PROGRESS")
+            raise Problem(409, "PAYMENT_IN_PROGRESS", payment_id=row["payment_id"])
 
 
 def confirmed_unpaid(client, payment, *, terminal=False):
@@ -34,7 +36,7 @@ def confirmed_unpaid(client, payment, *, terminal=False):
     if payment.get("paypal_capture_id"):
         if client is None:
             return False
-        capture = client.get("captures", payment["paypal_capture_id"])
+        capture = payment_client(client, payment).get("captures", payment["paypal_capture_id"])
         return capture.get("id") == payment["paypal_capture_id"] and capture.get("status") in ("DECLINED", "DENIED", "FAILED")
     if payment.get("paypal_order_id"):
         if client is None:
@@ -50,14 +52,17 @@ def replay_allowed(started):
 
 
 def inspect_order(client, payment):
-    order = client.get("orders", payment["paypal_order_id"])
+    order = payment_client(client, payment).get("orders", payment["paypal_order_id"])
     if not isinstance(order, dict) or order.get("id") != payment["paypal_order_id"]:
-        raise Problem(409, "PAYMENT_RECONCILIATION_REQUIRED")
+        raise Problem(409, "PAYMENT_RECONCILIATION_REQUIRED", payment_id=payment["payment_id"])
+    units = order.get("purchase_units", [])
+    if len(units) != 1 or units[0].get("payee", {}).get("merchant_id") != payment["paypal_merchant_id"]:
+        raise Problem(409, "PAYPAL_MERCHANT_MISMATCH")
     captures = [capture for unit in order.get("purchase_units", [])
                 for capture in unit.get("payments", {}).get("captures", [])]
     if captures or order.get("status") == "COMPLETED":
         # Even a denied/partial capture must be reconciled before another charge.
-        raise Problem(409, "PAYMENT_IN_PROGRESS")
+        raise Problem(409, "PAYMENT_IN_PROGRESS", payment_id=payment["payment_id"])
     if order.get("status") not in ("CREATED", "SAVED", "PAYER_ACTION_REQUIRED", "APPROVED", "VOIDED", "EXPIRED", "CANCELED"):
-        raise Problem(409, "PAYMENT_RECONCILIATION_REQUIRED")
+        raise Problem(409, "PAYMENT_RECONCILIATION_REQUIRED", payment_id=payment["payment_id"])
     return order

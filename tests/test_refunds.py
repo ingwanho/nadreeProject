@@ -28,7 +28,7 @@ def test_paypal_refund_uses_capture_endpoint_and_idempotency_header():
             return httpx.Response(200, json={"access_token": "token", "expires_in": 3600})
         return httpx.Response(201, json={"id": "refund-1", "status": "PENDING"})
 
-    client = PayPalClient(paypal_settings(), transport=httpx.MockTransport(handler))
+    client = PayPalClient(paypal_settings(), transport=httpx.MockTransport(handler)).for_merchant("SELLER1234567")
     try:
         result = client.refund("capture-1", "nadree-refund-1", "USD", Decimal("12.34"))
     finally:

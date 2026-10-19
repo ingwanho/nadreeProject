@@ -21,6 +21,18 @@ def test_unconfigured_app_starts_but_cannot_access_database():
         assert response.headers["Cache-Control"] == "no-store"
 
 
+def test_frontend_origin_allows_customer_request_headers():
+    origin = "https://www.riderlog-lte.com:50045"
+    app = create_app(Settings(_env_file=None, cors_origins=origin))
+    with TestClient(app) as client:
+        response = client.options("/api/v1/nadree/rental/request", headers={"Origin": origin,
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "authorization,content-type"})
+        assert response.status_code == 200
+        assert response.headers["access-control-allow-origin"] == origin
+        assert "authorization" in response.headers["access-control-allow-headers"].lower()
+
+
 def test_production_has_no_secret_fallback():
     with pytest.raises(RuntimeError):
         create_app(Settings(_env_file=None, env="production"))
@@ -71,7 +83,11 @@ def test_openapi_has_exact_work_group_routes(client):
     assert redoc.status_code == 200 and "redoc" in redoc.text.lower()
     openapi = client.get("/openapi.json").json()
     paths = openapi["paths"]
-    assert len([path for path in paths if not path.startswith("/health/")]) == 63
+    assert "/api/v1/nadree/rental/requests/{request_id}" not in paths
+    parameters = paths["/api/v1/nadree/rental/request"]["post"].get("parameters", [])
+    assert not any(p["name"] == "Idempotency-Key" for p in parameters)
+    assert len([path for path in paths if not path.startswith("/health/")]) == 67
+    assert {"get", "put"}.issubset(paths["/nadreego/shop/paypal-merchant"])
     assert "/nadreego/sensor/qr/resolve" not in paths
     qr_request = paths["/nadreego/vehicle/qr/validate"]["post"]["requestBody"]["content"]["application/json"]
     assert qr_request["example"] == {"qrCode": "testQr123123"}

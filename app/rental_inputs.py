@@ -17,7 +17,7 @@ RentalState = Literal["ON_RENT", "OVERDUE", "RETURNED", "CANCELED"]
 Reason = Annotated[str, Field(max_length=200)]
 Uid = Annotated[str, Field(min_length=1, max_length=36, pattern=r"^\S+$")]
 Currency = Annotated[str, Field(min_length=3, max_length=3, pattern=r"[A-Z]{3}")]
-Address = Annotated[str, Field(min_length=1, max_length=500)]
+Address = Annotated[str, Field(min_length=1, max_length=500, pattern=r"\S")]
 
 
 class Page(Body):
@@ -41,6 +41,7 @@ class Calendar(Page):
 
 
 class Operations(Page):
+    bookedNo: Annotated[str, Field(min_length=3, max_length=52, pattern=r"^(BO|RT)\S+$")] | None = None
     keyword: Annotated[str, Field(max_length=100)] | None = None
     startDate: Date | None = None
     endDate: Date | None = None
@@ -128,6 +129,13 @@ class BookingAction(Body):
     bookedNo: Annotated[str, Field(min_length=3, max_length=52, pattern=r"^BO.+$")]
     action: Literal["APPROVE", "REJECT", "CANCEL"]
     reason: Reason | None = None
+    cancellationReasonType: Literal["BRANCH_FAULT"] | None = None
+
+    @model_validator(mode="after")
+    def cancellation_reason(self):
+        if self.cancellationReasonType is not None and self.action != "CANCEL":
+            raise ValueError("cancellation reason requires CANCEL")
+        return self
 
 
 class ReservationCancel(Body):
@@ -155,6 +163,8 @@ class NadriAvailability(Body):
     deliveryRequested: StrictBool
     pickupLocation: Address | None = None
     returnLocation: Address | None = None
+    deliveryRegionId: Positive | None = None
+    deliveryRequestType: Literal["START_ONLY", "START_AND_RETURN"] | None = None
 
     @model_validator(mode="after")
     def dates(self):
@@ -162,6 +172,12 @@ class NadriAvailability(Body):
             raise ValueError("invalid rental date range")
         if self.deliveryRequested and not self.pickupLocation:
             raise ValueError("pickup location required")
+        if self.deliveryRequestType and not self.deliveryRequested:
+            raise ValueError("delivery type requires delivery")
+        if self.deliveryRequestType == "START_AND_RETURN" and not self.returnLocation:
+            raise ValueError("return location required")
+        if self.deliveryRequestType == "START_ONLY" and self.returnLocation is not None:
+            raise ValueError("return location not used for start only")
         return self
 
 
@@ -175,6 +191,9 @@ class NadriRentalRequest(Body):
     deliveryRequested: StrictBool
     pickupLocation: Address | None = None
     returnLocation: Address | None = None
+    deliveryRegionId: Positive | None = None
+    deliveryRequestType: Literal["START_ONLY", "START_AND_RETURN"] | None = None
+    priceOptionId: Annotated[str, Field(min_length=1, max_length=100)] | None = None
 
     @model_validator(mode="after")
     def dates_and_delivery(self):
@@ -182,6 +201,12 @@ class NadriRentalRequest(Body):
             raise ValueError("invalid rental date range")
         if self.deliveryRequested and not self.pickupLocation:
             raise ValueError("pickup location required")
+        if self.deliveryRequestType and not self.deliveryRequested:
+            raise ValueError("delivery type requires delivery")
+        if self.deliveryRequestType == "START_AND_RETURN" and not self.returnLocation:
+            raise ValueError("return location required")
+        if self.deliveryRequestType == "START_ONLY" and self.returnLocation is not None:
+            raise ValueError("return location not used for start only")
         return self
 
 

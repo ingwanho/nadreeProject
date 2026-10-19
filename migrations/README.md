@@ -1,5 +1,13 @@
 # Nadree DB 변경 안내
 
+## 2026-10-18 PayPal 연결 단순화 — 서버 미적용
+
+온보딩·요청 결과·개인정보 작업 테이블을 모두 제외했다. 판매자 연결은 기존 MSP_SPOT_RENT.paypal_merchant_id 및 paypal_environment를 사용하며 결제 당시 판매자 보존 컬럼도 유지한다. 해당 컬럼이 이미 적용되어 있다면 이번 단순화로 추가할 DB 항목은 없다. 이전 미적용 변경은 app.migrate 계획에 출력될 수 있으므로 대상 DB/백업/계획을 먼저 확인한다. 기존 서버의 테이블은 자동 삭제하지 않는다. [서버 적용 안내](../docs/nadree-full-change-handoff.md) 참조.
+
+## 2026-10-16 지점별 PayPal 판매자 — 서버 미적용
+
+`app.migrate`가 MSP_SPOT_RENT.paypal_merchant_id VARCHAR(13), paypal_environment VARCHAR(10), MSP_RENTAL_PAYMENT.paypal_merchant_id VARCHAR(13)을 nullable로 추가한다. 판매자 ID는 지점 간 중복 가능하며 UNIQUE를 추가하지 않는다. 기존 행은 NULL 유지, env/현재 지점으로 과거 결제 판매자를 추정하지 않는다. 기존 결제는 원거래 확인 후 별도 이관해야 하며 미설정 지점 승인은 차단된다. [설정 API·안전 적용 순서](../docs/spot-paypal-platform-handoff-2026-10-16.md) 확인 후 적용한다.
+
 QR 후속 적용: 새 서버 키 조건 확인·백업·API 재시작 후 테스트 차량 2대/센서 1개·QR 이력을 추가했다. 실제 대표/일반관리자 조회는 성공했으며 전체 후속 검사 15개 통과다. MSP_SENSOR.sensor_code는 실제 생성 컬럼이므로 SQL은 직접 값을 넣지 않고, 전달 해시 세션 변수의 collation을 정규화한다. 키 변경·기존 행 덮어쓰기는 하지 않았다. 아래 “QR 미적용”은 이전 기록이며 [최신 QR 결과](../docs/server-apply-verification-2026-10-13.md)를 따른다.
 
 2026-10-13 실제 서버 반영: RIDERLOG_V2_DATA_TEST에서 접근 제한 백업 후 결제 복구·위치 정정 nullable 컬럼 4개를 적용하고 No pending changes를 확인했다. QR 시드는 임시 키 조건으로 미적용이며 실제 MSP_SENSOR의 spot_master_id에 맞춰 SQL만 정정했다. 아래 과거 “미적용”은 작성 당시 기록이다. [서버 적용·검증 결과](../docs/server-apply-verification-2026-10-13.md).

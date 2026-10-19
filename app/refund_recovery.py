@@ -65,10 +65,12 @@ def execute_refund(db, client, payment_id, *, manual=False):
             return payment["refund_status"] == "COMPLETED"
         target = payment["refund_requested_amount"]
         try:
+            from app.merchant_accounts import payment_client
+            seller_client = payment_client(client, payment)
             if state.get("refundId"):
-                result = client.get("refunds", state["refundId"])
+                result = seller_client.get("refunds", state["refundId"])
             else:
-                result = client.refund(payment["paypal_capture_id"], state["requestId"],
+                result = seller_client.refund(payment["paypal_capture_id"], state["requestId"],
                                        payment["currency"], Decimal(state["amount"]))
             refund_id = identifier(result["id"])
             if amount(result["amount"]) != (payment["currency"], Decimal(state["amount"])):

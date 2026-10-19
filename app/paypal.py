@@ -1,4 +1,6 @@
 import hashlib
+import base64
+from copy import copy
 import json
 import re
 from datetime import datetime, timezone
@@ -11,7 +13,7 @@ import httpx
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 from redis import RedisError
-from sqlalchemy import select, update
+from sqlalchemy import or_, select, update
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
@@ -127,14 +129,76 @@ class PayPalClient:
                                  transport=transport, trust_env=False)
         self.lock = Lock()
         self.token, self.expires = None, 0
+        self.merchant_id = None
+
+    def for_merchant(self, merchant_id):
+        if not isinstance(merchant_id, str) or not re.fullmatch(r"[A-Z0-9]{13}", merchant_id):
+            raise Problem(409, "PAYMENT_MERCHANT_RECONCILIATION_REQUIRED")
+        bound = copy(self)
+        bound.merchant_id = merchant_id
+        return bound
+
+    def verify_merchant(self, merchant_id):
+        partner = self.settings.paypal_partner_merchant_id
+        if not re.fullmatch(r"[A-Z0-9]{13}", partner):
+            raise Problem(503, "PAYPAL_PARTNER_NOT_CONFIGURED")
+        result = self.call("GET", "/v1/customer/partners/" + partner + "/merchant-integrations/" + identifier(merchant_id),
+                           missing_code="PAYPAL_MERCHANT_NOT_READY")
+        integrations = result.get("oauth_integrations") or []
+        granted = any(integration.get("integration_type") == "OAUTH_THIRD_PARTY" and
+                      any(item.get("partner_client_id") == self.settings.paypal_client_id.get_secret_value()
+                          and {"https://uri.paypal.com/services/payments/realtimepayment",
+                               "https://uri.paypal.com/services/payments/refund"}.issubset(item.get("scopes") or [])
+                          for item in (integration.get("oauth_third_party") or []))
+                      for integration in integrations)
+        if (result.get("merchant_id") != merchant_id or result.get("payments_receivable") is not True
+                or result.get("primary_email_confirmed") is not True or not granted):
+            raise Problem(409, "PAYPAL_MERCHANT_NOT_READY")
+
+    def seller_by_tracking(self, tracking):
+        partner = self.settings.paypal_partner_merchant_id
+        if not re.fullmatch(r"[A-Z0-9]{13}", partner):
+            raise Problem(503, "PAYPAL_PARTNER_NOT_CONFIGURED")
+        result = self.call("GET", "/v1/customer/partners/" + partner + "/merchant-integrations",
+                           params={"tracking_id": tracking}, missing_code="PAYPAL_ONBOARDING_INCOMPLETE")
+        merchant = result.get("merchant_id")
+        if not isinstance(merchant, str) or not re.fullmatch(r"[A-Z0-9]{13}", merchant):
+            raise Problem(409, "PAYPAL_ONBOARDING_INCOMPLETE")
+        if result.get("tracking_id", tracking) != tracking:
+            raise Problem(409, "PAYPAL_ONBOARDING_TRACKING_MISMATCH")
+        self.verify_merchant(merchant)
+        return merchant
+
+    def onboarding_url(self, session_id, return_url, referral_path=None):
+        if referral_path:
+            if not referral_path.startswith("/v2/customer/partner-referrals/") or "?" in referral_path:
+                raise Problem(500, "PAYPAL_REFERRAL_INVALID")
+            result = self.call("GET", referral_path)
+        else:
+            result = self.call("POST", "/v2/customer/partner-referrals", json={
+                "tracking_id": session_id,
+                "partner_config_override": {"return_url": return_url},
+                "operations": [{"operation": "API_INTEGRATION", "api_integration_preference": {
+                    "rest_api_integration": {"integration_method": "PAYPAL", "integration_type": "THIRD_PARTY",
+                        "third_party_details": {"features": ["PAYMENT", "REFUND"]}}}}],
+                "products": ["EXPRESS_CHECKOUT"],
+                "legal_consents": [{"type": "SHARE_DATA_CONSENT", "granted": True}]})
+        links = {item.get("rel"): item.get("href") for item in result.get("links", [])}
+        action, own = urlsplit(links.get("action_url") or ""), urlsplit(links.get("self") or "")
+        expected_host = "www.sandbox.paypal.com" if self.settings.paypal_environment == "SANDBOX" else "www.paypal.com"
+        if action.scheme != "https" or action.hostname != expected_host or action.username or action.password:
+            raise Problem(500, "PAYPAL_REFERRAL_INVALID")
+        if own.scheme != "https" or own.netloc != urlsplit(self.base).netloc or not own.path.startswith("/v2/customer/partner-referrals/"):
+            raise Problem(500, "PAYPAL_REFERRAL_INVALID")
+        return links["action_url"], own.path
 
     def check_configuration(self):
         s = self.settings
         if not all((s.paypal_client_id.get_secret_value(), s.paypal_client_secret.get_secret_value(),
-                    s.paypal_webhook_id.get_secret_value(), s.paypal_merchant_id)):
+                    s.paypal_webhook_id.get_secret_value())):
             raise Problem(500, "PAYPAL_NOT_CONFIGURED")
 
-    def call(self, method, path, headers=None, **kwargs):
+    def call(self, method, path, headers=None, missing_code=None, **kwargs):
         self.check_configuration()
         try:
             with self.lock:
@@ -146,9 +210,18 @@ class PayPalClient:
                     self.token = token["access_token"]
                     self.expires = monotonic() + max(0, int(token["expires_in"]) - 30)
             request_headers = {"Authorization": "Bearer " + self.token}
+            if self.settings.paypal_partner_attribution_id:
+                request_headers["PayPal-Partner-Attribution-Id"] = self.settings.paypal_partner_attribution_id
+            if self.merchant_id:
+                def encode(value):
+                    return base64.urlsafe_b64encode(json.dumps(value, separators=(",", ":")).encode()).decode().rstrip("=")
+                request_headers["PayPal-Auth-Assertion"] = encode({"alg": "none"}) + "." + encode({
+                    "iss": self.settings.paypal_client_id.get_secret_value(), "payer_id": self.merchant_id}) + "."
             if headers:
                 request_headers.update(headers)
             result = self.http.request(method, path, headers=request_headers, **kwargs)
+            if result.status_code == 404 and missing_code:
+                raise Problem(409, missing_code)
             result.raise_for_status()
             data = result.json()
             if not isinstance(data, dict):
@@ -166,6 +239,8 @@ class PayPalClient:
         return response.get("verification_status") == "SUCCESS"
 
     def get(self, kind, ident):
+        if not self.merchant_id:
+            raise Problem(409, "PAYMENT_MERCHANT_RECONCILIATION_REQUIRED")
         prefix = "/v2/checkout/orders/" if kind == "orders" else "/v2/payments/" + kind + "/"
         result = self.call("GET", prefix + identifier(ident))
         if result.get("id") != ident:
@@ -183,10 +258,15 @@ class PayPalClient:
             "reference_id": reference_id, "custom_id": reference_id,
             "amount": {"currency_code": currency, "value": format(value, ".2f")}
         }]}
+        if not self.merchant_id:
+            raise Problem(409, "PAYMENT_MERCHANT_RECONCILIATION_REQUIRED")
+        body["purchase_units"][0]["payee"] = {"merchant_id": self.merchant_id}
         return self.call("POST", "/v2/checkout/orders",
                          headers={"PayPal-Request-Id": request_id, "Prefer": "return=representation"}, json=body)
 
     def capture_order(self, order_id, request_id):
+        if not self.merchant_id:
+            raise Problem(409, "PAYMENT_MERCHANT_RECONCILIATION_REQUIRED")
         order_id = identifier(order_id)
         request_id = identifier(request_id)
         return self.call("POST", "/v2/checkout/orders/" + order_id + "/capture",
@@ -214,6 +294,8 @@ class PayPalClient:
         return None
 
     def refund(self, capture_id, request_id, currency, value):
+        if not self.merchant_id:
+            raise Problem(409, "PAYMENT_MERCHANT_RECONCILIATION_REQUIRED")
         capture_id = identifier(capture_id)
         request_id = identifier(request_id)
         if not isinstance(currency, str) or not re.fullmatch(r"[A-Z]{3}", currency):
@@ -266,7 +348,7 @@ class PayPalClient:
         if capture and captures and captures[0]["id"] != capture["id"]:
             raise Problem(500, "PAYPAL_CAPTURE_MISMATCH")
         merchant = unit.get("payee", {}).get("merchant_id")
-        if merchant != self.settings.paypal_merchant_id or capture and capture.get("payee", {}).get("merchant_id", merchant) != merchant:
+        if not self.merchant_id or merchant != self.merchant_id or capture and capture.get("payee", {}).get("merchant_id", merchant) != merchant:
             raise Problem(500, "PAYPAL_MERCHANT_MISMATCH")
         total = amount(unit["amount"])
         if capture and amount(capture["amount"]) != total:
@@ -315,6 +397,9 @@ def process_event(db, client, stored, snapshot, notifier=None):
             p.c.paypal_order_id == order["id"])).mappings().first()
         if payment is None:
             raise Problem(500, "PAYMENT_NOT_MATCHED")
+        merchant = order.get("purchase_units", [{}])[0].get("payee", {}).get("merchant_id")
+        if not payment.get("paypal_merchant_id") or merchant != payment["paypal_merchant_id"]:
+            raise Problem(409, "PAYPAL_MERCHANT_MISMATCH")
         reservation = None
         if payment["reservation_id"]:
             reservation_table = db.table("MSP_RESERVATION")
@@ -457,6 +542,31 @@ def execute_refund(db, client, payment_id):
     return recover(db, client, payment_id)
 
 
+def event_client(db, client, event):
+    from app.merchant_accounts import payment_client
+    resource, kind = event["resource"], event["event_type"]
+    table = db.table("MSP_RENTAL_PAYMENT")
+    if kind.startswith("CHECKOUT."):
+        condition = table.c.paypal_order_id == resource["id"]
+    elif kind in REFUNDS:
+        condition = table.c.paypal_refund_id == resource["id"]
+        try:
+            condition = or_(condition, table.c.paypal_capture_id == client.capture_reference(resource))
+        except Problem:
+            pass
+    else:
+        condition = table.c.paypal_capture_id == resource["id"]
+        order_id = resource.get("supplementary_data", {}).get("related_ids", {}).get("order_id")
+        if order_id:
+            condition = or_(condition, table.c.paypal_order_id == order_id)
+    with db.engine.connect() as connection:
+        payments = connection.execute(select(table).where(condition,
+            table.c.payment_environment == client.settings.paypal_environment)).mappings().all()
+    if len(payments) != 1:
+        raise Problem(409, "PAYMENT_NOT_MATCHED")
+    return payment_client(client, payments[0])
+
+
 def handle_webhook(db, client, raw, event, headers, notifier=None, replay_store=None):
     stored = None
     guard = WebhookReplayGuard(replay_store, client.settings.paypal_environment)
@@ -476,7 +586,11 @@ def handle_webhook(db, client, raw, event, headers, notifier=None, replay_store=
         if stored["processing_status"] in ("PROCESSED", "IGNORED"):
             return 200
         persisted_event = json.loads(stored["raw_body"])
-        snapshot = client.snapshot(persisted_event) if persisted_event["event_type"] in SUPPORTED else None
+        if persisted_event["event_type"] in ("MERCHANT.ONBOARDING.COMPLETED", "MERCHANT.PARTNER-CONSENT.REVOKED"):
+            from app.paypal_onboarding import process_merchant_event
+            process_merchant_event(db, client, stored, persisted_event)
+            return 200
+        snapshot = event_client(db, client, persisted_event).snapshot(persisted_event) if persisted_event["event_type"] in SUPPORTED else None
         payment_id = process_event(db, client, stored, snapshot, notifier)
         if payment_id and persisted_event["event_type"] == "PAYMENT.CAPTURE.COMPLETED":
             execute_refund(db, client, payment_id)

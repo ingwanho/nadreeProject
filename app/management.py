@@ -9,8 +9,8 @@ from sqlalchemy.orm import Session
 from app.db import require_columns, transaction
 from app.errors import Problem
 from app.headers import bearer
-from app.responses import Admins, Applicants, CreatedSpot, Hierarchy, PrimaryResult, ShopProfile, ShopResult, Status
-from app.schemas import AdminId, RequestAction, Shop, SpotCreate
+from app.responses import Admins, Applicants, CreatedSpot, Hierarchy, PrimaryResult, ShopProfile, ShopResult, Status, ShopPayPalMerchantResult
+from app.schemas import AdminId, RequestAction, Shop, ShopPayPalMerchant, SpotCreate
 from app.rental_common import context, editable_spot, resolve_spot
 from app.security import (GENERAL, PRIMARY, SESSION_MARKER, active_spot, check_contract, in_subtree,
                           now, principal, roles)
@@ -122,6 +122,42 @@ def shop_profile(request: Request, spotMasterId: str | None = Query(None, max_le
         "lat": root["lat"], "lng": root["lng"], "addressDetail": row.get("address_detail"),
         "zipCode": root["zip_code"], "directions": row.get("directions"),
         "introduction": row.get("introduction"), "deliveryServiceType": row["delivery_service_type"]}
+
+
+@router.put("/nadreego/shop/paypal-merchant", response_model=ShopPayPalMerchantResult, summary="지점 PayPal 연결 해제",
+            description="직접 지점 대표의 연결 해제만 지원합니다(merchantId=null). ID 직접 입력은 409 PAYPAL_ONBOARDING_REQUIRED. 연결은 paypal-onboarding/start → verify를 사용합니다.")
+def update_paypal_merchant(body: ShopPayPalMerchant, request: Request, session: Session = DB):
+    actor, root = context(request, session, write=True, representative=True)
+    target = editable_spot(request, session, actor, root, body.spotMasterId)
+    if target["spot_master_id"] != root["spot_master_id"]:
+        raise Problem(403, "PAYPAL_DIRECT_PRIMARY_REQUIRED")
+    if body.merchantId is not None:
+        raise Problem(409, "PAYPAL_ONBOARDING_REQUIRED")
+    table = request.app.state.db.table("MSP_SPOT_RENT")
+    require_columns(table, {"paypal_merchant_id": body.merchantId, "paypal_environment": None})
+    row = session.execute(select(table).where(table.c.spot_master_id == target["spot_master_id"])
+                          .with_for_update()).mappings().first()
+    if not row:
+        raise Problem(404, "RENTAL_SPOT_NOT_CONFIGURED")
+    environment = request.app.state.settings.paypal_environment if body.merchantId else None
+    session.execute(update(table).where(table.c.spot_master_id == target["spot_master_id"]).values(
+        paypal_merchant_id=body.merchantId, paypal_environment=environment, updated_at=now()))
+    return {"status": "success", "spotMasterId": target["spot_master_id"],
+            "merchantId": body.merchantId, "paymentEnvironment": environment}
+
+
+@router.get("/nadreego/shop/paypal-merchant", response_model=ShopPayPalMerchantResult, summary="지점 PayPal 판매자 설정 조회")
+def get_paypal_merchant(request: Request, spotMasterId: str = Query(..., min_length=1, max_length=36),
+                        session: Session = DB):
+    actor, root = context(request, session)
+    target = editable_spot(request, session, actor, root, spotMasterId)
+    table = request.app.state.db.table("MSP_SPOT_RENT")
+    require_columns(table, {"paypal_merchant_id": None, "paypal_environment": None})
+    row = session.execute(select(table).where(table.c.spot_master_id == target["spot_master_id"])).mappings().first()
+    if not row:
+        raise Problem(404, "RENTAL_SPOT_NOT_CONFIGURED")
+    return {"status": "success", "spotMasterId": target["spot_master_id"],
+            "merchantId": row["paypal_merchant_id"], "paymentEnvironment": row["paypal_environment"]}
 
 
 @router.post("/nadreego/shop/update", response_model=ShopResult,

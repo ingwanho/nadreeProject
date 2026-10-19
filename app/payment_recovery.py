@@ -5,7 +5,7 @@ import json
 from sqlalchemy import select, update
 
 from app.errors import Problem
-from app.paypal import process_event, save_event
+from app.paypal import event_client, process_event, save_event
 
 
 def reconcile_payments(db, client, notifier=None):
@@ -20,7 +20,7 @@ def reconcile_payments(db, client, notifier=None):
         stored = None
         try:
             event = {"event_type": "CHECKOUT.ORDER.APPROVED", "resource": {"id": order_id}}
-            snapshot = client.snapshot(event)
+            snapshot = event_client(db, client, event).snapshot(event)
             capture = snapshot["capture"]
             if capture and capture.get("status") == "COMPLETED":
                 event.update(event_type="PAYMENT.CAPTURE.COMPLETED", resource=capture)

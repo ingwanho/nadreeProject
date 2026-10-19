@@ -28,6 +28,9 @@ def test_schema_requires_active_rental_roles(setup):
 
 def test_migration_plan_is_read_only_and_idempotent_after_expected_changes(setup):
     from app.rental_schema import metadata
+    assert "MSP_RENTAL_REQUEST_RESULT" not in metadata.tables
+    assert "MSP_RENTAL_PRIVACY_TASK" not in metadata.tables
+    assert "MSP_PAYPAL_ONBOARDING" not in metadata.tables
     metadata.tables["MSP_RENTAL_NOTIFICATION"].create(setup["engine"])
     plan = migration_plan(setup["db"])
     assert [label for label, sql, params in plan] == ["index MSP_ADMIN.fcm_token"]
@@ -197,6 +200,7 @@ def reflected_columns(setup, monkeypatch, transform):
 @pytest.mark.parametrize("existing", [[], ["introduction"], ["contact_email"]])
 def test_profile_migration_only_adds_missing_columns(setup, monkeypatch, existing):
     from app.rental_schema import metadata
+    assert "MSP_PAYPAL_ONBOARDING" not in metadata.tables
     metadata.tables["MSP_RENTAL_NOTIFICATION"].create(setup["engine"])
     profile = {"introduction", "contact_email"}
     reflected_columns(setup, monkeypatch, lambda name, columns:

@@ -132,18 +132,42 @@ def test_nadri_logout_keeps_access_only_compatibility(setup):
         "X-Refresh-Token": headers["X-Refresh-Token"]}).status_code == 401
 
 
-def test_nadri_account_deletion_is_unconditional_and_revokes_sessions(setup):
+def test_nadri_account_deletion_is_unconditional_and_revokes_sessions(setup, monkeypatch):
     tables = rental_tables(setup)
     headers, _ = login(setup["client"], "user-delete")
+    calls = []
+    monkeypatch.setattr(setup["app"].state.customer_auth, "delete_uid", lambda uid: calls.append(("delete", uid)))
+    monkeypatch.setattr(setup["app"].state.chat, "revoke", lambda uid: calls.append(("revoke", uid)))
     response = setup["client"].delete("/api/v1/nadree/user/account", headers=headers)
     assert response.status_code == 200, response.text
     assert response.json() == {"status": "success", "deleted": True}
+    assert calls == [("delete", "user-delete"), ("revoke", "user-delete")]
     assert setup["client"].get("/api/v1/nadree/user/profile", headers=headers).status_code == 401
     assert setup["client"].post("/api/v1/nadree/user/refresh", headers={
         "X-Refresh-Token": headers["X-Refresh-Token"]}).status_code == 401
     with setup["engine"].connect() as connection:
         row = connection.execute(select(tables["MSP_RENTAL_USER"])).mappings().one()
     assert row["name"] is None and row["fcm_token"] is None and row["user_access_revoked_at"] is not None
+
+
+@pytest.mark.parametrize("service", ["customer_auth", "chat"])
+def test_withdrawal_external_failure_is_not_reported_as_success(setup, monkeypatch, service):
+    from app.errors import Problem
+    tables = rental_tables(setup)
+    headers, _ = login(setup["client"], "withdrawal-failure")
+
+    def fail(uid):
+        raise Problem(503, "TEST_EXTERNAL_UNAVAILABLE")
+
+    monkeypatch.setattr(getattr(setup["app"].state, service),
+                        "delete_uid" if service == "customer_auth" else "revoke", fail)
+    response = setup["client"].delete("/api/v1/nadree/user/account", headers=headers)
+    assert response.status_code == 503
+    assert response.json()["errorCode"] == "TEST_EXTERNAL_UNAVAILABLE"
+    with setup["engine"].connect() as conn:
+        user = conn.execute(select(tables["MSP_RENTAL_USER"])).mappings().one()
+        assert user["user_access_revoked_at"] is None
+        assert conn.scalar(select(tables["MSP_RENTAL_USER_REFRESH_TOKEN"].c.revoked_at)) is None
 
 
 def test_nadri_logout_rejects_a_refresh_token_from_another_user(setup):

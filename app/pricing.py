@@ -1,4 +1,7 @@
+from typing import Annotated
+
 from fastapi import APIRouter, Depends, Query, Request
+from pydantic import BaseModel, Field
 from sqlalchemy import delete, or_, select, update
 from sqlalchemy.orm import Session
 
@@ -12,6 +15,19 @@ from app.security import now
 
 router = APIRouter(tags=["W04 Pricing"], dependencies=[bearer])
 DB = Depends(transaction, scope="function")
+
+
+class TierView(BaseModel):
+    minCc: int
+    maxCc: int
+    price: int
+    type: str
+    spotCode: str | None
+
+
+class TierList(Status):
+    tiers: list[TierView]
+    effectiveTiers: list[TierView]
 
 
 def load_tiers(request, session, spot):
@@ -53,10 +69,20 @@ def change_price(body: PriceChange, request: Request, session: Session = DB):
     return {"status": "success"}
 
 
-@router.post("/nadreego/shop/tierCreate")
-def create_tier(body: TierCreate, request: Request, session: Session = DB):
+@router.post("/nadreego/shop/tierCreate", description="BASIC 단건 또는 1~100개 배열. 배열은 동일 지점만 허용하며 전체 성공 또는 전체 롤백됩니다. 동일 cc 구간은 수정, 새 구간은 추가하고 생략한 기존 티어는 유지합니다. 부분 겹침은 409 TIER_RANGE_OVERLAP입니다.")
+def create_tier(body: TierCreate | Annotated[list[TierCreate], Field(min_length=1, max_length=100)], request: Request, session: Session = DB):
     actor, root = context(request, session, write=True)
-    spot = editable_spot(request, session, actor, root, body.spotCode)
+    entries = body if isinstance(body, list) else [body]
+    if len({entry.spotCode for entry in entries}) != 1:
+        raise Problem(422, "TIER_BATCH_SPOT_MISMATCH")
+    if len({(entry.minCc, entry.maxCc) for entry in entries}) != len(entries):
+        raise Problem(422, "TIER_BATCH_DUPLICATE_RANGE")
+    spot = editable_spot(request, session, actor, root, entries[0].spotCode)
+    result = [_save_tier(entry, request, session, spot) for entry in entries]
+    return {"status": "success", **({"tiers": result} if isinstance(body, list) else {"tier": result[0]})}
+
+
+def _save_tier(body, request, session, spot):
     t = request.app.state.db.table("MSP_RENTAL_TIER")
     tiers = load_tiers(request, session, spot["spot_master_id"])
     bases = [r for r in tiers if r["tier_type"] == "BASE" and r["min_cc"] <= body.minCc <= body.maxCc <= r["max_cc"]]
@@ -71,10 +97,28 @@ def create_tier(body: TierCreate, request: Request, session: Session = DB):
             t.c.min_cc == body.minCc, t.c.max_cc == body.maxCc).values(price=body.price))
     else:
         session.execute(t.insert().values(**values))
-    return {"status": "success", "tier": {**tier_view(values, spot["unit_code"]), "action": "UPDATED" if overlaps else "CREATED"}}
+    return {**tier_view(values, spot["unit_code"]), "action": "UPDATED" if overlaps else "CREATED"}
 
 
-@router.get("/nadreego/shop/tierCreate")
+def effective_tiers(tiers, code):
+    """Split BASE only where this spot has a BASIC override; do not persist splits."""
+    result = []
+    for base in sorted((t for t in tiers if t["tier_type"] == "BASE"), key=lambda t: t["min_cc"]):
+        cursor = base["min_cc"]
+        basics = sorted((t for t in tiers if t["tier_type"] == "BASIC"
+                         and base["min_cc"] <= t["min_cc"] <= t["max_cc"] <= base["max_cc"]),
+                        key=lambda t: t["min_cc"])
+        for basic in basics:
+            if cursor < basic["min_cc"]:
+                result.append(tier_view({**base, "min_cc": cursor, "max_cc": basic["min_cc"] - 1}, code))
+            result.append(tier_view(basic, code))
+            cursor = basic["max_cc"] + 1
+        if cursor <= base["max_cc"]:
+            result.append(tier_view({**base, "min_cc": cursor}, code))
+    return result
+
+
+@router.get("/nadreego/shop/tierCreate", response_model=TierList, description="spotCode 생략/null은 공통 BASE만, 지정하면 해당 지점 BASE+BASIC 설정을 tiers에 반환합니다. effectiveTiers는 BASIC이 있는 구간만 대체한 실제 적용 구간이며 빈 구간은 BASE입니다. 다른 지점 BASIC은 상속하지 않습니다. PREMIUM 차량 고정 단가는 별도입니다.")
 def list_tiers(request: Request, spotCode: str | None = Query(None, min_length=1, max_length=60), session: Session = DB):
     _, root = context(request, session)
     spot = resolve_spot(request, session, root, spotCode) if spotCode else None
@@ -82,7 +126,9 @@ def list_tiers(request: Request, spotCode: str | None = Query(None, min_length=1
     if not spot:
         tiers = [t for t in tiers if t["tier_type"] == "BASE"]
     tiers.sort(key=lambda r: (r["tier_type"] != "BASE", r["min_cc"], r["max_cc"]))
-    return {"status": "success", "tiers": [tier_view(t, spot["unit_code"] if spot else None) for t in tiers]}
+    code = spot["unit_code"] if spot else None
+    return {"status": "success", "tiers": [tier_view(t, code) for t in tiers],
+            "effectiveTiers": effective_tiers(tiers, code)}
 
 
 @router.post("/nadreego/shop/tierDelete")

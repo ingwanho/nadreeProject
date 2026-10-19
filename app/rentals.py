@@ -222,7 +222,7 @@ def contract_history(request, session, ident, previous, new, actor, event):
 
 @router.post("/nadreego/booking/action",
              summary="관리자 예약 승인·거절·취소",
-             description="APPROVE 후 고객 결제가 가능합니다. CANCEL은 시작일 전·인계 전 APPROVED 예약만 가능하며 결제금액 100%를 환불합니다. 시작일 00:00(업무 시간대)부터 ADMIN_CANCELLATION_DEADLINE_PASSED로 거절합니다.")
+             description="APPROVE는 지점 merchantId가 없으면 409 SHOP_PAYPAL_MERCHANT_REQUIRED, 환경이 다르면 SHOP_PAYPAL_ENVIRONMENT_MISMATCH로 차단합니다. 예약 요청과 REJECT는 유지합니다. CANCEL은 지점 귀책 전용이며 인계 전 APPROVED 예약을 당일에도 취소하고 실제 결제 총액의 100%를 환불합니다. 고객 사유 대리 취소는 지원하지 않습니다.")
 def booking_action(body: BookingAction, request: Request, background_tasks: BackgroundTasks, session: Session = DB):
     actor, root = context(request, session, write=True)
     r = booking(request, session, root, body.bookedNo)
@@ -231,13 +231,15 @@ def booking_action(body: BookingAction, request: Request, background_tasks: Back
         raise Problem(409, "RESERVATION_STATE_INVALID")
     require_no_contract(request, session, r)
     if body.action == "APPROVE":
+        from app.merchant_accounts import spot_merchant
+        seller = spot_merchant(request.app.state.db, session, r["spot_master_id"],
+                               request.app.state.settings.paypal_environment)
+        request.app.state.paypal.verify_merchant(seller)
         # Serialize approval with customer requests for the same spot/model.
         # The final availability check then uses the same resource lock.
         lock_key(session, "nadri-model", r["spot_master_id"] + ":" + r["model_id"])
     refund_payment_id, refund_status, refund_ready, refund_amount, refund_reason = (None, None, False, None, None)
     if body.action == "CANCEL":
-        if local_date(request, now()) >= local_date(request, r["start_datetime"]):
-            raise Problem(409, "ADMIN_CANCELLATION_DEADLINE_PASSED")
         refund_payment_id, refund_status, refund_ready, refund_amount, refund_reason = prepare_booking_refund(
             request, session, r, body.reason, admin_id=actor.admin["admin_id"])
     values = dict(updated_at=now())
@@ -266,6 +268,11 @@ def booking_action(body: BookingAction, request: Request, background_tasks: Back
     else:
         values.update(reservation_status="CANCELED" if body.action == "CANCEL" else "REJECTED",
                       vehicle_assignment_status="RELEASED", assigned_vehicle_id=None, vehicle_assigned_at=None)
+        if body.action == "CANCEL":
+            criteria = dict(r["required_criteria_json"] or {})
+            criteria["cancellation"] = {"requestedByType": "ADMIN", "requestedById": actor.admin["admin_id"],
+                                        "reasonType": "BRANCH_FAULT", "refundPercentage": 100}
+            values["required_criteria_json"] = criteria
         event = "CANCELLED" if body.action == "CANCEL" else "REJECTED"
     table = request.app.state.db.table("MSP_RESERVATION")
     session.execute(update(table).where(table.c.reservation_id == r["reservation_id"]).values(**values))

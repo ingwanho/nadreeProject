@@ -24,6 +24,9 @@ def reservation_view(request, r, item):
         return None
     model = item["model"] if item else None
     return dict(reservationId=r["reservation_id"], startDatetime=iso(request, r["start_datetime"]),
+        selectedPriceOption=(r.get("required_criteria_json") or {}).get("selected"),
+        pricingTiers=((r.get("required_criteria_json") or {}).get("quote") or {}).get("pricingTiers", []),
+        cancellation=(r.get("required_criteria_json") or {}).get("cancellation"),
         pickupLocationSnapshot=(r.get("required_criteria_json") or {}).get("pickupLocationSnapshot"),
         returnLocationSnapshot=(r.get("required_criteria_json") or {}).get("returnLocationSnapshot"),
         endDatetime=iso(request, r["end_datetime"]), requestedModelId=r["model_id"],
@@ -47,7 +50,7 @@ def record_actions(request, reservation, contract, sensor=False):
     if reservation["reservation_status"] == "REQUESTED":
         return ["APPROVE", "REJECT"]
     if reservation["reservation_status"] == "APPROVED":
-        return ["RENT_APPROVE"] + (["CANCEL"] if local_date(request, now()) < local_date(request, reservation["start_datetime"]) else [])
+        return ["RENT_APPROVE", "CANCEL"]
     return []
 
 
@@ -114,6 +117,8 @@ def filtered_operations(request, root, body):
     u, v, rv = (db.table(n) for n in ("MSP_RENTAL_USER", "MSP_VEHICLE", "MSP_RENTAL_VEHICLE"))
     source = base.outerjoin(u, u.c.uid_token == base.c.uid_token).outerjoin(v, v.c.vehicle_id == base.c.vehicle_id).outerjoin(rv, rv.c.vehicle_id == base.c.vehicle_id)
     condition = literal(True)
+    if body.bookedNo:
+        condition &= base.c.booked_no == body.bookedNo
     for key, value in [("record_type", body.recordType), ("reservation_status", body.reservationStatus), ("contract_status", body.rentalStatus)]:
         if value:
             condition &= base.c[key] == value
@@ -210,6 +215,7 @@ def operation_details(request, session, root, records):
                 ("paypal_capture_id", "paypalCaptureId"), ("currency", "currency"), ("refund_status", "refundStatus"),
                 ("paypal_refund_id", "paypalRefundId")]}
             payment_view.update(totalPrice=float(payment["total_price"]), refundedAmount=float(payment["refunded_amount"]),
+                refundRequestedAmount=float(payment["refund_requested_amount"]) if payment.get("refund_requested_amount") is not None else None,
                 paidAt=iso(request, payment["paid_at"]), updatedAt=iso(request, payment["updated_at"]), lastWebhookEventType=last_events.get(payment["payment_id"]))
         history = next((h for h in histories if rid and h.get("reservation_id") == rid or cid and h.get("rental_contract_id") == cid), None)
         history_view = None
@@ -221,6 +227,7 @@ def operation_details(request, session, root, records):
         delivery = None
         if r:
             delivery = dict(deliveryRequestType=r["delivery_request_type"], deliveryRegionId=r["delivery_region_id"],
+                pickupLocation=r["delivery_start_address"], returnLocation=r["delivery_return_address"],
                 regionName=(regions.get(r["delivery_region_id"]) or {}).get("region_name"),
                 startAddress=masked_address(r["delivery_start_address"]), returnAddress=masked_address(r["delivery_return_address"]),
                 spotDeliveryServiceType=spot_rent["delivery_service_type"] if spot_rent else "NONE",

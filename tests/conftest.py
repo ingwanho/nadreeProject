@@ -65,7 +65,8 @@ def schema(engine):
           Column("legacy_spot_code", String(21), unique=True), Column("invite_code", String(64), unique=True),
           Column("delivery_service_type", String(30), default="NONE"), Column("created_at", DateTime), Column("updated_at", DateTime),
           Column("introduction", String(500)), Column("contact_email", String(200)),
-          Column("address_detail", String(200)), Column("directions", String(500)))
+          Column("address_detail", String(200)), Column("directions", String(500)),
+          Column("paypal_merchant_id", String(13)), Column("paypal_environment", String(10)))
     Table("MSP_ADMIN_SPOT_SCOPE", metadata, Column("id", Integer, primary_key=True),
           Column("admin_id", String(36), nullable=False), Column("spot_master_id", String(36)),
           Column("spot_id", String(36)), Column("unit_code", String(60)), Column("access_type", String(20), default="manage"),
@@ -128,7 +129,8 @@ def setup(tmp_path, request):
                       "address": "Test shop address", "lat": -8.65, "lng": 115.2,
                       "contract_start": date.today() - timedelta(days=365), "contract_end": date.today() + timedelta(days=365)}
             conn.execute(metadata.tables["MSP_SPOT_MASTER"].insert(), values)
-            conn.execute(metadata.tables["MSP_SPOT_RENT"].insert(), {"spot_master_id": ident, "invite_code": "invite-" + ident})
+            conn.execute(metadata.tables["MSP_SPOT_RENT"].insert(), {"spot_master_id": ident, "invite_code": "invite-" + ident,
+                "paypal_merchant_id": "SELLER1234567", "paypal_environment": "SANDBOX"})
             normal = {"contract_id": contract, "unit_code": code, level + "_id": ident, level + "_name": ident}
             if level == "spot":
                 normal["org_id"] = "root"

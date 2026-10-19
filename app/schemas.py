@@ -59,6 +59,13 @@ class AdminId(Body):
     adminId: Identifier
 
 
+class ShopPayPalMerchant(Body):
+    model_config = ConfigDict(extra="forbid", json_schema_extra={"example": {
+        "spotMasterId": "00000000-0000-4000-8000-000000000101", "merchantId": None}})
+    spotMasterId: Identifier
+    merchantId: Annotated[str, Field(pattern=r"^[A-Z0-9]{13}$")] | None
+
+
 class Shop(Body):
     spotMasterId: Identifier | None = None
     shopName: Text100 | None = None

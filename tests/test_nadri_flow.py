@@ -3,7 +3,7 @@ import hashlib
 import hmac
 import pytest
 
-from sqlalchemy import Column, DateTime, Integer, MetaData, String, Table
+from sqlalchemy import Column, DateTime, Integer, MetaData, String, Table, select
 from sqlalchemy.orm import Session
 from pydantic import SecretStr
 
@@ -14,9 +14,19 @@ from app.security import now
 
 class FakePayPal:
     environment = "SANDBOX"
+    from types import SimpleNamespace
+    settings = SimpleNamespace(paypal_environment="SANDBOX")
+
+    def for_merchant(self, merchant_id):
+        self.merchant_id = merchant_id
+        return self
+
+    def verify_merchant(self, merchant_id):
+        pass
 
     def get(self, resource, order_id):
         return {"id": order_id, "status": "APPROVED",
+                "purchase_units": [{"payee": {"merchant_id": self.merchant_id}}],
                 "links": [{"rel": "approve", "href": "https://www.sandbox.paypal.com/checkoutnow?token=" + order_id}]}
 
     def create_order(self, request_id, currency, value, reference_id):
@@ -152,13 +162,20 @@ def test_nadri_reservation_payment_checkout_and_return(setup, signin, monkeypatc
     assert availability.json()["items"][0]["shopId"] == "root"
     assert availability.json()["items"][0]["modelId"] == "model-125"
     price = availability.json()["items"][0]["price"]["totalFrom"]
-    request = client.post("/api/v1/nadree/rental/request", headers=customer_headers, json={
+    request_body = {
         "spotMasterId": "root", "modelId": "model-125", "startDate": start.isoformat(),
-        "returnDate": end.isoformat(), "totalPrice": price, "currency": "USD", "deliveryRequested": False})
+        "returnDate": end.isoformat(), "totalPrice": price, "currency": "USD", "deliveryRequested": False}
+    request = client.post("/api/v1/nadree/rental/request", headers=customer_headers, json=request_body)
     assert request.status_code == 200, request.text
     reservation_id = request.json()["reservationId"]
     assert request.json()["bookingId"] == reservation_id
     assert request.json()["shopId"] == "root"
+    duplicate = client.post("/api/v1/nadree/rental/request", headers=customer_headers, json=request_body)
+    assert duplicate.status_code == 409 and duplicate.json()["errorCode"] == "DUPLICATE_RENTAL_REQUEST"
+    with setup["engine"].connect() as conn:
+        assert len(conn.execute(select(tables["MSP_RESERVATION"])).all()) == 1
+    detail = client.get("/api/v1/nadree/rental/reservations/" + reservation_id, headers=customer_headers)
+    assert detail.status_code == 200 and detail.json()["item"]["reservationId"] == reservation_id
     reservation_push = next(item for item in fcm.notifications if item["event"] == "RESERVATION_REQUESTED")
     assert {item["token"] for item in reservation_push["recipients"]} == {
         "admin-device", "general-device", "general2-device"}
@@ -167,6 +184,7 @@ def test_nadri_reservation_payment_checkout_and_return(setup, signin, monkeypatc
     second_login = client.post("/api/v1/nadree/user/login", json={"UID": "user-flow-second"})
     assert second_login.status_code == 200, second_login.text
     second_headers = {"Authorization": "Bearer " + second_login.json()["accessToken"]}
+    assert client.get("/api/v1/nadree/rental/reservations/" + reservation_id, headers=second_headers).status_code == 404
     blocked = client.post("/api/v1/nadree/rental/request", headers=second_headers, json={
         "spotMasterId": "root", "modelId": "model-125", "startDate": start.isoformat(),
         "returnDate": end.isoformat(), "totalPrice": price, "currency": "USD", "deliveryRequested": False})

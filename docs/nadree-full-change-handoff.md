@@ -1,5 +1,122 @@
 # Nadree 전체 변경사항 및 인수 문서
 
+## 2026-10-18 최신 변경 — 프론트 전달 및 서버 적용
+
+이 절이 아래 과거 정책·2026-10-16 수동 판매자 설정 문서보다 우선한다. **로컬 구현이며 서버 DB·실제 PayPal·Firebase에는 미적용**이다. 회사별 BASE 관리, 주소의 실제 배송구역 자동 판정, 가입코드 추가 발급/재발급은 이번 범위에서 제외한다.
+
+### 프론트에 전달할 확정 정책
+
+- BASE는 서비스 공통 기본 cc 가격이다. 약 4개 큰 구간을 운영 정책으로 정할 예정이며 이번 코드가 임의 가격이나 구간을 새로 생성하지 않는다.
+- BASIC은 해당 지점의 cc 구간만 BASE보다 우선한다. 예: BASE 1~50cc/10 USD와 BASIC 1~25cc/12 USD가 있으면 1~25cc는 12 USD, 26~50cc는 BASE 10 USD다. BASE 전체를 BASIC으로 채울 필요는 없다. 중간 상위 지점 BASIC을 상속하지 않는다.
+- PREMIUM은 차량별 고정 일단가다. PREMIUM 아닌 차량은 cc로 BASE/BASIC을 선택한다. 가격 설정은 정수 USD, 결제·환불은 USD 센트 단위다. 기존 확정 예약 금액에 가격 변경을 소급하지 않는다.
+- representativeEmail 가입은 일반관리자 승인 요청(PENDING_APPROVAL/REQUESTED)이며 대표 승인 후 활성화된다. inviteCode 가입은 그 지점 대표관리자로 즉시 ACTIVE, requestId/requestStatus=null이다. 코드는 하위지점 생성 시만 자동 생성하고 가입 성공 트랜잭션에서 NULL로 소진한다. 추가 발급·재발급 API/UI는 제공하지 않는다.
+- 관리자 CANCEL은 지점 귀책 전용: 당일 포함 인계 전 APPROVED에 대해 실제 결제 총액 100% 환불. 고객 사유 대리 취소는 지원하지 않으며 cancellationReasonType은 BRANCH_FAULT만 허용한다(생략해도 동일 정책). 고객 취소는 인계 전 시작일 전 90%, 당일부터 0%로 유지한다. 인계 후 취소 불가, 미결제/0% PG 환불 호출 없음.
+- 실제 주소·좌표·placeId로 배송구역 안/밖을 판정하는 기능은 지역 정책 미확정으로 제외했다. 지역명 문자열 추정도 제거했다. 주소는 보관하되 배송 가능 구역으로 검증했다는 문구를 표시하지 않는다. 같은 장소인지의 지리적 자동 판정도 제공하지 않으며 기존 대표의 위치 정정 권한·이전값 충돌 검사·감사 이력은 유지한다.
+
+### 가격 API
+
+POST `/nadreego/shop/tierCreate`는 기존 단건 또는 동일 지점의 1~100개 배열을 받는다.
+
+```json
+[
+  {"spotCode":"지점코드", "minCc":1, "maxCc":25, "price":12, "type":"BASIC"},
+  {"spotCode":"지점코드", "minCc":26, "maxCc":50, "price":15, "type":"BASIC"}
+]
+```
+
+배열 응답은 `{"status":"success","tiers":[...]}`이고 각 항목에 `action=CREATED|UPDATED`가 있다. 동일 지점·시작/끝 cc가 같으면 수정, 없으면 추가한다. 배열 전체가 한 트랜잭션이며 생략된 기존 티어를 삭제하지 않는다. 요청 내부 동일 구간 중복은 422 TIER_BATCH_DUPLICATE_RANGE, 지점 혼합은 422 TIER_BATCH_SPOT_MISMATCH, 부분 겹침은 409 TIER_RANGE_OVERLAP, 하나의 BASE 안에 속하지 않으면 409 TIER_BASE_NOT_UNIQUE다. 기존 넓은 BASIC을 세분화할 때는 기존 BASIC을 삭제한 뒤 새 구간 배열을 등록한다. 삭제 후에는 BASE로 복귀한다.
+
+GET 같은 경로의 `tiers`는 편집용 원설정(BASE+BASIC), `effectiveTiers`는 겹침 없이 실제 적용되는 구간이다. **effectiveTiers의 BASE 잔여 구간을 저장/삭제용 원구간으로 사용하지 않는다.** spotCode 생략은 공통 BASE만, 지정하면 해당 지점을 조회한다. POST에서 spotCode 생략은 로그인 관리자의 직접 지점이다. 직접 지점 일반관리자와 허용 하위 지점 대표의 기존 가격 권한을 유지한다.
+
+고객 availability의 `price.pricingTiers[]`에 `priceOptionId`와 배송비 포함 `totalPrice`를 추가했다. 예: BASIC:10, PREMIUM:10은 금액이 같아도 다른 선택이다. 프론트는 문자열을 직접 합성하지 말고 받은 값을 request의 priceOptionId로 보낸다. 식별자의 범위는 요청한 지점·모델·기간의 최신 견적이다. 구버전에서 옵션을 생략하면 총액에 맞는 옵션이 정확히 하나일 때만 허용한다. 모호하면 409 PRICE_OPTION_REQUIRED, 선택이 무효면 PRICE_OPTION_INVALID, 금액 변경은 PRICE_QUOTE_MISMATCH다. 예약 생성 때 옵션·재고·금액을 재검증하고 선택 스냅샷을 저장한다. 관리자 reservation.selectedPriceOption/pricingTiers는 현재 차량 정보가 아니라 예약 당시 선택이다.
+
+### 배송·조회 계약
+
+고객 availability/request의 pickupLocation·returnLocation은 최대 500자 주소 문자열(공백만 불가)이다. deliveryRegionId는 선택할 지점 요금표 지역 ID이며 지리 검증 결과가 아니다. 활성 요금표가 하나면 생략 가능, 여러 개면 선택 필요(예약 시 409 DELIVERY_REGION_REQUIRED). 지점이 지원하지 않는 ID는 DELIVERY_REGION_NOT_SUPPORTED다. 공개 검색은 해당 배송 조건을 지원하지 않는 상품을 제외한다.
+
+deliveryRequestType=START_ONLY면 전달 주소 필수·반환 주소 null/생략, 회수비 0이다. START_AND_RETURN이면 양쪽 주소 필수이며 서로 다른 주소 문자열도 저장한다(지리 판정 없음). 명시적 type 생략 시 반환 주소가 있으면 왕복, 없으면 편도로 해석한다. 배송 자체가 false면 type은 보내지 않는다. 지점 START_ONLY는 왕복을 거절한다. totalPrice에는 배송비가 이미 포함되므로 프론트에서 다시 더하지 않는다. 관리자 delivery.pickupLocation/returnLocation으로 실제 목적지를 제공하고 기존 마스킹 startAddress/returnAddress는 호환용으로 유지한다.
+
+고객 GET `/api/v1/nadree/rental/completed`에 반납 외 취소·거절·만료가 포함된다. 기존 page/pageSize(최대 100)를 사용한다. GET `/api/v1/nadree/rental/reservations/{reservationId}`는 상태와 무관하게 본인 예약을 직접 조회한다. 관리자 POST `/nadreego/booking/select`에 bookedNo 정확 일치 필터를 추가했다. 예약 ID와 bookingId는 동일하며 bookedNo=BO+예약 ID다. 관리자 JWT를 고객 조회에 사용하지 않는다.
+
+### 예약 중복 검증 — 별도 테이블 없음
+
+사용자 결정으로 요청 결과 테이블·Idempotency-Key 저장·30일 결과 재현 및 GET `/api/v1/nadree/rental/requests/{requestId}`는 제외한다. 기존 MSP_RESERVATION에서 동일 고객·지점·모델·기간의 60초 이내 REQUESTED/APPROVED 예약을 확인하여 409 DUPLICATE_RENTAL_REQUEST를 반환한다. 고객 및 모델 잠금과 재고 검증은 유지한다.
+
+이는 장기 멱등성 보장이 아니다. 응답 유실 시 무조건 재전송하지 말고 본인 진행/종료 예약 목록을 조회하여 확인한다. reservationId를 알면 예약 직접 조회를 사용한다. 60초 이후에는 같은 요청도 새 예약이 될 수 있으므로 프론트에서 재전송을 제한해야 한다. 다중 서버 MySQL 동시성은 서버에서 별도 검증한다.
+
+### PayPal 판매자 연결 — 별도 테이블 없음
+
+사용자 결정으로 온보딩 테이블·상태 복구 CLI·전용 타이머는 제외한다. 기존 MSP_SPOT_RENT.paypal_merchant_id에 검증된 판매자를 저장하며 같은 ID를 여러 지점에 허용한다. Sandbox/Live 혼동 방지용 paypal_environment와 원거래 환불 대상을 보존하는 MSP_RENTAL_PAYMENT.paypal_merchant_id는 기존 설계대로 유지한다. 추가 세션 컬럼은 없다.
+
+프론트 흐름:
+
+1. 예약 APPROVE 시 ID가 없으면 409 SHOP_PAYPAL_MERCHANT_REQUIRED. 예약 상태는 REQUESTED로 유지하고 거절은 가능하다. 프론트는 ‘PayPal 판매자 연결이 필요합니다’와 연결 버튼을 표시한다. 일반관리자는 직접 지점 대표에게 연결을 요청한다.
+2. 직접 지점 대표가 POST `/nadreego/shop/paypal-onboarding/start`, `{ "spotMasterId":"..." }`를 호출한다. 응답의 actionUrl을 연다. URL 발급을 승인 오류 처리 안에서 자동 실행하거나 백엔드가 UI를 띄우지는 않는다.
+3. start 응답은 state/actionUrl/expiresAt/paymentEnvironment다. state는 서버가 서명한 30분 유효값이며 관리자 로그인 세션·지점·환경·PayPal tracking ID에 연결된다. DB에 저장하지 않는다. 반복 start는 새 연결 URL을 발급한다. 이미 ID가 있으면 SHOP_PAYPAL_ALREADY_CONNECTED다.
+4. PayPal 로그인·동의 후 env에 설정한 HTTPS 프론트 복귀 페이지로 이동한다. 프론트는 복귀 query의 state와 관리자 인증으로 POST `/nadreego/shop/paypal-onboarding/verify`, `{ "spotMasterId":"...", "state":"..." }`를 호출한다. 서버는 서명·만료·현재 대표 권한을 확인하고 PayPal tracking 조회로 판매자 ID 및 수취/이메일/플랫폼 권한을 검증한 뒤 지점 컬럼에 저장한다. 브라우저 merchantId/merchantIdInPayPal 값을 직접 저장하지 않는다.
+5. verify 성공 응답은 spotMasterId/merchantId/paymentEnvironment다. 프론트에서 기존 승인 요청을 다시 실행한다. 연결 완료만으로 예약을 자동 승인하지 않는다.
+
+저장값 조회는 기존 GET `/nadreego/shop/paypal-merchant?spotMasterId=...`, 연결 해제는 PUT 같은 경로에 `{ "spotMasterId":"...", "merchantId":null }`이다. 임의 판매자 ID 입력은 거절한다. 새 /status·/refresh API는 제외한다. Sandbox ID가 남은 채 Live로 전환하면 환경 불일치로 승인/결제를 차단하며 대표가 기존 연결을 해제하고 Live로 다시 연결해야 한다.
+
+state 만료는 410 PAYPAL_ONBOARDING_STATE_EXPIRED, 변조/다른 지점·환경·로그인 세션은 400 PAYPAL_ONBOARDING_STATE_INVALID다. 대표가 재로그인했거나 state를 잃으면 start부터 다시 진행한다. 동일 판매자 verify 재전송은 허용하지만 다른 저장 판매자를 덮어쓰지는 않는다. 별도 저장 상태가 없으므로 미완료 연결 자동 복구·state 개별 취소는 제공하지 않는다. 연결 해제 후에도 유효 state를 가진 같은 대표 세션의 명시적 verify는 재연결할 수 있으므로 프론트는 해제 시 state를 폐기하고 자동 재전송하지 않는다. 복귀 페이지는 state를 로그·분석도구에 보내지 않고 처리 후 URL에서 제거한다.
+
+승인·실제 결제 전 PayPal 판매자 권한 검증은 안전상 유지한다. 연결값이 있어도 권한 미완료/철회는 PAYPAL_MERCHANT_NOT_READY, 외부 장애는 오류로 차단된다. 서명 검증된 판매자 웹훅은 현재 PayPal 상태를 재확인하여 권한이 실제로 없어진 동일 환경의 연결 지점 ID/환경을 비운다. 늦은 철회 이벤트라도 현재 권한이 유효하면 유지하며 미연결 지점을 자동 연결하지 않는다. 기존 결제 당시 판매자 ID와 결제·환불 웹훅/복구 작업은 보존한다.
+
+공식 기준: [PayPal 플랫폼 온보딩](https://developer.paypal.com/platforms/checkout/save-payment-methods/onboarding/platform/). 실제 Sandbox 파트너 권한·복귀 페이지·웹훅·결제 검증은 별도다.
+
+### 탈퇴·환불·채팅 — 기존 처리 검증
+
+사용자 결정으로 개인정보 작업 테이블·백그라운드 정리·자동 재시도 타이머 및 cleanupStatus/privacyStatus 응답 추가는 제외한다. 기존 탈퇴 API는 진행 중 거래와 무관하게 Firebase 계정 삭제·채팅 세션 회수를 호출한 후 SQL 프로필/FCM을 비우고 서비스 access/refresh를 폐기한다. 성공 응답은 `{ "status":"success", "deleted":true }`다. 기존 인증 시각을 가진 토큰으로 재가입할 수 없다.
+
+외부 서비스 실패 시 성공으로 표시하지 않고 오류를 반환한다. SQL과 Firebase는 하나의 원자적 트랜잭션이 아니므로 외부 삭제 이후 SQL 실패 등 부분 성공은 운영 확인이 필요하며 자동 복구를 보장하지 않는다. 거래 참조·주소 스냅샷·기존 채팅 본문의 후속 삭제는 이번에 추가하지 않는다. 이름 null만으로 탈퇴를 추정하지 않는다. 기존 여권 기능·정리는 보류한다.
+
+검증 범위는 프로필/FCM 삭제, access/refresh 차단, Firebase 삭제·채팅 회수 호출, 외부 실패 시 성공 오표시 방지 및 기존 거래 보존이다. 실제 Firebase 계정/채팅 연동 검증은 별도다.
+
+관리자 결제 조회의 refundRequestedAmount(목표액), refundedAmount(실제 누적액), refundStatus 구분과 가능한 경우 결제 오류의 paymentId 제공은 유지한다. 채팅 경로·일반관리자 읽기/대표 답변 정책도 유지하며 프론트는 로그아웃/탈퇴 때 로컬 캐시를 비운다.
+
+### 서버 적용 순서 — 아래 명령은 아직 실행하지 않음
+
+1. 사용자 변경을 보존하여 코드 배포. DB 백업과 대상 DB 이름을 먼저 확인한다.
+2. ec2-user가 읽을 수 있는 `/srv/nadree-api/.env`에 기존 Platform Client ID/Secret/Webhook/Partner Merchant ID와 `NADREE_PAYPAL_ONBOARDING_RETURN_URL='https://프론트복귀페이지'`를 설정한다. URL에는 query/fragment를 넣지 않는다. `NADREE_CORS_ORIGINS`에는 필요한 기존 origin을 유지하면서 `https://www.riderlog-lte.com:50045`를 쉼표로 구분해 포함한다.
+3. 마이그레이션 계획을 확인한다. 이번 요청 결과·개인정보·온보딩 관련 신규 테이블은 모두 제외했다. 판매자 연결은 기존 지점/결제 컬럼만 사용한다. 이전 미적용 판매자 컬럼 등도 계획에 포함될 수 있다.
+
+```sh
+sudo -u ec2-user -H bash -lc 'cd /srv/nadree-api && .venv/bin/python -m app.migrate'
+```
+
+출력과 DB 백업 확인 후 **실제 env의 DB 이름과 일치할 때만** 아래 테스트 DB 적용 명령을 실행한다. Live DB에는 이 명령을 그대로 사용하지 않는다.
+
+```sh
+sudo -u ec2-user -H bash -lc 'cd /srv/nadree-api && .venv/bin/python -m app.migrate --apply --confirm-database RIDERLOG_V2_DATA_TEST'
+sudo systemctl restart nadree-api.service
+```
+
+4. PayPal 앱에 판매자 완료·동의 철회 이벤트 구독을 추가하고 기존 결제 이벤트 구독을 유지한다. Sandbox 온보딩→승인→주문→구매자 승인→캡처→고객/관리자 환불→서명 웹훅을 검증한다.
+5. 이번 온보딩/개인정보 전용 타이머는 설치하지 않는다. 기존 결제·환불 복구 타이머는 그대로 유지한다. 이전 문서대로 이미 새 타이머를 설치했다면 실제 설치 여부를 확인하여 해당 전용 타이머만 중지하고 운영자에게 변경 이력을 전달한다.
+6. 별도 테이블을 이미 다른 서버에 생성했다면 자동 DROP하지 않는다. 기존 데이터 유무와 적용 이력을 확인한다. 이번 코드는 해당 테이블에 의존하지 않는다.
+
+### App Check 디버그 검증 준비
+
+scripts/verify_app_check.py는 등록된 디버그 비밀값을 실제 App Check 토큰으로 교환하고 읽기 전용 getChatUnreadSummary에 정상·누락·위조 토큰을 보내 200/401/401을 확인한다. 검증을 끄는 방식이 아니다. [공식 교환 API](https://firebase.google.com/docs/reference/appcheck/rest/v1/projects.apps/exchangeDebugToken)를 사용한다.
+
+서버의 저장소 밖 0600 비공개 JSON에 projectNumber, appId, apiKey, debugToken, firebaseIdToken, data를 보관한다. firebaseIdToken은 **현재 채팅 세션의 custom token을 Firebase ID token으로 교환한 값**이며 일반 Nadree JWT나 FCM 토큰이 아니다. 고객 data는 `{}`, 관리자 data는 `{ "shopId":"직접지점ID" }`다. 고객/관리자 앱별로 등록된 디버그 토큰을 사용한다.
+
+```sh
+sudo -u ec2-user -H bash -lc 'cd /srv/nadree-api && .venv/bin/python scripts/verify_app_check.py /srv/nadree-api-private/app-check-customer.json'
+```
+
+실제 비밀 파일은 제공되지 않아 외부 검증은 아직 실행하지 않았다. 이 검사는 앱 기기 무결성·FCM 수신·모든 Firestore 쿼리의 인수를 대체하지 않는다. 결과 파일에는 비밀값/응답 원문 없이 HTTP 코드와 통과 여부만 남기고 테스트 종료 후 디버그 토큰을 폐기한다.
+
+### 인수 상태
+
+온보딩 테이블까지 제외한 변경 후 전체 로컬 회귀는 **314 passed, 10 skipped**(별도 MySQL 6·Firestore 4), 기존 의존성 경고 2개다. 판매자 연결은 기존 컬럼만 사용하며 권한 검증·state 변조/만료/다른 세션·지점·환경 차단·연결 해제·웹훅 현재 권한 재확인·중복 판매자 허용을 확인했다. 실행 명령은 `env -u NADREE_TEST_MYSQL_URL -u FIRESTORE_EMULATOR_HOST PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m pytest tests -q -p no:cacheprovider --tb=short`다. `git diff --check`도 통과했다.
+
+실제 MySQL 잠금·PayPal Sandbox 온보딩/결제·Firebase 계정/채팅 회수·App Check 및 기기 푸시는 서버 인수에서 별도 확인해야 한다. 서버 DB 변경·배포는 실행하지 않았다.
+
+---
+
+2026-10-16 추가 변경: 지점별 PayPal 판매자 설정 API, 미설정 승인 차단, 결제 당시 판매자 보존 및 Platform 요청 분리를 구현했다. 기존 단일 판매자 env 정책을 대체하며 **서버 미적용**이다. [최신 Platform 변경 전달서](spot-paypal-platform-handoff-2026-10-16.md)를 먼저 확인한다.
+
 2026-10-13 실제 서버 후속 기록: 테스트 DB의 미적용 컬럼 4개를 백업 후 적용하고 API를 재시작했다. QR 시드와 결제 타이머/외부 영향 작업은 보류했다. 아래 “서버 미적용”은 로컬 작업 당시 기록이며 최신 실측 상태는 [서버 적용·검증 결과](server-apply-verification-2026-10-13.md)를 따른다.
 
 ## 2026-10-13 추가 보완 — 배포 전 확인

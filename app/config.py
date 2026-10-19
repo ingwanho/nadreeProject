@@ -54,7 +54,10 @@ class Settings(BaseSettings):
     paypal_client_id: SecretStr = SecretStr("")
     paypal_client_secret: SecretStr = SecretStr("")
     paypal_webhook_id: SecretStr = SecretStr("")
-    paypal_merchant_id: str = ""
+    paypal_merchant_id: str = ""  # Legacy configuration only; never a seller fallback.
+    paypal_partner_merchant_id: str = ""
+    paypal_partner_attribution_id: str = ""
+    paypal_onboarding_return_url: str = ""
     paypal_unpaid_minutes: int = Field(default=180, ge=1, le=10080)
     inventory_horizon_days: int = Field(default=180, ge=1, le=366)
     smtp_host: str = ""
