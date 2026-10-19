@@ -733,7 +733,7 @@ def nadree_request(body: NadriRentalRequest, request: Request, session: Session 
                   created_at=at, updated_at=at)
     session.execute(table.insert().values(**values))
     reservation = dict(values)
-    reservation_history(request, session, reservation, values, "REQUESTED", user.uid_token)
+    reservation_history(request, session, reservation, values, "REQUESTED", user.uid_token, customer=True)
     queue_reservation_request(db, session, reservation_id, body.spotMasterId)
     return {"status": "success", "reservationId": reservation_id, "bookingId": reservation_id,
             "bookedNo": "BO" + reservation_id,
@@ -1082,7 +1082,7 @@ def cancel_request(body: ReservationCancel, request: Request, background_tasks: 
     session.execute(update(reservation_table).where(
         reservation_table.c.reservation_id == reservation["reservation_id"],
         reservation_table.c.reservation_status.in_(("REQUESTED", "APPROVED"))).values(**values))
-    reservation_history(request, session, reservation, values, "CANCELLED", user.uid_token, body.reason)
+    reservation_history(request, session, reservation, values, "CANCELLED", user.uid_token, body.reason, customer=True)
     if refund_ready:
         background_tasks.add_task(execute_refund, db, request.app.state.paypal, payment_id)
     return {"status": "success", "reservationId": reservation["reservation_id"],

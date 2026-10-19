@@ -143,7 +143,7 @@ def compute_assignment(request, session, spot, vehicles, contracts, *, candidate
     return assignments, {r["reservation_id"]: r for r in reservations}
 
 
-def reservation_history(request, session, previous, values, event, actor_id, reason=None):
+def reservation_history(request, session, previous, values, event, actor_id, reason=None, *, customer=False):
     from app.notifications import record_notification
     new = {**previous, **values}
     from app.chat import queue_booking_chat
@@ -153,7 +153,10 @@ def reservation_history(request, session, previous, values, event, actor_id, rea
         previous_reservation_status=previous["reservation_status"], new_reservation_status=new["reservation_status"],
         previous_vehicle_id=previous["assigned_vehicle_id"], new_vehicle_id=new["assigned_vehicle_id"],
         previous_assignment_status=previous["vehicle_assignment_status"], new_assignment_status=new["vehicle_assignment_status"],
-        reason=reason, changed_by=actor_id, created_at=now()))
+        # The shared database keeps changed_by as an FK to MSP_ADMIN.
+        # Customer identities belong in the existing JSON audit field instead.
+        reason=reason, changed_by=None if customer else actor_id, created_at=now(),
+        **({"details": {"actorType": "CUSTOMER", "actorId": actor_id}} if customer else {})))
     if event in ("REQUESTED", "APPROVED", "REJECTED", "CANCELLED", "EXPIRED", "HANDED_OVER"):
         record_notification(request.app.state.db, session, new["spot_master_id"], "RESERVATION_" + event,
             "RESERVATION", new["reservation_id"], "reservation:" + new["reservation_id"] + ":" + event)
