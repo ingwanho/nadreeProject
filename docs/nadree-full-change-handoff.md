@@ -1,5 +1,11 @@
 # Nadree 전체 변경사항 및 인수 문서
 
+## 2026-10-20 APPROVED 주문 재사용 시 승인 URL 오류 보완
+
+`POST /api/v1/nadree/rental/payment/order`에서 PayPal 주문 상태가 `APPROVED`이면 승인 URL을 필수 추출하지 않고 기존 결제 정보와 `approvalUrl: null`을 반환한다. 기존 주문 재사용과 신규/동일 요청 재처리 응답 경로에 모두 적용했다. 승인 전 `CREATED`/`SAVED`/`PAYER_ACTION_REQUIRED`의 승인 링크·호스트 검증은 유지한다. 서버 결제 상태를 PAID로 바꾸거나 자동 capture하지 않으며 실제 결제 확정은 기존 별도 capture API와 상태/웹훅 검증을 사용한다. 프론트는 승인 URL이 없는 승인 완료 응답에서 PayPal 승인 화면을 다시 열지 않는다. API 필드·DB 스키마 변경은 없다.
+
+관련 격리 회귀 75개 통과. 이 변경은 코드 수정·격리 검증까지 완료했으며 서비스 재시작·실제 PayPal 주문/캡처 재시도는 수행하지 않았다. 상세는 [서버 검증 결과](server-requirements-verification-2026-10-19.md)의 APPROVED 주문 보완 절을 참조한다.
+
 ## 2026-10-20 고객 PayPal 결제 복귀 URL — 로컬 구현, 서버 적용 전
 
 고객 결제의 복귀 기준 주소를 `https://na-dree.com/api/v1/nadree/rental/payment/return`으로 확정했다. 관리자 판매자 연결 복귀 주소와 별개다. 신규 PayPal 주문의 `payment_source.paypal.experience_context.return_url`에 이 값을, `cancel_url`에는 같은 주소에 `?cancelled=true`를 붙인 값을 전달한다. `application_context` 대신 현재 PayPal 권장 필드를 사용하며, `payer-action`/기존 `approve` 링크 모두 기존 응답의 approvalUrl로 제공한다.

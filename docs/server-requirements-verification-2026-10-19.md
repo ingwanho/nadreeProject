@@ -1,5 +1,37 @@
 # 2026-10-19 서버 적용 상태·요구사항 검증 결과
 
+## 2026-10-20 APPROVED 주문의 승인 URL 처리 수정 완료(격리 검증)
+
+사용자의 수정 요청으로 `app/customer_rentals.py`의 order API에서 PayPal 상태가 APPROVED인 경우 `approval_url` 호출을 생략했다. 기존 주문 재사용 및 신규/동일 요청 재처리 결과 저장 후 응답 경로 모두 기존 결제 정보를 `approvalUrl=null`로 반환한다. 서버 SQL 결제 상태를 PAID로 바꾸거나 자동 캡처하지 않는다. 승인 전 CREATED/SAVED/PAYER_ACTION_REQUIRED는 기존 승인 URL 검증을 유지하며 capture_requested_at 차단·기존 결제 ID·판매자/금액/기한·중복 청구 방지 검사는 유지했다. DB·env·API 필드 변경은 없다.
+
+`test_payment_safety.py`에 실제 approval_url 파서를 사용하는 API 회귀를 추가했다. 기존 주문 조회와 새/동일 요청 응답이 APPROVED이고 승인 링크가 없을 때 모두 200·approvalUrl null을 확인하고, 반복 요청에서도 같은 결제 ID/레코드 1건 유지·추가 주문 없음·자동 캡처/환불 없음·서버 결제 상태 CREATED 유지를 검사했다. 승인 전 상태 3종은 신뢰 링크를 반환하고 악성 호스트 링크를 거절함을 함께 검사했다.
+
+- 수정 전: 기존 APPROVED 주문 재사용 테스트에서 HTTP 500 PAYPAL_APPROVAL_URL_MISSING 재현(기대 200).
+- 수정 후: 신규 8개를 포함해 payment_safety/payment_return_url/merchant_accounts/payment_deadline_policy/nadri_flow 격리 회귀 **75 passed, 0 failed, 0 skipped (17.45초)**.
+- 실제 서비스 DB나 PG를 테스트 대상으로 사용하지 않았다. 임시 DB·모의 PG이며 `git diff --check` 통과. 전체 회귀 재실행은 아니다.
+- 코드는 작업 트리 변경 상태이고 서비스 재시작·실제 order/capture/환불 재시도는 하지 않았다. 따라서 실제 서버의 기존 오류 해소까지 검증한 결과는 아니다. 실행 중 API 반영에는 재시작이 필요하다.
+
+프론트는 이미 구매자 승인된 주문에서 다시 승인 URL을 요구/열지 않고 별도 capture 단계로 진행한다. APPROVED는 구매자 승인이고 결제 확정이 아니므로 capture·결제 상태 확인 전 완료 표시를 하지 않는다. 변경 후에도 실제 자금 처리 성공은 미검증이다.
+
+## 2026-10-20 06:50 UTC PAYPAL_APPROVAL_URL_MISSING 원인 진단
+
+실제 주문 POST 재시도 없이 승인 테스트 지점/모델의 결제 ID 5를 읽기 전용 확인했다. SQL은 CREATED, 기존 PayPal 주문 ID 있음, 캡처 ID/캡처 요청 시각 없음이다. 현재 저장소는 `ec865cf`(06:32:07 UTC), 서비스 PID 2715732/시작 06:33:56 UTC다. 현재 코드에 payment return URL 및 `approve`/`payer-action` 두 rel 지원이 이미 있으므로 해당 지원 누락만으로 이번 현재 상태를 설명하지 않는다.
+
+실제 기존 Sandbox 주문 조회 결과:
+
+| 조회 | HTTP | 오류 코드 | PayPal Debug ID |
+| --- | --- | --- | --- |
+| OAuth | 200 | 없음 | `f489766de0f38` |
+| 기존 주문 GET | 200 | 없음 | `f4897664ce4b4` |
+
+PayPal 주문 상태는 **APPROVED**, 링크 rel은 **self/update/capture**뿐이며 **approve/payer-action은 없다**. 현재 `PayPalClient.approval_url`에 이 실제 응답을 메모리에서 전달했을 때 PAYPAL_APPROVAL_URL_MISSING을 재현했다. 원문 링크·주문 토큰·판매자 ID·인증값은 기록하지 않았다.
+
+`nadree_payment_order`의 기존 주문 재사용 분기는 CREATED/SAVED/PAYER_ACTION_REQUIRED/APPROVED를 함께 처리하며 모두 approval_url을 필수 추출한다. 구매자 승인이 끝난 APPROVED에는 승인 URL이 없을 수 있으므로, 현재 주문의 정상 캡처 대기 상태를 서버가 오류로 바꾸는 상태 분기 문제다. 신규 주문 저장 후에도 응답에서 승인 URL을 무조건 추출하는 경로가 있다. 현재 재조회만으로 과거 최초 생성 응답에 어떤 링크가 있었는지까지 입증하지는 않는다.
+
+APPROVED는 결제 캡처 완료를 의미하지 않는다. 현재 DB의 캡처 ID·요청 시각은 없으며 이번 작업에서도 캡처·환불·주문 생성·승인을 실행하지 않았다. 최소 수정 방향은 기존 주문이 APPROVED이면 승인 URL을 강제 추출하지 않고 기존 결제 정보를 반환해 별도 capture 단계로 진행하게 하는 것이다. CREATED/PAYER_ACTION_REQUIRED 등의 승인 미완료 상태에는 기존 승인 URL 검증을 유지한다. `approvalUrl`은 현 응답 모델에서도 nullable이다. 프론트는 PayPal 복귀 후 승인 완료를 재승인 흐름으로 보내지 않고 별도 capture/상태 확인 계약에 맞춰야 한다. 이번 요청은 진단이므로 코드·DB·서비스는 변경하지 않았다.
+
+기록: `build/test-runtime/paypal-approval-link-diagnostic-2026-10-20.json`. 실제 결제 확정은 수행하지 않았고 기존 주문 상태만 조회했다.
+
 ## 2026-10-20 05:49 UTC 판매자 조회 인증 보완·재시작 완료(실제 결제 재시도 없음)
 
 사용자의 “수정하고 재시도 말고 서버 재실행만” 승인에 따라 `app/paypal.py`의 플랫폼 판매자 상세·tracking 조회에서 `merchant_auth=False`를 명시했다. 공통 요청 메서드는 이때만 `PayPal-Auth-Assertion`을 추가하지 않는다. 플랫폼 Bearer 인증·Partner 설정·판매자 수취/이메일/OAuth 권한 검사는 유지했다. 결제 주문·캡처·환불은 기본값으로 기존 판매자 assertion을 유지하고 판매자 지정 클라이언트의 ID도 바꾸지 않는다. DB·env·기존 결제 ID/상태/요청 식별자는 변경하지 않았다.

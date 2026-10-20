@@ -841,7 +841,10 @@ def nadree_payment_order(body: NadriPaymentOrder, request: Request, session: Ses
             if provider_order["status"] in ("CREATED", "SAVED", "PAYER_ACTION_REQUIRED", "APPROVED"):
                 if existing.get("capture_requested_at"):
                     raise Problem(409, "PAYMENT_IN_PROGRESS", payment_id=existing["payment_id"])
-                approval = request.app.state.paypal.approval_url(provider_order)
+                # Approval has already completed; PayPal may now expose only
+                # capture links. Keep capture as an explicit separate action.
+                approval = (None if provider_order["status"] == "APPROVED"
+                            else request.app.state.paypal.approval_url(provider_order))
                 return _payment_result(dict(existing, _shop_master_id=reservation["spot_master_id"]), approval, payment_window)
             if existing.get("capture_requested_at") or existing["payment_status"] == "PENDING":
                 raise Problem(409, "PAYMENT_RECONCILIATION_REQUIRED", payment_id=existing["payment_id"])
@@ -893,7 +896,8 @@ def nadree_payment_order(body: NadriPaymentOrder, request: Request, session: Ses
     session.execute(update(table).where(table.c.payment_id == payment_id).values(paypal_order_id=order_id, updated_at=now()))
     session.commit()
     try:
-        approval = request.app.state.paypal.approval_url(result)
+        approval = (None if result.get("status") == "APPROVED"
+                    else request.app.state.paypal.approval_url(result))
     except (Problem, AttributeError):
         raise Problem(503, "PAYPAL_APPROVAL_URL_MISSING")
     payment = dict(payment, paypal_order_id=order_id, _shop_master_id=reservation["spot_master_id"])

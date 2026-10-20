@@ -8,6 +8,7 @@ from sqlalchemy import select
 from app.errors import Problem
 from app.jobs import expire_unpaid_payments
 from app.paypal import process_event, save_event
+from app.paypal import PayPalClient
 from app.refund_recovery import execute_refund
 from app.rental_schema import metadata
 from app.security import now, sign_user_access
@@ -120,6 +121,57 @@ def test_order_timeout_keeps_identity_and_reuses_it(payments):
     assert order(payments).status_code == 200
     assert len(payment_rows(payments)) == 1
     assert len(set(payments["pg"].orders)) == 1
+
+
+@pytest.mark.parametrize("existing", [True, False])
+def test_approved_order_without_approval_link_returns_payment(payments, monkeypatch, existing):
+    # Use the actual link parser: the fixture's default stub invents a link
+    # even when an APPROVED PayPal response has no approval link.
+    pg = payments["pg"]
+    monkeypatch.setattr(pg, "approval_url", lambda result: PayPalClient.approval_url(pg, result))
+    pg.order_status = "APPROVED"
+    if existing:
+        ident = insert_payment(payments, paypal_order_id="safe-order")
+    response = order(payments)
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["approvalUrl"] is None
+    assert data["paypalOrderId"] == "safe-order"
+    assert data["paymentStatus"] == "CREATED"
+    assert data["paypalCaptureId"] is None
+    if existing:
+        assert data["paymentId"] == ident
+    repeated = order(payments)
+    assert repeated.status_code == 200
+    assert repeated.json()["paymentId"] == data["paymentId"]
+    assert len(payment_rows(payments)) == 1
+    assert len(pg.orders) == (0 if existing else 1)
+    assert not pg.captures and not pg.refunds
+
+
+@pytest.mark.parametrize("provider_status", ["CREATED", "SAVED", "PAYER_ACTION_REQUIRED"])
+@pytest.mark.parametrize("valid_link", [True, False])
+def test_unapproved_order_still_requires_trusted_approval_link(payments, monkeypatch, provider_status, valid_link):
+    pg = payments["pg"]
+    pg.order_status = provider_status
+    get = pg.get
+    def provider_get(resource, ident):
+        result = get(resource, ident)
+        host = "www.sandbox.paypal.com" if valid_link else "evil.example"
+        result["links"] = [{"rel": "payer-action", "href": "https://" + host + "/checkoutnow?token=test"}]
+        return result
+    monkeypatch.setattr(pg, "get", provider_get)
+    monkeypatch.setattr(pg, "approval_url", lambda result: PayPalClient.approval_url(pg, result))
+    ident = insert_payment(payments, paypal_order_id="safe-order")
+    response = order(payments)
+    if valid_link:
+        assert response.status_code == 200, response.text
+        assert response.json()["paymentId"] == ident
+        assert response.json()["approvalUrl"].startswith("https://www.sandbox.paypal.com/")
+    else:
+        assert response.status_code >= 400
+        assert response.json()["errorCode"] == "PAYPAL_APPROVAL_URL_MISSING"
+    assert not pg.orders and not pg.captures
 
 
 def test_order_timeout_beyond_replay_window_requires_review(payments):
