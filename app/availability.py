@@ -166,6 +166,10 @@ def apply_assignments(request, session, assignments, reservations, actor_id, *, 
     table = request.app.state.db.table("MSP_RESERVATION")
     for ident, vehicle_id in assignments.items():
         previous = reservations[ident]
+        # Pending requests participate in capacity planning, but their solver
+        # assignments are hypothetical until that request itself is approved.
+        if previous["reservation_status"] == "REQUESTED":
+            continue
         if ident == skip or previous["assigned_vehicle_id"] == vehicle_id:
             continue
         values = dict(assigned_vehicle_id=vehicle_id, vehicle_assignment_status="REALLOCATED", vehicle_assigned_at=now(), updated_at=now())

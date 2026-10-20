@@ -143,7 +143,7 @@ class PayPalClient:
         if not re.fullmatch(r"[A-Z0-9]{13}", partner):
             raise Problem(503, "PAYPAL_PARTNER_NOT_CONFIGURED")
         result = self.call("GET", "/v1/customer/partners/" + partner + "/merchant-integrations/" + identifier(merchant_id),
-                           missing_code="PAYPAL_MERCHANT_NOT_READY")
+                           missing_code="PAYPAL_MERCHANT_NOT_READY", merchant_auth=False)
         integrations = result.get("oauth_integrations") or []
         granted = any(integration.get("integration_type") == "OAUTH_THIRD_PARTY" and
                       any(item.get("partner_client_id") == self.settings.paypal_client_id.get_secret_value()
@@ -160,7 +160,7 @@ class PayPalClient:
         if not re.fullmatch(r"[A-Z0-9]{13}", partner):
             raise Problem(503, "PAYPAL_PARTNER_NOT_CONFIGURED")
         result = self.call("GET", "/v1/customer/partners/" + partner + "/merchant-integrations",
-                           params={"tracking_id": tracking}, missing_code="PAYPAL_ONBOARDING_INCOMPLETE")
+                           params={"tracking_id": tracking}, missing_code="PAYPAL_ONBOARDING_INCOMPLETE", merchant_auth=False)
         merchant = result.get("merchant_id")
         if not isinstance(merchant, str) or not re.fullmatch(r"[A-Z0-9]{13}", merchant):
             raise Problem(409, "PAYPAL_ONBOARDING_INCOMPLETE")
@@ -188,7 +188,11 @@ class PayPalClient:
         expected_host = "www.sandbox.paypal.com" if self.settings.paypal_environment == "SANDBOX" else "www.paypal.com"
         if action.scheme != "https" or action.hostname != expected_host or action.username or action.password:
             raise Problem(500, "PAYPAL_REFERRAL_INVALID")
-        if own.scheme != "https" or own.netloc != urlsplit(self.base).netloc or not own.path.startswith("/v2/customer/partner-referrals/"):
+        api_hosts = ({"api-m.sandbox.paypal.com", "api.sandbox.paypal.com"}
+                     if self.settings.paypal_environment == "SANDBOX"
+                     else {"api-m.paypal.com", "api.paypal.com"})
+        if (own.scheme != "https" or own.netloc not in api_hosts or own.username or own.password
+                or own.query or own.fragment or not own.path.startswith("/v2/customer/partner-referrals/")):
             raise Problem(500, "PAYPAL_REFERRAL_INVALID")
         return links["action_url"], own.path
 
@@ -198,7 +202,7 @@ class PayPalClient:
                     s.paypal_webhook_id.get_secret_value())):
             raise Problem(500, "PAYPAL_NOT_CONFIGURED")
 
-    def call(self, method, path, headers=None, missing_code=None, **kwargs):
+    def call(self, method, path, headers=None, missing_code=None, merchant_auth=True, **kwargs):
         self.check_configuration()
         try:
             with self.lock:
@@ -212,7 +216,9 @@ class PayPalClient:
             request_headers = {"Authorization": "Bearer " + self.token}
             if self.settings.paypal_partner_attribution_id:
                 request_headers["PayPal-Partner-Attribution-Id"] = self.settings.paypal_partner_attribution_id
-            if self.merchant_id:
+            # Partner integration lookups authenticate the platform itself;
+            # payment operations keep the bound seller's auth assertion.
+            if self.merchant_id and merchant_auth:
                 def encode(value):
                     return base64.urlsafe_b64encode(json.dumps(value, separators=(",", ":")).encode()).decode().rstrip("=")
                 request_headers["PayPal-Auth-Assertion"] = encode({"alg": "none"}) + "." + encode({

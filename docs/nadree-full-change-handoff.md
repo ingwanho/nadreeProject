@@ -500,3 +500,17 @@ curl -sS https://na-dree.com/health/ready
 실제 테스트 DB의 `MSP_RESERVATION_HISTORY.changed_by`는 관리자 FK이므로 고객 신청·취소의 UID를 이 컬럼에 넣지 않는다. 해당 고객 이력은 `changed_by=NULL`, 기존 `details` JSON에 `actorType=CUSTOMER`, `actorId=고객 UID`를 기록한다. 관리자 실행 이력은 기존 관리자 ID 기록을 유지한다. DB 스키마·기존 FK·기존 데이터와 API 요청/응답 필드는 변경하지 않는다. 고객 신청에 판매자 ID는 필요하지 않으며 관리자 승인·결제의 판매자 검증은 그대로 유지한다. 프론트 수정은 필요하지 않다.
 
 격리 회귀와 실제 재검증 결과는 [서버 검증 결과](server-requirements-verification-2026-10-19.md)의 11절에 기록했다.
+
+## 2026-10-20 온보딩 리턴 URL 반영 후 서버 보완
+
+PayPal Sandbox가 referral self 링크를 api.sandbox.paypal.com으로 반환하는 실제 응답을 기존 api-m.sandbox.paypal.com 단일 호스트 검사에서 거절하던 문제를 수정했다. 환경별 PayPal API 호스트만 허용하며 HTTPS·경로·사용자정보/포트 및 Sandbox/Live 분리 검사를 유지한다. 후속 호출은 경로만 사용하고 기존 고정 base로 보낸다. CORS나 프론트 API 계약 변경은 없다. 격리 회귀 56개 및 재시작 후 실제 start HTTP 200을 확인했다. state·Sandbox actionUrl·expiresAt·paymentEnvironment 응답 존재를 확인했고 값은 기록하지 않았다. 판매자 동의·실기기 앱 복귀·같은 세션 verify·저장·결제는 별도 미검증이다. 상세는 [서버 검증 결과](server-requirements-verification-2026-10-19.md)의 2026-10-20 최신 절을 참조한다.
+
+## 2026-10-20 대기 예약 승인 시 RESERVATION_CHANGED 보완
+
+`compute_assignment`는 REQUESTED/SOFT_HOLD 신청도 용량을 점유하도록 가상 차량 배정에 포함한다. 기존 `apply_assignments`는 이 결과를 APPROVED 전용 UPDATE로 저장하려다 다른 대기 신청에서 수정 건수 0을 감지해 RESERVATION_CHANGED를 발생시켰다. 대기 신청의 계산 결과만 저장에서 제외하도록 수정했다. 대기 신청의 용량 점유·승인 대상의 별도 PROVISIONAL 배정·기존 승인 예약 재배정·실제 상태 변경 충돌 검사는 유지한다. API·DB 스키마 변경은 없다.
+
+실제 승인 테스트 지점/모델의 대기 예약 4건을 읽기 전용 확인했고, 수정 전 격리 승인 409를 재현한 뒤 신규 8개 포함 관련 격리 회귀 39개가 통과했다. 이 절의 변경은 작업 트리 구현·격리 검증 완료 상태다. 실제 예약 승인·서비스 재시작은 이번 작업에서 하지 않았으므로 실행 중 API 반영/실제 승인 성공과 구분한다. 상세는 [서버 검증 결과](server-requirements-verification-2026-10-19.md)의 RESERVATION_CHANGED 보완 절을 참조한다.
+
+## 2026-10-20 플랫폼 판매자 조회 인증 보완
+
+결제 주문/캡처 경로에서 판매자 지정 PayPalClient로 플랫폼 merchant-integrations를 조회할 때 판매자 assertion이 추가돼 401 AUTHORIZATION_ERROR가 발생하던 조건을 수정했다. 상세·tracking 조회는 플랫폼 Bearer 인증만 사용하고 기존 판매자 수취·이메일·OAuth 동의 검사는 유지한다. 주문·캡처·환불에는 기존 판매자 assertion이 유지된다. 기존 결제/DB/env와 프론트 API 계약 변경은 없다. 관련 격리 회귀 81개 통과 후 2026-10-20 05:49 UTC API 재시작, active/running 및 헬스체크 200을 확인했다. 사용자 지시에 따라 실제 주문·결제·PayPal 업무 요청은 재시도하지 않았으므로 외부 주문 성공은 미검증이다. 상세는 [서버 검증 결과](server-requirements-verification-2026-10-19.md)의 최신 인증 보완 절에 기록했다.

@@ -89,7 +89,8 @@ def test_invalid_state_never_queries_paypal(onboarding, monkeypatch, change, sta
     assert result.status_code == status, result.text
 
 
-def test_provider_contract_uses_tracking_and_trusted_paypal_urls(monkeypatch):
+@pytest.mark.parametrize("api_host", ["api-m.sandbox.paypal.com", "api.sandbox.paypal.com"])
+def test_provider_contract_uses_tracking_and_trusted_paypal_urls(monkeypatch, api_host):
     import httpx
     import json
     from app.config import Settings
@@ -105,7 +106,7 @@ def test_provider_contract_uses_tracking_and_trusted_paypal_urls(monkeypatch):
             assert body["operations"][0]["api_integration_preference"]["rest_api_integration"]["third_party_details"]["features"] == ["PAYMENT", "REFUND"]
             return httpx.Response(201, json={"links": [
                 {"rel": "action_url", "href": "https://www.sandbox.paypal.com/onboarding"},
-                {"rel": "self", "href": "https://api-m.sandbox.paypal.com/v2/customer/partner-referrals/test"}]})
+                {"rel": "self", "href": "https://" + api_host + "/v2/customer/partner-referrals/test"}]})
         assert request.url.params["tracking_id"] == "tracking-123"
         return httpx.Response(200, json={"tracking_id": "tracking-123", "merchant_id": "SELLER1234567"})
     client = PayPalClient(Settings(_env_file=None, paypal_client_id="test", paypal_client_secret="test",
@@ -119,6 +120,60 @@ def test_provider_contract_uses_tracking_and_trusted_paypal_urls(monkeypatch):
         assert path == "/v2/customer/partner-referrals/test"
         assert client.seller_by_tracking("tracking-123") == "SELLER1234567"
         assert validated == ["SELLER1234567"]
+    finally:
+        client.close()
+
+
+@pytest.mark.parametrize("environment,host", [
+    ("SANDBOX", "api.sandbox.paypal.com"), ("SANDBOX", "api-m.sandbox.paypal.com"),
+    ("LIVE", "api.paypal.com"), ("LIVE", "api-m.paypal.com"),
+])
+def test_referral_alias_keeps_followup_on_fixed_api_base(monkeypatch, environment, host):
+    from app.config import Settings
+    from app.paypal import PayPalClient
+    client = PayPalClient(Settings(_env_file=None, paypal_environment=environment))
+    calls = []
+    action_host = "www.sandbox.paypal.com" if environment == "SANDBOX" else "www.paypal.com"
+    def call(method, path, **kwargs):
+        calls.append((method, path))
+        return {"links": [{"rel": "action_url", "href": "https://" + action_host + "/onboarding"},
+                          {"rel": "self", "href": "https://" + host + "/v2/customer/partner-referrals/test"}]}
+    monkeypatch.setattr(client, "call", call)
+    try:
+        base = client.base
+        _, path = client.onboarding_url("test", "https://example.com/return")
+        client.onboarding_url("test", "https://example.com/return", referral_path=path)
+        assert calls[-1] == ("GET", "/v2/customer/partner-referrals/test")
+        assert client.base == base
+    finally:
+        client.close()
+
+
+@pytest.mark.parametrize("environment,link", [
+    ("SANDBOX", "https://api.paypal.com/v2/customer/partner-referrals/test"),
+    ("SANDBOX", "https://api-m.paypal.com/v2/customer/partner-referrals/test"),
+    ("LIVE", "https://api.sandbox.paypal.com/v2/customer/partner-referrals/test"),
+    ("LIVE", "https://api-m.sandbox.paypal.com/v2/customer/partner-referrals/test"),
+    ("SANDBOX", "https://api.sandbox.paypal.com.evil.example/v2/customer/partner-referrals/test"),
+    ("SANDBOX", "http://api.sandbox.paypal.com/v2/customer/partner-referrals/test"),
+    ("SANDBOX", "https://user@api.sandbox.paypal.com/v2/customer/partner-referrals/test"),
+    ("SANDBOX", "https://api.sandbox.paypal.com:8443/v2/customer/partner-referrals/test"),
+    ("SANDBOX", "https://api.sandbox.paypal.com/v1/other/test"),
+    ("SANDBOX", "https://api.sandbox.paypal.com/v2/customer/partner-referrals/test?next=other"),
+    ("SANDBOX", "https://api.sandbox.paypal.com/v2/customer/partner-referrals/test#fragment"),
+])
+def test_referral_self_rejects_untrusted_links(monkeypatch, environment, link):
+    from app.config import Settings
+    from app.paypal import PayPalClient
+    client = PayPalClient(Settings(_env_file=None, paypal_environment=environment))
+    action_host = "www.sandbox.paypal.com" if environment == "SANDBOX" else "www.paypal.com"
+    monkeypatch.setattr(client, "call", lambda *a, **kw: {"links": [
+        {"rel": "action_url", "href": "https://" + action_host + "/onboarding"},
+        {"rel": "self", "href": link}]})
+    try:
+        with pytest.raises(Problem) as error:
+            client.onboarding_url("test", "https://example.com/return")
+        assert error.value.code == "PAYPAL_REFERRAL_INVALID"
     finally:
         client.close()
 

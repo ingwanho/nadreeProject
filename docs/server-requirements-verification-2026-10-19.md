@@ -1,5 +1,101 @@
 # 2026-10-19 서버 적용 상태·요구사항 검증 결과
 
+## 2026-10-20 05:49 UTC 판매자 조회 인증 보완·재시작 완료(실제 결제 재시도 없음)
+
+사용자의 “수정하고 재시도 말고 서버 재실행만” 승인에 따라 `app/paypal.py`의 플랫폼 판매자 상세·tracking 조회에서 `merchant_auth=False`를 명시했다. 공통 요청 메서드는 이때만 `PayPal-Auth-Assertion`을 추가하지 않는다. 플랫폼 Bearer 인증·Partner 설정·판매자 수취/이메일/OAuth 권한 검사는 유지했다. 결제 주문·캡처·환불은 기본값으로 기존 판매자 assertion을 유지하고 판매자 지정 클라이언트의 ID도 바꾸지 않는다. DB·env·기존 결제 ID/상태/요청 식별자는 변경하지 않았다.
+
+`tests/test_merchant_accounts.py`에서 판매자 지정/기본 클라이언트의 권한 조회 및 동의 부족 차단 회귀를 확장했다. tracking 조회 후 같은 판매자 클라이언트의 모의 주문·캡처·환불에는 정확한 판매자 assertion이 남는 테스트도 추가했다. 수정 전 회귀에서 판매자 지정 조회의 불필요한 헤더를 재현했고, 수정 후 관련 `test_merchant_accounts.py`, `test_paypal_onboarding.py`, `test_payment_safety.py`, `test_refunds.py` **81 passed, 0 failed, 0 skipped(13.35초)**다. 임시 DB/MockTransport를 사용했으며 실제 PG/고객/푸시는 사용하지 않았다. 전체 회귀를 다시 실행한 결과는 아니다.
+
+`nadree-api.service` 재시작 후 **PID 2709814, active/running**, 05:49:54 UTC 공개 `/health/live` **HTTP 200**을 확인했다. 수정은 작업 트리에 있고 별도 커밋하지 않았다. 기존 미커밋 변경은 보존했다. `git diff --check`도 통과했다.
+
+요청대로 실제 `/payment/order`·OAuth·판매자 조회·온보딩 업무 요청은 재시도하지 않았다. 실제 주문 생성/성공 여부는 이번 변경으로 새로 검증한 것이 아니며 미검증이다. 실제 기존 결제 시도 5번은 삭제·초기화·수정하지 않았다. 이번에는 원인에 대한 코드 수정·격리 검증·서비스 재시작만 완료했다.
+
+## 2026-10-20 05:46 UTC payment/order PAYPAL_SERVICE_UNAVAILABLE 원인 진단
+
+사용자의 원인 확인 요청으로 실제 주문 POST는 재실행하지 않고 승인 테스트 지점·모델의 결제 시도와 PayPal 읽기 전용 API를 대조했다. 대상 DB는 RIDERLOG_V2_DATA_TEST, 결제 ID 5, 예약 `0b50df14-7e3f-4ece-b46b-8ebe783d8d9f`다. 결제는 SANDBOX/CREATED, order_requested_at 05:36:23 UTC, 주문 ID·캡처 ID·캡처 요청 시각이 없다. 이는 외부 요청 식별자를 먼저 커밋하는 현재 코드 경로와 일치한다. DB에 주문 ID가 없다는 사실만으로 PayPal 주문이 절대 생성되지 않았다고 단정하지 않는다.
+
+현재 코드의 `nadree_payment_order`는 판매자 지정 클라이언트로 `verify_merchant`를 호출한다. 지정 클라이언트의 공통 `call`은 판매자 인증용 `PayPal-Auth-Assertion`을 모든 요청에 붙인다. 따라서 플랫폼이 자신의 연동 판매자를 조회하는 GET에도 판매자 assertion이 붙는다. 실제 같은 판매자의 조회를 비교했다.
+
+| 검사 | HTTP | 오류 코드 | PayPal Debug ID |
+| --- | --- | --- | --- |
+| 판매자 지정 클라이언트 OAuth | 200 | 없음 | `ca4d5b96acaff` |
+| 판매자 assertion이 있는 merchant-integrations GET | **401** | **AUTHORIZATION_ERROR** | `ca4d5b96c1da8` |
+| 플랫폼 기본 클라이언트 OAuth | 200 | 없음 | `ca4d5b96dc916` |
+| 판매자 assertion이 없는 동일 merchant-integrations GET | **200** | 없음 | `ca4d5b96efbf8` |
+
+플랫폼 기본 조회는 `verify_merchant`의 payments_receivable·이메일 확인·OAuth 권한 검사까지 통과했다. 따라서 이번 재현에서 OAuth 키 오류나 판매자 미연결이 원인은 아니다. 판매자 지정 클라이언트의 플랫폼 권한 조회에 잘못된 인증 컨텍스트가 적용돼 주문 생성 전 401이 발생하며, 공통 `call`의 HTTPError 처리에서 HTTP 500 PAYPAL_SERVICE_UNAVAILABLE로 변환된다. 최초 사용자 실패 요청 자체의 upstream Debug ID는 보존되어 있지 않으며 위 ID는 원인 확인용 GET 재현의 값이다.
+
+필요한 최소 보완은 merchant-integrations 등 플랫폼 권한 조회에서 판매자 assertion을 붙이지 않도록 하고, 실제 판매자 주문·캡처·환불 요청의 인증/판매자 검증은 유지하는 것이다. 판매자 지정 클라이언트에서도 해당 조회의 플랫폼 인증이 유지되는 회귀가 필요하다. 이번에는 원인 진단만 했으며 코드 변경·재시작·DB 변경·주문 생성·캡처·환불은 하지 않았다. 기존 결제 시도는 삭제/초기화하지 않았다. 재시도 시 기존 요청 식별자·리플레이 기한·PG 상태 확인 규칙을 유지해야 한다.
+
+진단 기록: `build/test-runtime/payment-order-diagnostic-2026-10-20.json`. Secret·Authorization/Assertion 헤더 값·access token·판매자 ID 원문·개인정보는 출력하거나 기록하지 않았다.
+
+## 2026-10-20 05:22 UTC RESERVATION_CHANGED 재현·수정·격리 검증
+
+기준 HEAD `8818bb749535ca1378353c91ea13005a3dbd3125` 위 작업 트리에서 수정했다. 기존 PayPal 링크 검증 수정 및 관련 문서/테스트의 미커밋 변경은 보존했다. 실제 서비스는 재시작하지 않았고 실제 승인·예약/DB 데이터 변경도 하지 않았다. 이 절은 서버 실반영 완료 판정이 아니다.
+
+### 실제 대상 읽기 전용 확인
+
+DB가 `RIDERLOG_V2_DATA_TEST`임을 확인하고 승인된 지점 `00000000-0000-4000-8000-000000000101`, 모델 `NRTEST-WEB-MODEL-125`의 활성 예약만 조회했다. **4건 모두 REQUESTED/SOFT_HOLD, assigned_vehicle_id=NULL**이었다. 기간은 서로 다른 구간으로, 겹치는 기간이 아니어도 모델 전체의 대기 신청이 계산 대상에 포함되므로 같은 문제가 발생할 수 있다. 사용자 UID·개인정보는 조회하지 않았다. 최소 상태/기간 기록은 `build/test-runtime/reservation-changed-readonly-2026-10-20.json`에 보관했다.
+
+### 원인 및 수정
+
+`compute_assignment`가 다른 대기 신청의 용량을 보호하려고 가상 배정을 생성한다. `apply_assignments`는 그 결과를 순회하며 차량이 미지정인 신청에도 APPROVED 및 이동 가능 상태 전용 UPDATE를 실행한다. REQUESTED는 해당 WHERE에 맞지 않아 rowcount=0, RESERVATION_CHANGED가 된다. 이 상황은 실제 동시 변경 없이도 발생한다.
+
+`app/availability.py`의 `apply_assignments`에서 **스냅샷 상태가 REQUESTED인 예약만 저장 대상에서 제외**했다. `compute_assignment`의 대기 신청 포함 조건·solver는 변경하지 않았다. 현재 승인 대상은 기존 `booking_action` 경로에서 따로 APPROVED/PROVISIONAL로 저장한다. 기존 APPROVED 예약의 재배정과 UPDATE rowcount 기반 상태 변경 검사는 그대로 유지했다. DB 스키마·API 요청/응답·PayPal 권한/판매자 검증 변경은 없다.
+
+### 수정 전후 격리 증거
+
+신규 `tests/test_pending_reservation_approval.py`는 실제 신청 API·재고 계산·solver·승인 API·이력 저장을 격리 DB에서 실행한다. 외부 PayPal 판매자 확인만 모의 처리하며 실제 PG/FCM으로 요청하지 않는다.
+
+- **수정 전:** 동일 기간의 대기 신청 3건 중 하나를 승인하는 첫 사례에서 HTTP 409 `RESERVATION_CHANGED`를 재현했다(기대 200, 1 failed, 첫 실패에서 중단).
+- **수정 후:** 신규 테스트 8개 포함 관련 테스트 39개 모두 통과, 실패/건너뜀 0, 15.84초. 실행 파일은 `test_pending_reservation_approval.py`, `test_nadri_flow.py`, `test_vehicle_transfer.py`, `test_cancellation_policy.py`, `test_location_correction.py`다.
+- 신규 회귀는 같은 기간 신청 3건 및 다른 기간 신청 4건에서 승인 순서를 바꾸어 검사한다. 승인 대상은 APPROVED/PROVISIONAL, 다른 신청은 모든 DB 필드가 이전과 동일하며 잘못된 VEHICLE_REASSIGNED 이력이 생기지 않음을 확인했다.
+- 차량 3대에 같은 기간 신청 3건이 점유한 뒤 한 건을 승인해도 네 번째 신청은 RENTAL_UNAVAILABLE로 차단된다. 따라서 대기 신청의 재고 점유는 유지된다.
+- 기존 승인 예약이 다른 차량으로 실제 재배정되고 이력이 1건 생성되는 사례도 통과했다. 다른 대기 신청은 차량 미배정 상태로 유지됐다.
+- 승인 스냅샷 이후 실제 저장 상태가 달라 UPDATE 조건을 충족하지 않으면 여전히 RESERVATION_CHANGED가 발생하는 검사를 통과했다.
+- `git diff --check` 통과. 전체 회귀 재실행이나 실제 MySQL/운영 동시성 검사 결과로 확대하지 않는다. 기존 의존성 deprecation 경고 2건은 실패가 아니다.
+
+기존 승인 대상 데이터 조회 외에 실제 예약 승인·생성·취소·차량 배정·푸시·결제·환불·서비스 재시작은 실행하지 않았다. 다음 실반영은 API 재시작과 별도 승인된 테스트 예약의 실제 승인/외부 영향 확인이 필요하다. 프론트 변경은 필요하지 않다.
+
+**최신 확인 — 2026-10-20 01:02 UTC:** PayPal referral self 링크 호스트 검증을 수정하고 회귀 56개 통과 후 API 재시작 완료. 리턴 URL 반영·실제 온보딩 start HTTP 200과 state/actionUrl/expiresAt/paymentEnvironment 응답을 확인했다. 아래 00:57~00:58 UTC의 미반영·500 실패는 해소됐다. 판매자 동의·앱 복귀·verify 저장·결제 성공은 별도 미검증이다.
+
+## 2026-10-20 00:57 UTC 추가 확인: 리턴 URL 파일 설정 완료·서비스 미반영
+
+`.env`의 PayPal 온보딩 리턴 URL은 존재하고 현재 HTTPS·query/fragment 없음 등 서버 형식 조건을 충족한다. 실제 URL은 문서나 출력에 남기지 않았다. 그러나 실행 중 `nadree-api.service` PID 2539433의 환경에는 리턴 URL이 없으며 파일과 불일치한다.
+
+승인된 테스트 대표 계정으로 실제 API를 확인했다. 로그인 HTTP 200, 테스트 지점 판매자 상태 조회 HTTP 200·미연결, 온보딩 `/start`는 **HTTP 503 `PAYPAL_ONBOARDING_RETURN_URL_REQUIRED`**, 로그아웃 HTTP 200이다. 따라서 파일 설정 완료를 실행 중 API 반영 완료로 판단할 수 없다.
+
+다음 작업은 API 재시작 후 파일·프로세스 설정 일치와 실제 `/start`의 PayPal actionUrl/state 발급 여부를 재검증하는 것이다. 이번 요청은 확인이므로, 앞서 사용자가 서비스 재시작에 별도 승인을 요구한 제한에 따라 재시작은 수행하지 않았다. 판매자 연결·저장·결제·환불·푸시는 실행하지 않았다. 테스트 로그인·로그아웃은 기존 테스트 대표의 세션에 영향을 주는 동작이다. 프론트 복귀 화면·실기기·동일 세션 verify 성공은 아직 미검증이다.
+
+기록: `build/test-runtime/paypal-return-url-2026-10-20.json`. 토큰·비밀번호·state·개인정보는 기록하지 않았다.
+
+### 2026-10-20 00:58 UTC 승인된 재시작·온보딩 재검사
+
+사용자 승인에 따라 API를 재시작했다. PID 2673544, active/running이며 시작 직후 헬스체크 502는 재확인에서 200으로 전환됐다. 리턴 URL은 현재 파일과 실행 프로세스에서 일치하고 설정됨을 확인했다. 실제 URL·인증값은 출력하지 않았다.
+
+- 실제 테스트 대표 로그인 HTTP 200, `/nadreego/shop/paypal-onboarding/start` **HTTP 500 `PAYPAL_REFERRAL_INVALID`**, 로그아웃 HTTP 200.
+- 원인 확인용 Sandbox referral 발급 요청의 PayPal 응답은 **HTTP 201 / 오류 없음 / Debug ID `f149304926d6b`**다. 판매자 동의나 DB 연결 저장은 하지 않았다.
+- PayPal이 실제 반환한 `action_url`은 HTTPS `www.sandbox.paypal.com`으로 기존 검증 조건에 맞는다. `self`는 HTTPS **`api.sandbox.paypal.com`**, 경로는 `/v2/customer/partner-referrals/`로 시작한다.
+- 현재 서버는 `self.netloc`가 요청 base인 **`api-m.sandbox.paypal.com`**과 정확히 같아야 한다고 검사하므로, 응답받은 `api.sandbox.paypal.com` 링크를 거절한다. 즉 리턴 URL 설정은 반영됐고 PayPal 링크 발급도 성공했으나 서버의 self 링크 호스트 검증에서 실패한다.
+
+필요한 최소 수정은 환경별로 검증된 PayPal API 호스트만 명시적으로 허용하고 HTTPS·인증정보 없음·포트·경로 검증을 유지하는 것이다. 허용한 self 링크에서는 경로만 추출해 기존 고정 base로 후속 요청하는 구조를 유지한다. 임의 호스트나 Sandbox/Live 혼용을 허용해서는 안 된다. 실제 `api.sandbox.paypal.com` 응답 및 악성/다른 환경 호스트 거절 회귀를 추가한 뒤 재시작·실제 start 재검사가 필요하다. 이번 승인은 재시작·검사이므로 코드 수정은 수행하지 않았다.
+
+온보딩 동의 후 앱 복귀·동일 관리자 세션 verify·판매자 저장·결제는 아직 미검증이다. 검사 종료 시 로그아웃했으므로 이번 발급 state를 이후 연결 검증에 재사용하면 안 된다. 실제 인수는 새 start와 유지된 같은 세션으로 진행해야 한다.
+
+기록: `build/test-runtime/paypal-return-url-retest-2026-10-20.json`, `build/test-runtime/paypal-referral-link-diagnostic-2026-10-20.json`. state·action URL 원문·referral 식별자·토큰·Secret은 저장하지 않았다.
+
+### 2026-10-20 01:02 UTC 수정 적용·실제 온보딩 start 통과
+
+사용자의 수정·테스트 승인으로 `app/paypal.py`에서 referral `self` 링크의 허용 호스트를 환경별로 명시했다. Sandbox는 `api-m.sandbox.paypal.com` 및 실제 응답에서 확인된 `api.sandbox.paypal.com`, Live는 대응하는 `api-m.paypal.com` 및 `api.paypal.com`만 허용한다. HTTPS·기존 referral 경로·사용자정보 없음·포트 없음·query/fragment 없음 검사를 유지/명시했고, 이후 요청은 반환 링크의 경로만 사용해 기존 고정 API base로 보낸다. actionUrl의 환경별 호스트 검사도 유지했다. CORS·리턴 URL 값·DB·Firebase 설정은 변경하지 않았다. Live 허용 조건은 모의 테스트로만 검사했으며 실제 Live 요청은 하지 않았다.
+
+격리 회귀는 `test_paypal_onboarding.py`, `test_merchant_accounts.py`, `test_refunds.py` **56 passed, 0 skipped, 0 failed (8.38초)**다. 별칭 호스트·기존 호스트, 후속 경로와 고정 base 유지, Sandbox/Live 교차 거절, 악성 호스트·HTTP·사용자정보·비정상 포트·잘못된 경로·query/fragment 거절을 포함한다. 전체 회귀 재실행은 아니다. `git diff --check` 통과.
+
+API 재시작 후 PID 2674550, active/running, 공개 `/health/live` **HTTP 200**. 실제 승인 테스트 대표의 로그인 **200**, `/nadreego/shop/paypal-onboarding/start` **200**, 로그아웃 **200**. 실행 중 리턴 URL은 파일과 일치한다. start 응답의 **state 존재·Sandbox actionUrl 호스트·expiresAt 존재·paymentEnvironment=SANDBOX**를 확인했으며 값 원문은 출력하거나 저장하지 않았다. 변경 코드는 작업 트리에 있고 별도 커밋하지 않았다.
+
+판정: 리턴 URL 설정 반영 및 PayPal 링크 발급→백엔드 start 응답 구간은 실제 통과. 판매자 로그인·동의, Android/iOS 앱 복귀, 같은 세션의 verify, 지점 판매자 저장·결제·환불은 미검증이다. 이번 테스트는 종료 시 로그아웃했으므로 발급된 state로 후속 verify를 진행하지 않는다. 실제 연결은 새 start를 발급받고 같은 관리자 세션을 유지해 수행해야 한다.
+
+최신 실제 결과는 `build/test-runtime/paypal-return-url-retest-2026-10-20.json`에 갱신했다. 앞선 500 결과는 이 문서의 이전 검사 절에 별도 보존했다.
+
 최신 보완 결과(05:09 UTC): 고객 이력의 관리자 FK 충돌을 코드에서 수정하고 재시작했다. 판매자 미연결 상태의 실제 예약 신청 HTTP 200, REQUESTED 저장, 중복 차단·상세 조회 통과. 10절의 실패는 11절의 재검증으로 해소됐다.
 
 최종 서버 확인: **2026-10-19 02:31:46 UTC**. 실제 인증/API 검사 기록 02:07:27 UTC, 공개/가격 검사 기록 02:08:28 UTC, 서비스/로그/작업 등록 기록 02:28:39 UTC. 기준 문서는 [최신 전체 인수서](nadree-full-change-handoff.md)의 2026-10-18 정책 및 **2026-10-19 앱 복귀 역할 분담**이다.

@@ -181,10 +181,13 @@ def test_platform_request_has_seller_payee_and_auth_assertion():
 
 
 @pytest.mark.parametrize("ready,partner", [(True, "platform-client"), (False, "platform-client"), (True, "wrong-app")])
-def test_merchant_verification_requires_current_platform_consent(ready, partner):
+@pytest.mark.parametrize("bound", [False, True])
+def test_merchant_verification_requires_current_platform_consent(ready, partner, bound):
     def handler(request):
         if request.url.path == "/v1/oauth2/token":
             return httpx.Response(200, json={"access_token": "token", "expires_in": 3600})
+        assert request.headers["Authorization"] == "Bearer token"
+        assert "PayPal-Auth-Assertion" not in request.headers
         return httpx.Response(200, json={"merchant_id": SELLER, "payments_receivable": ready,
             "primary_email_confirmed": True, "oauth_integrations": [{"integration_type": "OAUTH_THIRD_PARTY",
                 "oauth_third_party": [{"partner_client_id": partner, "scopes": [
@@ -192,10 +195,46 @@ def test_merchant_verification_requires_current_platform_consent(ready, partner)
     client = PayPalClient(Settings(_env_file=None, paypal_client_id="platform-client", paypal_client_secret="secret",
         paypal_webhook_id="wh", paypal_partner_merchant_id="PARTNER123456"), httpx.MockTransport(handler))
     try:
+        target = client.for_merchant(SELLER) if bound else client
         if ready and partner == "platform-client":
-            client.verify_merchant(SELLER)
+            target.verify_merchant(SELLER)
         else:
             with pytest.raises(Problem, match="PAYPAL_MERCHANT_NOT_READY"):
-                client.verify_merchant(SELLER)
+                target.verify_merchant(SELLER)
+    finally:
+        client.close()
+
+
+def test_platform_seller_lookup_keeps_subsequent_payment_assertions():
+    seen = []
+    def handler(request):
+        if request.url.path == "/v1/oauth2/token":
+            return httpx.Response(200, json={"access_token": "token", "expires_in": 3600})
+        if request.url.path.startswith("/v1/customer/partners/"):
+            assert "PayPal-Auth-Assertion" not in request.headers
+            if request.url.params.get("tracking_id"):
+                return httpx.Response(200, json={"tracking_id": "tracking", "merchant_id": SELLER})
+            return httpx.Response(200, json={"merchant_id": SELLER, "payments_receivable": True,
+                "primary_email_confirmed": True, "oauth_integrations": [{"integration_type": "OAUTH_THIRD_PARTY",
+                    "oauth_third_party": [{"partner_client_id": "platform-client", "scopes": [
+                        "https://uri.paypal.com/services/payments/realtimepayment",
+                        "https://uri.paypal.com/services/payments/refund"]}]}]})
+        assert "PayPal-Auth-Assertion" in request.headers
+        parts = request.headers["PayPal-Auth-Assertion"].split(".")
+        payload = json.loads(base64.urlsafe_b64decode(parts[1] + "=" * (-len(parts[1]) % 4)))
+        assert payload == {"iss": "platform-client", "payer_id": SELLER}
+        seen.append(request.url.path)
+        return httpx.Response(201, json={"id": "result"})
+    client = PayPalClient(Settings(_env_file=None, paypal_client_id="platform-client", paypal_client_secret="secret",
+        paypal_webhook_id="wh", paypal_partner_merchant_id="PARTNER123456"), httpx.MockTransport(handler))
+    try:
+        seller = client.for_merchant(SELLER)
+        assert seller.seller_by_tracking("tracking") == SELLER
+        assert seller.merchant_id == SELLER
+        seller.create_order("order-request", "USD", Decimal("10.00"), "booking")
+        seller.capture_order("order", "capture-request")
+        seller.refund("capture", "refund-request", "USD", Decimal("10.00"))
+        assert seen == ["/v2/checkout/orders", "/v2/checkout/orders/order/capture", "/v2/payments/captures/capture/refund"]
+        assert client.merchant_id is None
     finally:
         client.close()
