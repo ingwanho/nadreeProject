@@ -2,6 +2,7 @@ import hashlib
 import base64
 from copy import copy
 import json
+import logging
 import re
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
@@ -23,6 +24,28 @@ from app.fcm import queue_payment_complete
 from app.security import now
 
 router = APIRouter(tags=["W08 PayPal webhook"])
+logger = logging.getLogger(__name__)
+
+
+def log_provider_failure(response=None, error_code=None):
+    """Log only response metadata, never exception messages or request bodies."""
+    def safe(value):
+        return value if isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9_-]{1,128}", value) else None
+    data = {}
+    if response is not None:
+        try:
+            parsed = response.json()
+            if isinstance(parsed, dict):
+                data = parsed
+        except ValueError:
+            pass
+    code = safe(error_code or data.get("name") or data.get("error"))
+    debug_id = safe((response.headers.get("paypal-debug-id") or data.get("debug_id"))
+                    if response is not None else None)
+    logger.warning("PayPal failure http_status=%s error_code=%s paypal_debug_id=%s",
+                   response.status_code if response is not None else None, code, debug_id)
+
+
 HEADERS = ("paypal-transmission-id", "paypal-transmission-time", "paypal-transmission-sig", "paypal-cert-url", "paypal-auth-algo")
 SUPPORTED = {"CHECKOUT.ORDER.APPROVED", "CHECKOUT.PAYMENT-APPROVAL.REVERSED", "PAYMENT.CAPTURE.PENDING",
     "PAYMENT.CAPTURE.COMPLETED", "PAYMENT.CAPTURE.DECLINED", "PAYMENT.CAPTURE.DENIED", "PAYMENT.CAPTURE.REFUNDED", "PAYMENT.CAPTURE.REVERSED",
@@ -204,6 +227,7 @@ class PayPalClient:
 
     def call(self, method, path, headers=None, missing_code=None, merchant_auth=True, **kwargs):
         self.check_configuration()
+        response = None
         try:
             with self.lock:
                 if self.token is None or monotonic() >= self.expires:
@@ -225,7 +249,9 @@ class PayPalClient:
                     "iss": self.settings.paypal_client_id.get_secret_value(), "payer_id": self.merchant_id}) + "."
             if headers:
                 request_headers.update(headers)
+            response = None
             result = self.http.request(method, path, headers=request_headers, **kwargs)
+            response = result
             if result.status_code == 404 and missing_code:
                 raise Problem(409, missing_code)
             result.raise_for_status()
@@ -233,7 +259,14 @@ class PayPalClient:
             if not isinstance(data, dict):
                 raise ValueError
             return data
-        except (httpx.HTTPError, ValueError, KeyError, TypeError):
+        except httpx.HTTPStatusError as error:
+            log_provider_failure(error.response)
+            raise Problem(500, "PAYPAL_SERVICE_UNAVAILABLE") from None
+        except httpx.HTTPError:
+            log_provider_failure(error_code="PAYPAL_TRANSPORT_ERROR")
+            raise Problem(500, "PAYPAL_SERVICE_UNAVAILABLE") from None
+        except (ValueError, KeyError, TypeError):
+            log_provider_failure(response, "PAYPAL_RESPONSE_INVALID")
             raise Problem(500, "PAYPAL_SERVICE_UNAVAILABLE") from None
 
     def verify(self, event, headers):

@@ -1,5 +1,60 @@
 # 2026-10-19 서버 적용 상태·요구사항 검증 결과
 
+## 2026-10-20 07:48 UTC 결제 단계·진단 로그·안전한 캡처 재시도 보완
+
+**후속 서버 반영 완료:** 사용자 승인에 따라 nadree-api.service 재시작, PID 10470·active/running·공개 health/live HTTP 200 확인. 실제 결제 5번 상태 조회/주문/캡처/환불 업무 API는 호출하지 않았다. 실제 캡처는 사용자 요청대로 프론트 테스트에 맡겼다. 아래 재시작 미실행 설명은 코드 검증 완료 당시 기록이며 이 최신 반영 결과로 대체한다.
+
+사용자의 수정 요청으로 아래 코드를 보완했다. 실제 결제 5번이나 다른 DB 데이터·PayPal 거래는 조회/변경/재시도하지 않았고 서비스 재시작도 하지 않았다. 코드 구현·격리 검증 완료이며 실행 중 API 적용·외부 결제 성공 판정과 구분한다.
+
+### 구현 내용
+
+- order/capture/status 응답에 `paypalOrderStatus`, `nextAction`, `canCapture`를 추가했다. 기존 응답 필드는 유지한다. 승인 완료 APPROVED/승인 URL null이면 CAPTURE, 이미 요청 체크포인트가 있으나 PG가 APPROVED·캡처 없음이고 최초 요청 5시간 이내면 RETRY_CAPTURE를 안내한다. 조회 결과가 없거나 통신에 실패하면 캡처를 허용하지 않는다. 기한 초과/불일치는 REVIEW, 알려진 캡처는 WAIT, SQL 정산 완료는 DONE이다.
+- 본인 결제 GET 상태 API에서 CREATED/PENDING·주문 ID 있음·캡처 ID 없음인 경우에만 기존 PayPal 주문을 조회한다. 권한 확인 전에 PG를 호출하지 않고 고객별 PG 조회 30회/분을 제한한다. SQL 상태나 외부 거래는 수정하지 않으며 캡처/자동 재시도도 하지 않는다. 이 경로의 200은 조회 성공 응답이지 결제 완료 증거가 아니다.
+- 최초 PENDING/capture_requested_at 기록 전에 승인 상태·판매자 권한 검사를 추가했다. 승인 전 요청이나 사전 권한 실패는 캡처 요청 흔적을 남기지 않는다. 실제 외부 요청 직전 기존 체크포인트·상태 재검증은 유지한다. 실제 요청 후 결과 불명은 기존 paymentId/`nadree-capture-{paymentId}` 키로만 재시도하며 기한은 최초 요청부터 5시간이다.
+- `app/paypal.py`의 원격 HTTP 오류·통신 오류·비정상 JSON 처리에서 HTTP 상태/error_code/PayPal Debug ID만 로그로 남긴다. 응답 본문·Authorization/Assertion·Client ID/Secret·토큰·URL·원문 예외는 남기지 않는다. 통신/JSON 오류에는 고정 진단 코드를 쓰고 기존 API 오류 응답은 유지한다.
+- OpenAPI 결제 응답 예시 및 인수서에 nextAction별 프론트 동작을 갱신했다. `canPay`는 기존 의미를 유지하며 기존 결제 캡처/재시도 판정에는 새 `canCapture`/`nextAction`을 사용한다. 추가 리턴 URL이나 DB 마이그레이션은 없다.
+
+### 격리 검증
+
+관련 기존 회귀 67개 및 신규 `test_payment_progress.py`/`test_paypal_diagnostics.py` 17개가 통과했다. 추가로 현재 전체 격리 회귀 **377 passed, 12 skipped, 0 failed(93.97초)**를 확인했다. 12개 건너뜀은 Firestore 에뮬레이터 4개와 격리 MySQL 8개로, 이번에 해당 환경을 제공하지 않았기 때문이다. 이 항목들의 과거 결과를 이번 통과로 합산하지 않는다. SQL FK와 실제 PG/API 실연동은 모의 테스트와 구분한다.
+
+신규 검증은 승인 전/완료 상태의 다음 동작, 사전 검증 실패 후 PENDING 미기록, 캡처 타임아웃 후 동일 paymentId·키 재시도, 체크포인트 시각 보존·추가 주문 없음, 5시간 초과 차단, PG 조회 실패/판매자 불일치 시 캡처 금지, PG 캡처 존재 시 추가 청구 방지, SQL 정산 완료 시 PG 미호출을 포함한다. 오류 로그 테스트에서는 OAuth/캡처 HTTP 오류·통신 예외·잘못된 JSON에 합성 비밀값을 넣고 이 값이나 인증 헤더가 로그에 없음을 확인했다.
+
+로그: `build/test-runtime/payment-progress-full-regression-2026-10-20.log`. `git diff --check` 통과. 현재 변경은 커밋하지 않았다.
+
+### 실제 적용·남은 검증
+
+이전 결제 5번은 수정하지 않았으며 캡처/환불/승인/새 주문을 실행하지 않았다. 실제 재시도 전에 서비스 반영과 기존 주문/캡처/최초 요청 기한을 재확인해야 한다. 5시간이 지나면 상태 초기화나 새 키로 우회하지 않고 별도 대조가 필요하다. 실제 재시도에는 사용자의 자금 처리 승인이 필요하다. 외부 오류 진단 로그는 코드 반영 이후의 실패에만 남으며 과거 실패 원인을 소급 복구하지 못한다.
+
+자동 캡처 작업은 추가하지 않았다. 앞 절에서 발견한 자동 만료의 관리자 FK 충돌과 탈퇴 부분 실패는 이번 결제 보완 범위에서 수정하지 않았으므로 별도 후속 작업으로 남는다. 프론트 앱 소스·실기기 복귀·실제 PayPal 캡처/웹훅 정산은 미검증이다.
+
+## 2026-10-20 07:30 UTC 현재 코드 검증·검토 결과
+
+대상은 현재 작업 트리의 전체 자동 테스트와 예약/결제 상태 검증, 자동 만료, 고객 탈퇴, 온보딩/복귀 계약이다. 모든 소스에 결함이 없음을 보증하는 점검은 아니다. 사용자 요청은 점검이므로 앱 코드 수정·실제 데이터 변경·업무 API 재시도·PG 자금 처리·회원 삭제·재시작은 하지 않았다. 실제 DB의 관리자 이력 FK와 자동 작업자 존재 여부만 읽기 전용 대조했고, 마이그레이션 계획은 `No pending changes`, 공개 health/live는 200이다.
+
+전체 격리 회귀는 **360 passed, 12 skipped, 0 failed (85.38초)**다. 서버 NADREE 환경변수를 제거하고 `/tmp`에서 실행해 서비스 DB를 사용하지 않았다. 건너뜀은 Firestore 에뮬레이터 4개, 격리 MySQL 동시성 6개, 실제 관리자 FK 회귀 MySQL 2개다. 이번 점검에서는 해당 외부 환경을 기동하지 않았으므로 과거 통과 기록을 이번 통과로 합산하지 않는다. 첫 전체 실행의 최종 출력은 사용자 입력 전환 후 확인하지 못해 로그 보존 방식으로 다시 완료했다. 최종 로그는 `build/test-runtime/code-review-regression-2026-10-20.log`다.
+
+기존 회귀 통과와 별개로 아래 문제를 확인했다. 실패 모드를 관측하는 별도 격리 재현 4개(알림/만료 두 사례 포함)는 모두 예상한 문제를 재현했다. 이 4개의 성공은 제품 동작 통과가 아니라 **결함 재현 성공**이다. 재현 코드는 `build/test-runtime/code-review-reproductions-2026-10-20.py`에 보관했다.
+
+| 우선순위 | 문제·근거 | 실제 영향 | 보완 범위 제안 |
+| --- | --- | --- | --- |
+| 높음 | `app/jobs.py:134`, `:152`는 이력 `changed_by='nadree-job'` 기록. 실제 테스트 DB에는 MSP_ADMIN FK가 있고 해당 관리자 ID는 없음. 같은 FK 조건을 강제한 격리 알림/만료 각각 IntegrityError 재현 | 알림/만료 SQL 트랜잭션 롤백. 만료는 SQL 오류 전에 채팅 차단을 호출하므로 채팅만 차단되는 불일치 위험도 있음 | 기존 FK를 유지하며 자동 실행자는 NULL+기존 details에 기록. 외부 채팅과 SQL 실패 순서도 점검 |
+| 높음 | `app/customer_rentals.py:621`에서 Firebase 삭제 후 채팅 회수 호출. 모의 Firebase 삭제 성공→모의 chat 503 실패를 주입하면 SQL 회수는 롤백되고 기존 고객 profile GET이 200 | Firebase 계정 삭제와 개인정보/토큰 정리의 부분 실패. 탈퇴 요청이 503이어도 일부 외부 작업만 완료될 수 있음 | 외부 처리와 SQL 토큰 폐기의 단계/실패 복구를 기존 구조·정책에 맞게 설계하고 회귀 보강. 실제 회원 삭제는 하지 않음 |
+| 중간 | `app/customer_rentals.py:942`~`:945`에서 외부 주문 상태/판매자 확인 전 PENDING·capture_requested_at 커밋. 모의 주문 CREATED에서 capture를 호출하면 409 PAYMENT_STATE_INVALID지만 PENDING이 남고 order 재호출은 PAYMENT_IN_PROGRESS | 외부 캡처 0회인데 처리 중 상태로 남음. 상태가 정리되지 않으면 사용자 재시도가 막힐 수 있음 | 최초 체크포인트 전에 승인 상태·판매자 사전 검증. 실제 요청의 결과 불명 체크포인트/동일 키 재시도 보호는 유지 |
+| 중간 | `app/responses.py:220` 및 `_payment_result`는 SQL paymentStatus와 approvalUrl만 제공하며 PayPal 주문 상태/다음 동작을 제공하지 않음 | 승인 완료 APPROVED에서 approvalUrl=null은 정상이나, 프론트가 capture 진입을 명확히 판단하기 어려움. GET payment 상태도 기본 null이므로 null만으로 승인 완료를 단정하면 안 됨 | PayPal 주문 상태 또는 명시적 다음 동작 필드를 계약에 추가하는 방안을 협의. 기존 GET을 새 PG 검증 없이 capture 가능 증거로 사용하지 않음 |
+
+추가 리턴 URL은 위 null 문제의 해결책이 아니다. 관리자 판매자 연결용 리턴 URL과 고객 결제용 리턴 URL은 별개이고 이미 코드 구조에 존재한다. approvalUrl은 PayPal이 제공하는 구매자 승인 화면 주소이지 서버가 추가 설정하는 복귀 주소가 아니다. 고객 WebView의 복귀 URL 가로채기는 프론트 역할이며, URL 이동 자체를 결제 성공으로 판단하지 않는다.
+
+검토 범위의 기존 회귀는 인증·권한·지점 분리·가격/배송·예약·판매자 연결·결제 중복·취소/환불·채팅·QR·기본 스키마를 포함한다. 실제 Sandbox 캡처/환불·서명 웹훅 정산·실기기 앱 복귀/App Check/푸시·실제 회원 삭제·이번 MySQL 동시성/Firestore 에뮬레이터 검사는 별도 미검증이다. 발견된 문제는 아직 수정하지 않았다.
+
+### 2026-10-20 07:31:27 UTC 결제 ID 5 읽기 전용 재조회
+
+Sandbox 결제 ID 5의 SQL 상태는 **PENDING**, capture_requested_at 있음, 캡처 ID 없음, paid_at 없음이다. 실제 PayPal 기존 주문 GET은 **APPROVED**, capture 목록은 비어 있다. 따라서 **구매자 승인까지만 완료됐고 결제 캡처 성공은 확인되지 않았다**. PENDING·캡처 요청 기록만으로 과금 성공이나 요청 실패 원인을 단정하지 않는다. 결제 5번의 이전 capture 호출이 왜 완료되지 않았는지는 이번 현재 상태 조회만으로 특정하지 않았다. 위의 승인 전 캡처 격리 결함이 이 주문에서 실제로 일어난 원인이라고 단정하지 않는다.
+
+이번에는 DB/PG GET 조회만 했으며 주문·capture·환불을 실행하지 않았다. 기록은 `build/test-runtime/payment-5-status-2026-10-20.json`이다. 비밀값·개인정보·승인 링크/토큰 원문은 기록하지 않았다.
+
+후속 캡처 로그 대조: 결제 5번의 capture_requested_at/updated_at은 **2026-10-20 07:17:12 UTC**, 상태는 PENDING이고 capture ID·paid_at은 없다. 05:00 UTC 이후 서비스 journal에는 실제 `/payment/capture` 호출 **1회·HTTP 500**이 확인됐다. 다만 access log에는 결제 ID/상세 오류가 없어 해당 호출과 결제 5번의 직접 상관 ID를 확보한 것은 아니다. DB 요청 기록과 함께 보면 캡처 시도가 있었으나 완료되지 않은 상태다. 최초 capture 실패의 PayPal HTTP 상태·오류 코드·Debug ID는 현재 로깅에서 보존되지 않아, PayPal 거절/통신/응답 처리 중 어느 원인인지 확정할 수 없다. 위의 승인 전 capture 격리 재현은 409였으므로 이번 실제 500의 원인으로 단정하지 않는다. 조회 후 실제 캡처를 재시도하지 않았다.
+
 ## 2026-10-20 APPROVED 주문의 승인 URL 처리 수정 완료(격리 검증)
 
 사용자의 수정 요청으로 `app/customer_rentals.py`의 order API에서 PayPal 상태가 APPROVED인 경우 `approval_url` 호출을 생략했다. 기존 주문 재사용 및 신규/동일 요청 재처리 결과 저장 후 응답 경로 모두 기존 결제 정보를 `approvalUrl=null`로 반환한다. 서버 SQL 결제 상태를 PAID로 바꾸거나 자동 캡처하지 않는다. 승인 전 CREATED/SAVED/PAYER_ACTION_REQUIRED는 기존 승인 URL 검증을 유지하며 capture_requested_at 차단·기존 결제 ID·판매자/금액/기한·중복 청구 방지 검사는 유지했다. DB·env·API 필드 변경은 없다.

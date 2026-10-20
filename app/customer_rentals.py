@@ -802,13 +802,40 @@ def _revalidate_reservation_quote(request, session, reservation):
     return stored
 
 
-def _payment_result(payment, approval_url=None, payment_window=None):
+def _payment_next_action(payment, window, order_status, approval_url, review_required):
+    if payment["payment_status"] in ("PAID", "PARTIALLY_REFUNDED", "REFUNDED"):
+        return "DONE"
+    if review_required:
+        return "REVIEW"
+    if payment["payment_status"] not in ("CREATED", "PENDING"):
+        return "NONE"
+    if window.get("cannotPayReason") not in (None, "PAYMENT_IN_PROGRESS"):
+        return "REVIEW" if payment.get("capture_requested_at") else "NONE"
+    if payment.get("paypal_capture_id"):
+        return "WAIT"
+    if payment.get("capture_requested_at"):
+        try:
+            replay_allowed(payment["capture_requested_at"])
+        except Problem:
+            return "REVIEW"
+        return "RETRY_CAPTURE" if order_status == "APPROVED" else "WAIT"
+    if order_status == "APPROVED":
+        return "CAPTURE"
+    if approval_url and order_status in ("CREATED", "SAVED", "PAYER_ACTION_REQUIRED"):
+        return "APPROVE"
+    return "WAIT" if payment.get("paypal_order_id") else "REVIEW"
+
+
+def _payment_result(payment, approval_url=None, payment_window=None, *, provider_order_status=None, review_required=False):
     view = _payment_view(payment)
+    next_action = _payment_next_action(payment, payment_window or {}, provider_order_status, approval_url, review_required)
     return {"status": "success", "paymentId": payment["payment_id"], "reservationId": payment.get("reservation_id"),
             "bookingId": payment.get("reservation_id"),
             "shopId": payment.get("_shop_master_id"),
             "paymentStatus": payment["payment_status"], "paypalOrderId": payment.get("paypal_order_id"),
             "paypalCaptureId": payment.get("paypal_capture_id"), "approvalUrl": approval_url,
+            "paypalOrderStatus": provider_order_status, "nextAction": next_action,
+            "canCapture": next_action in ("CAPTURE", "RETRY_CAPTURE"),
             "refundStatus": payment.get("refund_status", "NONE"),
             "refundedAmount": _number(payment.get("refunded_amount")),
             "refundRequestedAmount": _number(payment.get("refund_requested_amount")),
@@ -845,7 +872,8 @@ def nadree_payment_order(body: NadriPaymentOrder, request: Request, session: Ses
                 # capture links. Keep capture as an explicit separate action.
                 approval = (None if provider_order["status"] == "APPROVED"
                             else request.app.state.paypal.approval_url(provider_order))
-                return _payment_result(dict(existing, _shop_master_id=reservation["spot_master_id"]), approval, payment_window)
+                return _payment_result(dict(existing, _shop_master_id=reservation["spot_master_id"]), approval, payment_window,
+                                       provider_order_status=provider_order["status"])
             if existing.get("capture_requested_at") or existing["payment_status"] == "PENDING":
                 raise Problem(409, "PAYMENT_RECONCILIATION_REQUIRED", payment_id=existing["payment_id"])
             # The PayPal order can expire independently of this service. Close
@@ -901,7 +929,7 @@ def nadree_payment_order(body: NadriPaymentOrder, request: Request, session: Ses
     except (Problem, AttributeError):
         raise Problem(503, "PAYPAL_APPROVAL_URL_MISSING")
     payment = dict(payment, paypal_order_id=order_id, _shop_master_id=reservation["spot_master_id"])
-    return _payment_result(payment, approval, payment_window)
+    return _payment_result(payment, approval, payment_window, provider_order_status=result.get("status"))
 
 
 @router.post("/payment/capture", response_model=CustomerPayment,
@@ -940,6 +968,13 @@ def nadree_payment_capture(body: NadriPaymentCapture, request: Request, session:
     payment_window = _ensure_payment_window(request, session, reservation, payment)
     replay_allowed(payment.get("capture_requested_at"))
     if not payment.get("capture_requested_at"):
+        # Reject unapproved orders or missing seller consent before recording
+        # a potentially irreversible capture attempt. Keep the checkpoint and
+        # the second validation before sending the actual capture below.
+        provider_order = inspect_order(request.app.state.paypal, payment)
+        if provider_order["status"] != "APPROVED":
+            raise Problem(409, "PAYMENT_STATE_INVALID")
+        payment_client(request.app.state.paypal, payment).verify_merchant(payment["paypal_merchant_id"])
         session.execute(update(table).where(table.c.payment_id == payment["payment_id"]).values(
             capture_requested_at=now(), payment_status="PENDING", updated_at=now()))
     session.commit()
@@ -970,7 +1005,7 @@ def nadree_payment_capture(body: NadriPaymentCapture, request: Request, session:
     payment = dict(payment)
     payment.update(values)
     return _payment_result(dict(payment, _shop_master_id=reservation["spot_master_id"]),
-                           payment_window=payment_window)
+                           payment_window=payment_window, provider_order_status=capture_status)
 
 
 def _owned_customer_payment(request, session, user, payment_id):
@@ -1012,7 +1047,22 @@ def nadree_payment_status(paymentId: int, request: Request, session: Session = D
     payment = _owned_customer_payment(request, session, user, paymentId)
     reservation = payment.pop("_reservation", None)
     window = _payment_window(request, session, reservation, payment) if reservation else None
-    return _payment_result(payment, payment_window=window)
+    provider_status, approval, review_required = None, None, reservation is None
+    if (payment["payment_status"] in ("CREATED", "PENDING") and payment.get("paypal_order_id")
+            and not payment.get("paypal_capture_id") and reservation):
+        request.app.state.limiter.check("paypal-payment-status:" + user.uid_token, limit=30, seconds=60)
+        try:
+            provider = inspect_order(request.app.state.paypal, payment)
+            provider_status = provider["status"]
+            if provider_status in ("CREATED", "SAVED", "PAYER_ACTION_REQUIRED") and not payment.get("capture_requested_at"):
+                approval = request.app.state.paypal.approval_url(provider)
+            elif provider_status in ("VOIDED", "EXPIRED", "CANCELED"):
+                review_required = True
+        except Problem as error:
+            # A failed read is never permission to retry a charge. Keep this
+            # endpoint read-only; settlement remains with webhook/recovery.
+            review_required = error.code not in ("PAYPAL_SERVICE_UNAVAILABLE", "PAYMENT_IN_PROGRESS")
+    return _payment_result(payment, approval, window, provider_order_status=provider_status, review_required=review_required)
 
 
 @router.get("/ongoing", response_model=CustomerPage,

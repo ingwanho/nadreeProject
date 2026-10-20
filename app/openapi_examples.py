@@ -382,6 +382,7 @@ OPENAPI_EXAMPLES = {
         "bookingId": "NRTEST-RES-HAND-001", "shopId": TEST_SPOT["shopId"],
         "paymentStatus": "PAID", "paypalOrderId": "NRTEST-ORDER-PAID-001",
         "paypalCaptureId": "NRTEST-CAPTURE-PAID-001", "approvalUrl": None,
+        "paypalOrderStatus": None, "nextAction": "DONE", "canCapture": False,
         "totalPrice": 200, "serverTotalPrice": 200, "currency": "USD",
         "paymentDeadline": "2026-10-04T10:00:00+08:00", "canPay": False,
         "cannotPayReason": "PAYMENT_ALREADY_COMPLETED", "refundRequestedAmount": None,

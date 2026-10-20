@@ -1,5 +1,35 @@
 # Nadree 전체 변경사항 및 인수 문서
 
+## 2026-10-20 결제 단계 안내·캡처 재시도 보완 — 구현/격리 검증, 실제 캡처 미실행
+
+**서버 반영 완료:** 사용자 승인으로 API를 재시작했고 PID 10470, active/running 및 `/health/live` HTTP 200을 확인했다. 아래 코드 변경이 실행 중 서비스에 반영됐다. 결제 5번의 실제 캡처는 서버에서 실행하지 않았으며 프론트 테스트로 남겼다. 프론트는 먼저 본인 결제 GET 상태를 조회해 `nextAction`/`canCapture`를 확인하고, CAPTURE/RETRY_CAPTURE일 때만 같은 paymentId로 명시적으로 호출한다. REVIEW/WAIT/NONE을 새 주문 생성이나 상태 초기화로 우회하지 않는다. 이 반영 결과가 아래의 이전 “재시작 미실행” 기록보다 우선한다.
+
+결제 order/capture/status 응답에 기존 필드를 보존하면서 다음 필드를 추가한다.
+
+- `paypalOrderStatus`: 이번 응답 처리에서 PayPal 조회/응답으로 확인한 주문 상태. 확인하지 못했으면 null이다. SQL의 `paymentStatus`와 구분한다.
+- `nextAction`: 아래 표의 다음 동작. `approvalUrl`이 null이라는 이유만으로 캡처 가능을 추정하지 않는다.
+- `canCapture`: `CAPTURE`/`RETRY_CAPTURE`일 때만 true. 후속 capture API는 소유권·판매자 권한·기한·상태를 다시 검사하므로 최종 성공을 보장하는 필드는 아니다.
+
+| nextAction | 프론트 처리 |
+| --- | --- |
+| APPROVE | 응답의 approvalUrl로 구매자 승인 화면을 연다. |
+| CAPTURE | 같은 paymentId로 POST `/api/v1/nadree/rental/payment/capture`를 호출한다. 새 주문을 만들지 않는다. |
+| RETRY_CAPTURE | 승인 완료·캡처 미확인 상태이며 5시간 재시도 범위다. 같은 paymentId로 명시적 재시도한다. 서버는 같은 PayPal 요청 키를 사용한다. 무한 자동 재시도하지 않는다. |
+| WAIT | GET `/api/v1/nadree/rental/payment/{paymentId}`로 상태를 확인한다. order API를 반복하거나 새 결제를 만들지 않는다. |
+| DONE | 서버에서 PAID/PARTIALLY_REFUNDED/REFUNDED 상태가 확인됐다. 해당 결제/환불 상태에 맞춰 표시한다. |
+| REVIEW | 재시도 기한 초과·판매자/리소스 불일치 등 운영 대조가 필요하다. PENDING 초기화·새 요청 키로 우회하지 않는다. |
+| NONE | 종료/비활성 상태 또는 결제 기한 초과 등으로 현재 결제 동작을 제공하지 않는다. |
+
+상태 조회는 본인 소유 확인 후, SQL이 CREATED/PENDING이고 주문 ID가 있지만 캡처 ID가 없는 건만 기존 주문을 PayPal에 **GET 조회**한다. 다른 결제 상태는 기존 SQL 기준 응답을 유지한다. 조회 중 주문 생성·캡처·환불·정산 DB 수정은 하지 않는다. 이 PayPal 조회가 필요한 경우 고객별 30회/분 제한이 적용되므로 폴링 간격은 최소 5초를 권장한다. 조회 실패는 WAIT/canCapture=false, 판매자·리소스 불일치는 REVIEW다. PayPal에 이미 캡처/완료가 있으면 추가 캡처 권한을 주지 않고 기존 웹훅/복구 반영을 기다린다. `paypalOrderStatus=COMPLETED`를 관측해도 SQL이 미정산이면 서버의 최종 PAID 확인 전 완료로 표시하지 않는다.
+
+기존 `canPay`/`cannotPayReason` 의미는 바꾸지 않는다. PENDING에서는 기존 canPay=false/PAYMENT_IN_PROGRESS여도, PG에서 APPROVED·캡처 없음이 확인되고 재시도 조건이 맞으면 nextAction=RETRY_CAPTURE/canCapture=true가 나올 수 있다. 이는 기존 결제의 같은 키 재시도이며 새 결제 허용이 아니다.
+
+최초 capture_requested_at/PENDING 기록 전에 PayPal 승인 상태 및 판매자 권한을 검사한다. 승인 전 요청·사전 조회/권한 실패는 새 PENDING 체크포인트를 남기지 않는다. 실제 캡처 직전에는 기존 체크포인트와 상태 재검증을 유지한다. 외부 요청이 시작된 후 결과 불명/타임아웃이면 같은 paymentId와 요청 키로만 5시간 안에 재시도한다. 기한은 최초 capture_requested_at 기준이며 성공 시각으로 새로 시작하거나 수동 초기화하지 않는다. 자동 캡처 작업은 추가하지 않았다.
+
+PayPal 실패 로그에는 HTTP 상태·error_code·PayPal Debug ID만 기록한다. 요청 URL/헤더, Client ID·Secret·access token, 요청/응답 본문, 개인 식별자 및 예외 원문은 기록하지 않는다. 원격 HTTP 오류, 통신 오류, 잘못된 JSON 응답을 구분하고 후자의 두 경우는 고정 진단 코드를 사용한다. 사용자 API의 기존 오류 코드/응답 형식은 유지한다.
+
+DB·env·기존 결제/주문·리턴 URL은 변경하지 않는다. 추가 리턴 URL은 필요 없다. 실제 결제 5번의 캡처/환불 재시도와 서비스 재시작은 이번 코드 수정에 포함하지 않았다. 적용 상태와 격리 테스트 결과는 [서버 검증 결과](server-requirements-verification-2026-10-19.md)의 최신 결제 단계 보완 절을 참조한다.
+
 ## 2026-10-20 APPROVED 주문 재사용 시 승인 URL 오류 보완
 
 `POST /api/v1/nadree/rental/payment/order`에서 PayPal 주문 상태가 `APPROVED`이면 승인 URL을 필수 추출하지 않고 기존 결제 정보와 `approvalUrl: null`을 반환한다. 기존 주문 재사용과 신규/동일 요청 재처리 응답 경로에 모두 적용했다. 승인 전 `CREATED`/`SAVED`/`PAYER_ACTION_REQUIRED`의 승인 링크·호스트 검증은 유지한다. 서버 결제 상태를 PAID로 바꾸거나 자동 capture하지 않으며 실제 결제 확정은 기존 별도 capture API와 상태/웹훅 검증을 사용한다. 프론트는 승인 URL이 없는 승인 완료 응답에서 PayPal 승인 화면을 다시 열지 않는다. API 필드·DB 스키마 변경은 없다.

@@ -229,6 +229,9 @@ class CustomerPayment(Status):
     paypalOrderId: str | None = None
     paypalCaptureId: str | None = None
     approvalUrl: str | None = None
+    paypalOrderStatus: str | None = None
+    nextAction: Literal["APPROVE", "CAPTURE", "RETRY_CAPTURE", "WAIT", "DONE", "REVIEW", "NONE"] = "WAIT"
+    canCapture: bool = False
     totalPrice: int | float
     serverTotalPrice: int | float
     currency: str
