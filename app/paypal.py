@@ -267,6 +267,13 @@ class PayPalClient:
         if not self.merchant_id:
             raise Problem(409, "PAYMENT_MERCHANT_RECONCILIATION_REQUIRED")
         body["purchase_units"][0]["payee"] = {"merchant_id": self.merchant_id}
+        callback = self.settings.paypal_payment_return_url
+        parsed = urlsplit(callback)
+        if (parsed.scheme != "https" or not parsed.netloc or parsed.username or parsed.password
+                or parsed.query or parsed.fragment or any(c.isspace() for c in callback)):
+            raise Problem(503, "PAYPAL_PAYMENT_RETURN_URL_REQUIRED")
+        body["payment_source"] = {"paypal": {"experience_context": {
+            "return_url": callback, "cancel_url": callback + "?cancelled=true"}}}
         return self.call("POST", "/v2/checkout/orders",
                          headers={"PayPal-Request-Id": request_id, "Prefer": "return=representation"}, json=body)
 
@@ -283,7 +290,7 @@ class PayPalClient:
             raise Problem(500, "PAYPAL_APPROVAL_URL_MISSING")
         hosts = {"www.sandbox.paypal.com"} if self.settings.paypal_environment == "SANDBOX" else {"www.paypal.com"}
         for link in order.get("links", []):
-            if link.get("rel") != "approve" or not isinstance(link.get("href"), str):
+            if link.get("rel") not in ("approve", "payer-action") or not isinstance(link.get("href"), str):
                 continue
             parsed = urlsplit(link["href"])
             if parsed.scheme == "https" and parsed.hostname in hosts and parsed.port in (None, 443) and not parsed.username and not parsed.password and not parsed.fragment:

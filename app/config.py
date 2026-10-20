@@ -58,6 +58,7 @@ class Settings(BaseSettings):
     paypal_partner_merchant_id: str = ""
     paypal_partner_attribution_id: str = ""
     paypal_onboarding_return_url: str = ""
+    paypal_payment_return_url: str = "https://na-dree.com/api/v1/nadree/rental/payment/return"
     paypal_unpaid_minutes: int = Field(default=180, ge=1, le=10080)
     inventory_horizon_days: int = Field(default=180, ge=1, le=366)
     smtp_host: str = ""

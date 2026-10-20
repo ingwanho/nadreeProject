@@ -170,6 +170,10 @@ def test_platform_request_has_seller_payee_and_auth_assertion():
         assert client.merchant_id is None
         request = requests[-1]
         assert json.loads(request.content)["purchase_units"][0]["payee"]["merchant_id"] == SELLER
+        experience = json.loads(request.content)["payment_source"]["paypal"]["experience_context"]
+        assert experience == {
+            "return_url": "https://na-dree.com/api/v1/nadree/rental/payment/return",
+            "cancel_url": "https://na-dree.com/api/v1/nadree/rental/payment/return?cancelled=true"}
         parts = request.headers["PayPal-Auth-Assertion"].split(".")
         payload = json.loads(base64.urlsafe_b64decode(parts[1] + "=" * (-len(parts[1]) % 4)))
         assert payload == {"iss": "platform-client", "payer_id": SELLER}

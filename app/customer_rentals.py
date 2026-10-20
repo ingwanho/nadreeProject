@@ -821,7 +821,7 @@ def _payment_result(payment, approval_url=None, payment_window=None):
 
 @router.post("/payment/order", response_model=CustomerPayment,
              summary="승인 예약의 지점 판매자 PayPal 주문 생성",
-             description="APPROVED 예약의 모든 결제 시도를 먼저 확인합니다. 진행 중 주문은 재사용하며 완료·결과 불명 결제가 있으면 새 청구를 차단합니다. PAYMENT_RECONCILIATION_REQUIRED는 운영 확인이 필요합니다.",
+             description="APPROVED 예약의 모든 결제 시도를 먼저 확인합니다. 진행 중 주문은 재사용하며 완료·결과 불명 결제가 있으면 새 청구를 차단합니다. PAYMENT_RECONCILIATION_REQUIRED는 운영 확인이 필요합니다. 새 주문은 서버 설정의 고객 결제 복귀 URL을 사용하며 기본값은 https://na-dree.com/api/v1/nadree/rental/payment/return 입니다. 취소 복귀에는 cancelled=true가 붙습니다. 앱은 복귀 URL의 token을 해당 결제의 paypalOrderId와 대조하고 승인 건만 기존 capture API로 확정합니다. 복귀 자체는 결제 완료가 아닙니다. 설정 오류는 503 PAYPAL_PAYMENT_RETURN_URL_REQUIRED입니다.",
              dependencies=[Depends(customer_access_token)])
 def nadree_payment_order(body: NadriPaymentOrder, request: Request, session: Session = PAYMENT_DB):
     user = user_principal(request, session)

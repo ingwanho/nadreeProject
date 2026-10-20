@@ -6,6 +6,8 @@
 
 ## 현재 상태
 
+2026-10-20 고객 PayPal 결제 복귀: 신규 주문에 확정 HTTPS 복귀 주소와 취소 구분(cancelled=true)을 전달하고 payer-action 링크를 지원한다. 기본 주소는 `/api/v1/nadree/rental/payment/return`, 선택 설정은 `NADREE_PAYPAL_PAYMENT_RETURN_URL`이다. 최신 로컬 회귀 352 passed/12 skipped 및 로컬 HTTP 주문 계약 검증 통과. 실제 서버 적용·PayPal/앱 왕복 인수는 별도다. [최신 적용·프론트 계약](docs/nadree-full-change-handoff.md).
+
 2026-10-19 현재 서버 검증: 읽기 전용 마이그레이션 pending 없음, 기본 회귀 314 passed/10 skipped 재현. MySQL 포함 320 passed/4 skipped 및 별도 Firestore 4개 통과. 실제 가격 수정/원복·권한/state 차단은 통과했으나 현재 Sandbox OAuth는 401 invalid_client이며 복귀 URL은 설정 대기다. 실제 PG/탈퇴/App Check 종단과 결제 복구 운영 등록은 별도 확인이 필요하다. [요구사항 검증 결과](docs/server-requirements-verification-2026-10-19.md).
 
 2026-10-18 온보딩 테이블까지 제외한 뒤 로컬 회귀는 314개 통과·10개 건너뜀(MySQL 6·Firestore 4)이다. 신규 기능은 아직 운영 배포/실 PG·Firebase 인수 전이다.

@@ -1,0 +1,5 @@
+simulation: paypal-payment-return
+routing: path
+mocks:
+  - routeKey: paypal
+    path: ../mocks/paypal-payment-return.js

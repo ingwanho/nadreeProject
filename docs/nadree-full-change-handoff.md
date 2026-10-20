@@ -1,5 +1,22 @@
 # Nadree 전체 변경사항 및 인수 문서
 
+## 2026-10-20 고객 PayPal 결제 복귀 URL — 로컬 구현, 서버 적용 전
+
+고객 결제의 복귀 기준 주소를 `https://na-dree.com/api/v1/nadree/rental/payment/return`으로 확정했다. 관리자 판매자 연결 복귀 주소와 별개다. 신규 PayPal 주문의 `payment_source.paypal.experience_context.return_url`에 이 값을, `cancel_url`에는 같은 주소에 `?cancelled=true`를 붙인 값을 전달한다. `application_context` 대신 현재 PayPal 권장 필드를 사용하며, `payer-action`/기존 `approve` 링크 모두 기존 응답의 approvalUrl로 제공한다.
+
+- 기본 주소는 코드에 설정했다. 필요 시 `.env`의 `NADREE_PAYPAL_PAYMENT_RETURN_URL`에 같은 값을 명시할 수 있다. query/fragment/사용자정보 없는 HTTPS 주소를 사용한다. 미설정은 기본값을 사용하지만 명시적 빈 값·잘못된 설정은 신규 주문 생성 시 `503 PAYPAL_PAYMENT_RETURN_URL_REQUIRED`로 차단한다. 실제 `.env`는 이번 작업에서 수정하지 않았다.
+- 프론트는 고객 WebView에서 같은 origin/path로의 이동을 감지한다. 취소 복귀는 `cancelled=true`로 구분하고 캡처하지 않는다. 결제 화면 취소가 예약 취소를 뜻하지 않으므로 `/request/cancel`을 자동 호출하지 않는다.
+- 승인 복귀에서 PayPal query의 token을 시작 시 보관한 paypalOrderId와 대조하고, 보관한 paymentId로 기존 `POST /api/v1/nadree/rental/payment/capture`를 호출한다. 고객 인증이 필요하며 URL에 access/refresh 토큰을 넣지 않는다. URL만으로 결제 성공을 판단하지 않고 서버의 capture 응답과 결제 상태 조회로 확인한다.
+- 이 주소는 앱이 감지하는 복귀 목적지다. 새로운 GET 완료/캡처 API나 홈페이지를 생성하지 않는다. 일반 브라우저에서 직접 열어 결제를 확정하는 주소가 아니므로 WebView의 이동 감지·취소/실패 처리를 확인한다.
+- 이미 생성한 주문을 재사용하면 이전 주문의 복귀 설정이 남을 수 있다. 이번 설정은 신규 생성 주문부터 적용된다. 테스트를 위해 기존 주문을 임의 삭제하거나 중복 청구를 만들지 않고 지정된 새 테스트 예약/결제 시도로 확인한다.
+- 서버 적용은 변경 코드 반영 후 기존 API 재시작이다. DB 마이그레이션·Firebase 배포는 추가하지 않는다. 관리자 판매자 연결용 `NADREE_PAYPAL_ONBOARDING_RETURN_URL` 설정은 별도로 유지한다.
+
+공식 명세: [PayPal Create order](https://developer.paypal.com/api/orders/v2/orders-create). 공개 API 검색에서 해당 주문 생성 계약도 대조했다. Postman CLI 미로그인으로 공급자 소유 모의 서버 검색은 완료하지 못했으며, 이 명세의 OAuth/주문 생성 부분을 로컬 모의 서버로 구성했다.
+
+검증: 관련 격리 테스트 66개 통과, 최신 전체 회귀 **352 passed, 12 skipped**(별도 MySQL·Firestore), 기존 의존성 경고 2개. 실제 PayPalClient가 로컬 HTTP 모의 서버로 OAuth 200·주문 생성 201 요청을 보냈고 두 복귀 주소 및 payer-action 처리를 확인했다. 실행 로그의 요청 2건을 확인한 뒤 모의 서버를 종료했다. 실제 PayPal Sandbox 왕복·기기 복귀·구매자 승인/캡처 성공은 아직 검증하지 않았다. 전체 실행은 `env -u NADREE_TEST_MYSQL_URL -u FIRESTORE_EMULATOR_HOST PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m pytest tests -q -p no:cacheprovider --tb=short`이며 git diff --check도 통과했다.
+
+재현용 파일: `postman/simulations/paypal-payment-return.sim.yaml`, `postman/mocks/paypal-payment-return.js`. `postman simulation run postman/simulations/paypal-payment-return.sim.yaml --port 4927 --no-history --output ndjson`으로 가짜 OAuth/주문 API만 실행한다. 로컬 테스트 클라이언트의 base_url을 `http://127.0.0.1:4927/paypal/`로 바꿔 호출한다. 운영 endpoint/실제 키로 이 모의 서버를 호출하지 않는다.
+
 ## 2026-10-18 최신 변경 — 프론트 전달 및 서버 적용
 
 이 절이 아래 과거 정책·2026-10-16 수동 판매자 설정 문서보다 우선한다. **로컬 구현이며 서버 DB·실제 PayPal·Firebase에는 미적용**이다. 회사별 BASE 관리, 주소의 실제 배송구역 자동 판정, 가입코드 추가 발급/재발급은 이번 범위에서 제외한다.
