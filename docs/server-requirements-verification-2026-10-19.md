@@ -1,5 +1,51 @@
 # 2026-10-19 서버 적용 상태·요구사항 검증 결과
 
+## 2026-10-20 15:01 UTC 기존 테스트 예약 취소·신규 Sandbox 주문 생성 완료
+
+사용자가 판매자 Sandbox 거래 내역에서 기존 주문의 결제·캡처가 없음을 확인했고, **기존 테스트 예약 정상 취소 후 같은 조건의 새 예약·주문 생성**을 승인했다. 결제 5번을 초기화하거나 삭제하지 않고 정상 관리자 취소 API를 사용했다. 아래 결과가 이전 결제 5번 테스트 대기 기록보다 우선한다.
+
+- 실행: 14:57:20~14:57:35 UTC, 최종 읽기 전용 대조: 15:01:01 UTC.
+- 검증 시 저장소 HEAD: `df160793b96f9892e45e0bd69a39b6ae3336d68c`; 서비스 PID 10470 유지. 이번 작업에서 서비스 재시작·배포·설정·스키마·애플리케이션 코드 변경 없음.
+- 대상 DB: `RIDERLOG_V2_DATA_TEST`. 승인된 기존 결제 소유자와 테스트 대표 계정, 기존 테스트 지점·모델만 사용했다. 동일 고객·기간(2026-10-31~2026-11-02)·PREMIUM·픽업·USD 90 조건을 유지했다.
+- 변경 전 결제·예약·예약 이력은 `build/test-runtime/payment-5-test-restart/before.private.json`에 백업했다. 디렉터리 0700·파일 0600의 접근 제한 자료이며 개인정보가 있어 내용은 문서에 복사하지 않았다.
+
+| 실제 검사 | 기대 | 실제 결과 | 판정 |
+| --- | --- | --- | --- |
+| 승인된 테스트 고객 Firebase 인증·백엔드 로그인, 테스트 대표 로그인 | 기존 승인 대상 인증 성공 | Firebase 인증 및 백엔드 로그인 모두 HTTP 200 | 통과 |
+| 기존 예약 관리자 CANCEL | 예약/결제 취소, 환불 불필요, 원본 기록 보존 | HTTP 200, 기존 예약·결제 5번 CANCELED, refundStatus=NOT_REQUIRED·환불 요청액 0 | 통과 |
+| 기존 결제·예약 이력 보존 | 주문 ID·주문/캡처 요청 시각·판매자 및 기존 이력 보존 | 변경 전 백업과 대조해 일치, 기존 예약 이력 행 보존 | 통과 |
+| 같은 기간 가용 차량·가격 조회 | 기존 모델 PREMIUM USD 90 선택 가능 | HTTP 200, 해당 옵션 조회 성공 | 통과 |
+| 새 예약 요청 → 대표 승인 | 같은 조건의 새 APPROVED 예약 생성 | 각 HTTP 200, 새 예약 `a70ec730-4b8d-4bdd-b075-f2ac4611bd72`, SQL APPROVED | 통과 |
+| 새 Sandbox 주문 생성 | 새로운 결제·주문, 구매자 승인 링크 제공 | HTTP 200, **결제 6번**, SQL CREATED·nextAction=APPROVE, Sandbox 승인 링크 있음 | 통과 |
+| 신규 주문 PayPal GET·SQL 대조 | 금액·통화·판매자 일치, 캡처 미실행 | OAuth/주문 GET 각 HTTP 200, PayPal **PAYER_ACTION_REQUIRED**, USD 90·판매자 일치, 캡처 0건·capture_requested_at/paid_at 없음 | 통과 |
+| 테스트 세션 로그아웃 | 생성한 고객·대표 세션 정리 | 각 HTTP 200 | 통과 |
+| 새 주문 구매자 승인·실제 캡처·웹훅 정산 | 구매자 승인 후 별도 검증 | 이번 요청 범위에서는 실행하지 않음 | 미검증/사용자 테스트 대기 |
+
+최종 PayPal 읽기 전용 조회 Debug ID: OAuth `f489608f9bfd8`, 주문 GET `f45554952fab2`. 이전 주문의 거래 조회는 14:44 UTC에 403 NOT_AUTHORIZED(Debug ID `f274328f2f218`)였으므로 API만으로 미결제를 확정하지 않았다. 미결제 판단에는 사용자의 판매자 거래 내역 확인을 사용했다. 기존 주문 GET 404를 주문 만료 등 특정 원인으로 단정하지 않는다.
+
+**이번 작업의 capture API/PayPal capture POST 0회, refund API/PayPal refund POST 0회.** 기존 5번은 취소 이력으로 보존하고, 이후 구매자 승인·결제 테스트는 **6번**을 사용한다. 구매자 승인은 결제 확정이 아니며 승인 후 본인 결제 상태의 nextAction/canCapture를 확인해야 한다. 이번 작업은 신규 주문의 구매자 승인 대기 단계까지 완료한 것이며 실제 결제 성공 판정이 아니다. 추가 자동 회귀는 실행하지 않았고 위 표는 실제 API·DB·PayPal 조회 결과다. 실기기 푸시 수신은 확인하지 않았다.
+
+실행 기록: `build/test-runtime/payment-5-test-restart/result.json`, `final-readonly-verification.json`. 승인 링크는 접근 제한된 `buyer-approval.private.json`에 보관했으며 인증 토큰·비밀번호·Secret은 결과 자료에 저장하지 않았다. Firebase 웹 앱 등록이 없어 첫 로그인 준비가 중단됐지만, 기존 Android 앱 설정을 읽기 전용으로 조회하여 인증을 완료했다. Firebase 앱/키/인증 설정을 새로 만들거나 변경하지 않았다.
+
+## 2026-10-20 12:29 UTC 결제 5번 캡처 테스트 요청 — 사전 검증에서 중단
+
+사용자가 결제 5번 테스트를 요청했고, 기존 승인 UID와 결제 소유자가 달라 확인한 뒤 **5번 소유자도 테스트 계정이며 로그인·기존 세션 회수·Sandbox USD 90 캡처 1회 및 테스트 알림 가능성을 승인**했다. 현재 대상은 동일 테스트 지점·모델의 SANDBOX/APPROVED 예약, 결제 ID 5다. 소유자 UID 원문은 기록하지 않았다.
+
+| 시각/검사 | 결과 | 의미 |
+| --- | --- | --- |
+| 12:03:15 UTC 사전 조회 | OAuth 200, 기존 주문 GET 200, PayPal APPROVED·캡처 없음, USD 90 일치 | 이 시점에는 승인 주문 조회 가능. 실제 캡처 0회 |
+| 로그인 준비 | 기존 `/tmp` 클라이언트 설정 파일 없음, Firebase Hosting 공개 SDK config 404 | 고객 로그인 전 중단. 인증 우회하지 않음 |
+| 12:28:27 UTC 최신 사전 조회 | OAuth 200, 기존 주문 GET **404 RESOURCE_NOT_FOUND**, Debug ID **f329015627ef5** | 기존 주문을 현재 컨텍스트로 확인할 수 없어 캡처 전 중단 |
+| 12:29:08 UTC 안전 조건 재확인 | PID 10470, Sandbox, 파일/실행 Client ID·Secret 일치 | 설정 미반영 징후 없음. 이전 시점과의 키/주문 변경 여부를 입증한 결과는 아님 |
+| 재시도 기한 | 최초 capture_requested_at **07:17:12 UTC**, 5시간 기한 **12:17:12 UTC** 경과 | 기존 안전 재시도 허용 범위 밖 |
+| 현재 SQL | PENDING, 캡처 ID 없음, paid_at 없음 | 캡처 등록·결제 성공 확인 못함 |
+
+12:03 승인 상태와 12:28 404의 차이는 확인됐지만, 404를 주문 만료·자격증명 변경 등 특정 원인으로 단정하지 않는다. PayPal Sandbox 거래/주문 대조가 필요하다. DB 주문 ID 유무와 현재 GET 404만으로 전역적인 과금 부재를 확정하지 않는다.
+
+**전체 테스트 동안 실제 capture API/PayPal capture POST는 0회**다. preflight 실패 시 새 요청 키·신규 주문·PENDING 초기화·5시간 검사 우회는 하지 않았다. 실제 고객 로그인·로그아웃·푸시·캡처·환불·DB 변경·재시작도 하지 않았다. 최신 승인 후에도 실제 캡처 요청 전에 멈췄으므로 “캡처 재시도 실패”가 아니라 “캡처 사전 검증 차단”이다.
+
+다음 작업은 기존 Sandbox 주문을 PayPal 측 거래 기록과 대조하고, 기존 결과 불명 시도의 처리 및 새로운 테스트 주문 계획을 확정하는 것이다. 자동 상태 초기화나 새 결제 시도 생성은 하지 않는다. 기록은 `build/test-runtime/payment-5-capture-once-result.json`, `payment-5-capture-approved-once-result.json`, `payment-5-capture-authorized-final-result.json`, `payment-5-final-safety-check.json`이다. 상태/금액/허용 응답 메타데이터만 저장했고 키·토큰·주문 링크·개인정보는 저장하지 않았다.
+
 ## 2026-10-20 07:48 UTC 결제 단계·진단 로그·안전한 캡처 재시도 보완
 
 **후속 서버 반영 완료:** 사용자 승인에 따라 nadree-api.service 재시작, PID 10470·active/running·공개 health/live HTTP 200 확인. 실제 결제 5번 상태 조회/주문/캡처/환불 업무 API는 호출하지 않았다. 실제 캡처는 사용자 요청대로 프론트 테스트에 맡겼다. 아래 재시작 미실행 설명은 코드 검증 완료 당시 기록이며 이 최신 반영 결과로 대체한다.
