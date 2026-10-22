@@ -316,7 +316,7 @@ class PayPalClient:
         order_id = identifier(order_id)
         request_id = identifier(request_id)
         return self.call("POST", "/v2/checkout/orders/" + order_id + "/capture",
-                         headers={"PayPal-Request-Id": request_id, "Prefer": "return=representation"})
+                         headers={"PayPal-Request-Id": request_id, "Prefer": "return=representation"}, json={})
 
     def approval_url(self, order):
         if not isinstance(order, dict):

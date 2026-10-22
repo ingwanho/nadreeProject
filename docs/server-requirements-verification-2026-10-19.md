@@ -1,5 +1,80 @@
 # 2026-10-19 서버 적용 상태·요구사항 검증 결과
 
+## 2026-10-22 01:47 UTC 사용자 요청 — 7번 취소·실제 Sandbox 전액 환불 완료
+
+승인된 테스트 고객의 진행 건을 없애 달라는 요청으로 결제 7번·연결 예약만 정상 관리자 취소 API에서 취소했다. 사전 Test DB/Sandbox·동일 테스트 고객/지점/모델·단일 결제·활성 계약 없음·PayPal 캡처/금액 일치를 확인하고 접근 제한 백업을 생성했다. 관리자 로그인·CANCEL·로그아웃은 HTTP 200이며 100% 환불 정책이 적용됐다. 최초 REQUESTED 응답 후 서버 환불 처리 1회로 SQL REFUNDED/refundStatus=COMPLETED·환불액 USD 90.00을 확인했고, 실제 PayPal 환불 상세도 HTTP 200/COMPLETED·USD 90.00이다.
+
+01:47:13~01:47:18 UTC 고객 Firebase 인증 → 백엔드 로그인 → 실제 결제 상태/예약 상세/진행 목록/종료 목록 → 로그아웃·헬스가 모두 HTTP 200이다. 결제 REFUNDED/DONE/canCapture=false, 예약 CANCELED·재고 RELEASED, **진행 목록 totalCount=0/items=[]·활성 렌탈 계약 0건**이다. 취소/환불 내역은 종료 목록에 보존했다. 다른 결제 행·원래 주문/캡처·요청/결제 시각·이력은 변경하지 않았다. 서비스 PID 326499 유지, 추가 캡처·주문·전체 환불 작업·설정/스키마·재시작·Firebase 변경은 없다. 이번은 기존 배포 API의 실제 Sandbox 환불 검증이며 모의 회귀나 웹훅 수신 성공으로 대체 표시하지 않는다. [전체 근거·현재 상태](reservation-payment-system-test-2026-10-22.md)를 우선한다.
+
+## 2026-10-22 01:40 UTC 서비스 반영·실제 Sandbox 캡처·PAID 조회 완료
+
+사용자 승인으로 고정 복귀 GET과 캡처 JSON 수정이 실행 중 서비스에 반영됐다. 01:21:57~01:22:02 UTC `nadree-api.service` 재시작 1회, PID 326499·active/running, local live/ready·public live·복귀/취소 복귀·OpenAPI 모두 HTTP 200이다. Test DB·Sandbox·자격 설정의 파일/프로세스 일치 여부만 확인했으며 비밀값은 남기지 않았다. HEAD `14ec67b1a513ca0c405bfa5f7a1dbbd3246dabae` 위의 미커밋 수정본을 반영했다.
+
+7번의 기존 주문·최초 capture_requested_at=01:08:19 UTC·같은 요청 키를 유지한 실제 capture API는 HTTP 200이었다. PayPal 직접 조회에서 **주문/캡처 COMPLETED·USD 90·캡처 1건**과 SQL의 동일 캡처 ID를 확인했다. 웹훅 미수신으로 남은 PENDING은 01:39에 **승인된 테스트 결제 7번만 기존 API_QUERY 복구 처리**로 PAID·paid_at 반영했다. 다른 결제 행과 예약 행은 그대로이며 내부 알림함 1건만 추가됐다. 직접 상태 SQL 덮어쓰기·추가 청구·환불·FCM 발송은 없다.
+
+01:40:55~01:40:59 UTC Firebase 테스트 고객 인증 → 백엔드 로그인 → 실제 공개 `/payment/7` 조회 → 예약 상세 → 헬스 → 로그아웃이 모두 HTTP 200이다. 결제는 **PAID/DONE/canCapture=false**, 예약 상세는 `item.payment.paymentStatus=PAID` 및 `item.paymentAvailability=PAID`다. 앱 화면 없이 API만으로 최종 결과를 확인했다. PAID 조회의 `paypalOrderStatus=null`은 그 GET에서 PG를 재조회하지 않은 것이며 별도 PG 조회의 COMPLETED와 모순되지 않는다.
+
+격리 회귀 **386 passed / 12 skipped / 0 failed**와 실제 캡처·API_QUERY 정산 통과를 구분한다. **실제 서명 웹훅 수신·자동 정산은 미검증**이다. 기존 콜백·완료 이벤트 구독은 일치했고 이벤트 지정 재전송 1회는 HTTP 202였지만 01:36 감사까지 해당 수신·SQL 이벤트가 없었다. PG 이벤트 상세 API에 배달 상태가 없어 누락 원인을 확정하지 못했다. 전체 결제/환불 복구 작업·타이머 등록/실행, 환경 설정·스키마·Firebase 변경은 하지 않았다. [전체 실제 결과·근거·후속 확인 사항](reservation-payment-system-test-2026-10-22.md)이 아래 과거 상태보다 우선한다.
+
+## 2026-10-22 복귀 경로·캡처 JSON 수정 — 코드 작성 당시 기록
+
+사용자 수정 요청으로 `/payment/return` 고정 GET을 숫자 결제 ID 경로보다 먼저 추가해 공개 HTTP 200 HTML 안내를 제공하고, `PayPalClient.capture_order`에 빈 JSON 본문을 추가해 application/json으로 전송하도록 수정했다. 복귀 GET은 결제 승인/캡처/DB 작업을 하지 않으며 고객 상태 조회·capture API의 인증과 중복 청구 보호는 유지했다. 신규 9개 포함 관련 격리 회귀 63개가 통과했다. 코드 작성 단계에는 서비스 재시작·실제 7번 재시도·DB/설정 변경이 없었다. 후속 서비스 적용·실제 결제 성공·조회 복구 및 미검증 범위는 위 최신 절과 [전체 결과](reservation-payment-system-test-2026-10-22.md)를 따른다. 아래 “코드 미수정” 기록은 수정 전 진단 시점의 설명이다.
+
+## 2026-10-22 01:09 UTC 결제 7번 승인 복귀·실제 캡처 실패 진단
+
+7번은 PayPal APPROVED·구매자/판매자 다름·기존 캡처 없음이 확인됐다. 사용자가 본 INVALID_INPUT은 01:05:35 GET `/payment/return`이 고정 라우트 없이 `/payment/{paymentId}`에 매칭돼 return을 int로 해석하지 못한 422다. 격리 환경에서도 재현했다. 이후 기존 승인 범위의 실제 캡처 1회를 수행해, backend HTTP 500 PAYPAL_SERVICE_UNAVAILABLE 및 **PayPal 415 UNSUPPORTED_MEDIA_TYPE, Debug ID `f8502753f2396`**를 확인했다. `capture_order`가 JSON Content-Type 없이 POST하는 것을 격리 HTTP 요청에서도 확인했고, 헤더만 보완한 모의 요청은 성공했다. 애플리케이션 소스는 수정하지 않았다.
+
+01:09 최신 상태는 **SQL PENDING, capture_requested_at=01:08:19 UTC, 캡처 ID/paid_at 없음**, PG APPROVED·캡처 0건이다. 상태 API는 RETRY_CAPTURE/canCapture=true를 반환하지만 코드 보완 없이 추가 캡처는 하지 않았다. 원래 요청 시각·키·5시간 제한을 유지한다. 복귀 GET 처리와 캡처 JSON 헤더 보완이 필요하다. 회귀 377개 통과와 별도로 실제 결제에는 이 두 실패가 있다. [전체 결과와 최소 수정안](reservation-payment-system-test-2026-10-22.md)의 최신 절이 아래 초기 구매자 승인 대기 기록보다 우선한다. 재시작·배포·새 주문·환불·상태 초기화는 하지 않았다.
+
+## 2026-10-22 예약 정리·신규 결제 7번 전체 흐름 검증
+
+사용자 승인으로 결제 5번 고객의 남은 REQUESTED 예약 1건을 정상 고객 API에서 취소했다. 기존 5·6번을 포함한 과거 예약은 모두 취소 상태이며, 신규 생성 직전 ongoing=0을 실제 API로 확인했다. 이후 동일 테스트 고객·지점·차량/기간·PREMIUM USD 90으로 새 예약 `35b12620-7ae0-4bfd-b23f-cd075229ea7b`와 **결제 7번**을 생성했다. 새 테스트 예약만 활성 APPROVED이고, 7번은 CREATED/PAYER_ACTION_REQUIRED/APPROVE·승인 URL 있음이다.
+
+실제 정상/예상 오류 응답 **30개 통과**, 전체 격리 회귀 **377 passed·12 skipped·0 failed(93.49초)**다. 구매자 승인 완료 답변 후 두 번 직접 확인했지만 PayPal은 아직 PAYER_ACTION_REQUIRED·캡처 없음으로 반환해 실제 capture는 호출하지 않았다. 플랫폼·판매자 ID는 서로 다르고 구매자 정보는 응답에 없어, 구매자=판매자 여부는 확인 불가다. 최종 PAID 정산과 실제 캡처 성공은 미검증이며 새 7번의 구매자 승인 확인을 기다린다.
+
+앞선 대화의 “capture 호출이 바로 PAID까지 반영” 설명은 정정한다. 현재 capture API는 PENDING·캡처 ID를 우선 저장하고 검증된 웹훅 또는 PG 조회 복구에서 PAID·paid_at을 확정할 수 있다. 자세한 기대/실제 응답·건너뜀·자료 경로·프론트 동작은 [이번 전체 흐름 결과](reservation-payment-system-test-2026-10-22.md)에 기록했다. 코드·설정·스키마·Firebase 배포·재시작은 하지 않았다.
+
+## 2026-10-22 00:34 UTC 테스트 결제 6번·연결 예약 취소 완료
+
+사용자의 “6번도 취소” 요청에 따라 승인된 기존 테스트 대표 계정과 정상 관리자 CANCEL API를 사용했다. 변경 전 `RIDERLOG_V2_DATA_TEST`의 해당 예약/결제만 대조해 CREATED·캡처 요청/ID/paid_at 없음·연결 계약 없음·해당 예약의 결제 시도 6번 단일 건을 확인하고 접근 제한 백업을 생성했다. 로그인·취소·로그아웃은 모두 HTTP 200이다.
+
+- 실제 DB 재조회: **결제 6번 CANCELED, 연결 예약 CANCELED**, 차량 배정 RELEASED·assigned_vehicle_id 없음.
+- refundStatus=NOT_REQUIRED·환불 요청액 0.00. 이번 캡처·환불·신규 주문 호출은 모두 0회다. 신규 예약도 생성하지 않았다.
+- 기존 주문 ID·판매자·주문/캡처 요청 시각·예약 이력은 보존했다. 결제 5번은 변경하지 않았다.
+- 서버의 예약·결제 취소 결과이며 PayPal 원격 주문의 VOID/취소를 실행하거나 성공으로 판정한 것은 아니다. 앞서 확인한 PayPal 주문 GET 404의 근본 원인도 이번 취소로 확정하지 않는다.
+- 실행 시각 00:34:39~00:34:42 UTC, 서비스 PID 10470 유지. 코드·설정·스키마·서비스 재시작 없음.
+
+결과는 `build/test-runtime/payment-6-cancel-2026-10-22/result.json`, 변경 전 원본은 같은 0700 디렉터리의 0600 파일 `before.private.json`에 보관했다. 인증 토큰·비밀번호는 저장하지 않았다. **기존 결제 5번과 6번은 모두 취소 이력이므로 이후 승인/캡처 대상으로 사용하지 않는다.** 아래 이전 6번 테스트 대기 안내보다 이 취소 결과가 우선한다.
+
+### 00:36 UTC 동일 고객의 전체 예약 상태 재확인
+
+사용자 질문에 따라 결제 5번 소유자의 전체 예약 상태를 읽기 전용 집계했다. 5번과 6번이 동일 고객에 속하고 두 연결 예약·결제가 모두 CANCELED/배정 RELEASED인 것을 확인했다. 다만 같은 고객에게 **별도 REQUESTED 예약 1건**이 남아 있으며, 전체 예약은 CANCELED 2건·REQUESTED 1건이다. 렌탈 계약은 0건이다. 따라서 “해당 고객에게 진행 중 예약 요청이 전혀 없다”는 판단은 맞지 않는다. 남은 REQUESTED 예약은 취소 요청 대상 5·6번에 포함되지 않아 변경하지 않았다. 개인정보 없이 집계한 근거는 `build/test-runtime/payment-5-owner-bookings-readonly-2026-10-22.json`이다.
+
+## 2026-10-22 00:27 UTC 결제 6번 CREATED / null / WAIT 원인 확인
+
+프론트가 보고한 `paymentStatus=CREATED`, `paypalOrderStatus=null`, `nextAction=WAIT`, `approvalUrl=null`을 대상으로 현재 테스트 DB·실행 설정·PayPal·진단 로그를 읽기 전용으로 대조했다. **직접 확인된 실패는 기존 Sandbox 주문 GET의 404 RESOURCE_NOT_FOUND이며, 서버가 이를 일반 PayPal 조회 실패로 처리해 WAIT를 반환한다.** 2026-10-20 주문 생성 직후 조회 성공 기록과 구분한다. 현재 404만으로 만료·PayPal 데이터 제거 등 근본 원인을 확정하지 않는다.
+
+- 검증 시 저장소 HEAD: `14ec67b1a513ca0c405bfa5f7a1dbbd3246dabae`; 서비스 `/srv/nadree-api`, 실행 사용자 ec2-user, PID 10470, active/running, 시작 시각 2026-10-20 07:50 UTC. 저장소 HEAD를 프로세스가 로드한 커밋으로 단정하지 않는다.
+- 실행 환경/파일의 Sandbox·Client ID·Secret 일치 및 값 존재 여부만 확인했다. 비밀값·지문·인증 헤더·토큰·고객 UID·승인 링크 원문은 기록하지 않았다.
+- 이번 점검은 로그인·DB 쓰기·새 주문·캡처·환불·재시작·설정 변경 없이 수행했다. 공유 DB는 `RIDERLOG_V2_DATA_TEST`의 승인된 테스트 결제 6번·관련 예약만 조회했다.
+
+| 검사 | 실제 결과 | 판정 |
+| --- | --- | --- |
+| Sandbox OAuth | HTTP 200, Debug ID `f417023d49c3e` | 통과 |
+| 기존 주문 GET, 판매자 지정 | **HTTP 404 RESOURCE_NOT_FOUND**, Debug ID `f9780035f06ea` | 실패 |
+| 동일 주문 GET, 플랫폼 조회 | **HTTP 404 RESOURCE_NOT_FOUND**, Debug ID `f569629249a1f` | 실패 |
+| 판매자 연결 조회 | HTTP 200, Debug ID `f56962948cbcc`; 판매자 일치·수취 가능·이메일 확인·현재 앱의 결제/환불 동의 권한 확인 | 통과 |
+| 주문 식별자 보존 | DB 값과 최초 접근 제한 승인 자료의 주문 식별자 일치 | 통과 |
+| 현재 SQL | 결제 6번 CREATED/USD 90, 관련 예약 APPROVED, 캡처 요청 시각·캡처 ID·paid_at 없음, 저장된 관련 웹훅 없음 | 상태 확인 완료; PayPal 실제 결제 결과 미확인 |
+| 실제 서비스 로그 대조 | 00:14 UTC대 결제 6번 GET 3건 HTTP 200; 각 시각에 공급자 404 RESOURCE_NOT_FOUND 진단 로그 확인 | 조회 실패가 상태 응답에 감춰지는 조건 확인 |
+| 격리 회귀·실패 재현 | SQLite·모의 PayPal 전용 **18 passed, 0 failed, 0 skipped (6.06초)** | 현재 동작 확인; 문제 수정 완료를 뜻하지 않음 |
+
+코드 경로는 `app/paypal.py:PayPalClient.call`의 주문 404 → `PAYPAL_SERVICE_UNAVAILABLE`, `app/customer_rentals.py:nadree_payment_status`의 해당 오류 처리 → 공급자 상태/승인 링크 없음, `_payment_next_action`의 주문 ID 존재 → WAIT다. 이번 격리 재현은 모의 주문 GET 404에서 **실제 상태 API 코드가 HTTP 200과 위 네 필드 및 canCapture=false를 반환**함을 확인했다. DB 상태를 바꾸거나 주문·캡처·환불을 요청하지 않음도 검사했다. 이 재현의 통과는 현재 결함을 관측했다는 뜻이며 결제 성공이나 수정 완료로 해석하지 않는다. 나머지 17개는 기존 결제 단계/진단 로그 회귀다. 제한 환경에서 첫 테스트가 종료되지 않아 중단했고, 서버 환경변수를 제거한 별도 실행에서 위 최종 결과와 exit 0을 확인했다.
+
+**영향/후속 수정안:** WAIT만으로는 일시 통신 실패와 주문 조회 404를 구분할 수 없어 프론트가 승인 화면을 열지 못하고 대기한다. 최소 보완은 주문 404를 구분하는 오류를 보존해 상태 응답을 REVIEW/확인 필요로 분류하는 것이다. 5xx·일시 통신 오류와 구분하고, 상태 GET의 읽기 전용 성격·소유권·판매자 검사·중복 청구 방지는 유지해야 한다. 응답 분류 보완만으로 PayPal의 해당 주문이 복구되지는 않는다. 결제 6번 거래 대조와 주문 재생성 여부는 별도 판단이 필요하며, 404를 미결제 확정으로 취급해 자동 초기화·새 주문·캡처를 실행하지 않는다. 현재 작업은 진단만으로 애플리케이션 코드를 수정하지 않았다.
+
+진단 자료: `build/test-runtime/payment-6-readonly-diagnostic-2026-10-22.json`. 격리 재현: `build/test-runtime/test_payment_6_404_reproduction.py`. 실제 고객 API 로그인 재시험·구매자 승인·캡처·환불·웹훅 정산·실기기 동작은 이번 범위에서 미검증이다.
+
 ## 2026-10-20 15:01 UTC 기존 테스트 예약 취소·신규 Sandbox 주문 생성 완료
 
 사용자가 판매자 Sandbox 거래 내역에서 기존 주문의 결제·캡처가 없음을 확인했고, **기존 테스트 예약 정상 취소 후 같은 조건의 새 예약·주문 생성**을 승인했다. 결제 5번을 초기화하거나 삭제하지 않고 정상 관리자 취소 API를 사용했다. 아래 결과가 이전 결제 5번 테스트 대기 기록보다 우선한다.

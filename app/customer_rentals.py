@@ -4,6 +4,7 @@ from datetime import date, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Query, Request
+from fastapi.responses import HTMLResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import or_, select, update
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
@@ -844,6 +845,23 @@ def _payment_result(payment, approval_url=None, payment_window=None, *, provider
             "paymentDeadline": (payment_window or {}).get("paymentDeadline"),
             "canPay": (payment_window or {}).get("canPay", False),
             "cannotPayReason": (payment_window or {}).get("cannotPayReason")}
+
+
+@router.get("/payment/return", response_class=HTMLResponse,
+            summary="PayPal 승인·취소 후 복귀 안내",
+            description="공개 정적 안내 페이지입니다. 복귀 쿼리로 결제 성공을 확정하거나 캡처하지 않습니다. 앱은 이 URL을 감지한 뒤 인증된 결제 상태 조회와 명시적 capture API를 사용합니다.")
+def nadree_payment_return():
+    # Keep this fixed path before /payment/{paymentId}. The callback is only
+    # navigation: untrusted query values must never settle or capture a payment.
+    return HTMLResponse("""<!doctype html>
+<html lang="ko">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>결제 상태 확인</title></head>
+<body><h1>앱에서 결제 상태를 확인해 주세요</h1>
+<p>PayPal 결제 화면에서 돌아왔습니다. 앱으로 돌아가 결제 상태를 확인해 주세요.</p></body>
+</html>""", headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer",
+                       "Content-Security-Policy": "default-src 'none'; base-uri 'none'; frame-ancestors 'none'",
+                       "X-Content-Type-Options": "nosniff"})
 
 
 @router.post("/payment/order", response_model=CustomerPayment,

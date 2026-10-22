@@ -1,5 +1,43 @@
 # Nadree 전체 변경사항 및 인수 문서
 
+## 2026-10-22 01:47 UTC 최신 상태 — 7번 관리자 취소·전액 환불·진행 0건
+
+결제 흐름 검증 후 사용자의 정리 요청으로 테스트 결제 7번·예약 `35b12620-7ae0-4bfd-b23f-cd075229ea7b`를 정상 관리자 CANCEL API에서 취소했다. 취소 API HTTP 200·ADMIN_REFUND_100_PERCENT, 서버의 기존 환불 처리 1회 및 PayPal 환불 상세 GET 200/COMPLETED·USD 90.00을 확인했다. 현재 예약 CANCELED·재고 RELEASED, 결제 REFUNDED·refundStatus=COMPLETED다.
+
+승인된 동일 고객으로 실제 공개 API를 호출해 결제 REFUNDED/DONE/canCapture=false·예약 상세 CANCELED/REFUNDED·`/ongoing`의 totalCount=0/items=[]·`/completed`의 취소/환불 이력 보존을 확인했다. 따라서 현재 이 테스트 고객에게 진행 중인 예약/렌탈은 없다. 5·6·7번 모두 취소 이력이며 기존 승인 링크·캡처 테스트 대상으로 사용하지 않는다. 아래 01:40 PAID/DONE은 환불 전 검증 이력이다.
+
+접근 제한 백업 후 수행했고 다른 결제 행·기존 주문/캡처/판매자·요청 시각·결제 시각·이력은 보존했다. 추가 캡처·주문·전체 환불 작업·서비스 재시작·설정/스키마·Firebase 변경은 없다. 실제 서명 웹훅 수신 검증의 기존 제한은 유지한다. [취소·환불·실제 API 확인 근거](reservation-payment-system-test-2026-10-22.md)의 최신 절을 우선한다.
+
+## 2026-10-22 01:40 UTC 최신 적용 — 결제 7번 PAID/DONE 확인
+
+사용자 승인으로 복귀 GET·캡처 JSON 보완을 서비스에 반영하고 `nadree-api.service`를 1회 재시작했다. PID 326499, active/running, local live/ready·public live·복귀/취소 복귀·OpenAPI가 모두 HTTP 200이다. 실제 Sandbox capture API도 HTTP 200이며 PayPal에서 USD 90·COMPLETED 캡처 1건을 확인했다. 기존 주문·`nadree-capture-7`·최초 요청 시각을 유지했다.
+
+웹훅을 기다리던 SQL PENDING은 **7번만 기존 PG 조회 복구로 PAID/paid_at 반영**했다. 이 근거는 API_QUERY/PROCESSED이며 실제 서명 웹훅 수신과 구분한다. 01:40:55~01:40:59 UTC 승인된 테스트 고객으로 공개 API를 호출해 `/payment/7`의 `paymentStatus=PAID`, `nextAction=DONE`, `canCapture=false` 및 예약 상세 `item.payment.paymentStatus=PAID`·`item.paymentAvailability=PAID`를 확인했다. API만으로 최종 결과를 검증했으며 앱 화면은 필요하지 않았다.
+
+이 검증 당시 대상은 7번·예약 `35b12620-7ae0-4bfd-b23f-cd075229ea7b`였고 결제 완료로 확인했다. 이후 01:46 사용자 요청으로 위 최신 절의 취소/환불까지 마쳤으므로 현재는 환불 이력으로 표시한다. 추가 capture나 새 order를 호출하지 않는다. 당시 PAID 상태의 `paypalOrderStatus=null`은 해당 상태 GET에서 PayPal을 재조회하지 않은 결과이며, 별도 PG 조회는 COMPLETED였다. 인계/렌탈 시작은 실행하지 않았다.
+
+수정 후 격리 회귀 **386 passed / 12 skipped / 0 failed**, 관련 회귀 63개 통과다. 실제 서명 웹훅 전달·자동 정산·실기기 복귀/App Check/푸시 수신·실제 환불은 미검증이다. 기존 웹훅 URL·15개 구독은 일치하며 완료 이벤트 지정 재전송 1회는 202로 접수됐지만 수신 근거는 없다. 전체 결제 복구/환불 작업이나 타이머를 실행·설치하지 않았고 다른 결제 행·해당 예약 행은 보존했다. API_QUERY 복구에 따른 내부 알림함 1건 외 추가 주문·캡처·환불·푸시는 없다. 환경 설정·스키마·Firebase 변경도 없다. [시각별 실제 결과·근거·프론트 요구사항](reservation-payment-system-test-2026-10-22.md)을 우선한다.
+
+## 2026-10-22 복귀 경로·캡처 요청 보완 — 코드 작성 당시 기록
+
+사용자 요청으로 고정 GET `/api/v1/nadree/rental/payment/return`을 추가했다. 승인/취소 브라우저 복귀에 공개 HTTP 200 HTML 안내를 제공하며, 쿼리로 결제를 완료하거나 자동 캡처하지 않는다. 기존 앱의 URL 감지 → 고객 인증 상태 조회 → 명시적 capture 흐름은 유지한다. 캡처 요청은 빈 JSON 본문과 application/json 헤더를 전송하도록 보완했고 기존 주문·요청 키·판매자 인증·재시도 제한을 보존했다.
+
+관련 격리 회귀 63개 통과. 코드 작성 단계에는 실행 중 API 재시작과 결제 7번의 실제 재시도를 하지 않았으며, 이후 사용자 승인에 따른 반영·실연동 완료 결과는 위 01:40 최신 절과 [검증 문서](reservation-payment-system-test-2026-10-22.md)를 따른다. 아래 실패/미수정 기록은 코드 수정 전 시점이다.
+
+## 2026-10-22 01:09 결제 7번 실연동 실패 — 수정 전 진단 이력
+
+PayPal 구매자 승인은 APPROVED로 확인됐고 구매자와 판매자는 다르다. 승인 후 브라우저가 `/payment/return`으로 복귀하면 해당 고정 GET이 없어 숫자 결제 ID 경로에서 422 INVALID_INPUT이 발생한다. 별도 승인 범위의 실제 capture 1회는 백엔드 500/PayPal 415 UNSUPPORTED_MEDIA_TYPE로 실패했고, 현재 capture POST의 JSON Content-Type 누락을 확인했다. 7번은 SQL PENDING·캡처 ID/paid_at 없음, PG APPROVED·캡처 0건이다. 코드는 아직 미수정이고 추가 캡처·새 주문·재시작은 하지 않았다. [최신 결과와 수정안](reservation-payment-system-test-2026-10-22.md)을 우선한다.
+
+## 2026-10-22 신규 예약·결제 7번 검증 진행
+
+사용자 승인으로 결제 5번 고객의 기존 예약을 모두 정상 취소했고 ongoing=0 확인 후 새 테스트 예약과 **결제 7번**을 만들었다. 프론트 테스트 대상은 예약 `35b12620-7ae0-4bfd-b23f-cd075229ea7b`·결제 7번(USD 90)이다. 초기 실제 API 응답 검사 30개와 격리 회귀 377개는 통과했고 별도 MySQL/Firestore 12개는 건너뛰었다. 생성 당시에는 PAYER_ACTION_REQUIRED/APPROVE·승인 URL 제공이었으며 이후 승인·캡처·최종 PAID는 위 최신 결과를 따른다.
+
+capture API는 성공 시에도 PENDING·캡처 ID를 우선 저장할 수 있고, 최종 PAID/paid_at은 검증된 웹훅 또는 PG 조회 복구로 확정한다. 프론트는 APPROVE에서 구매자 승인, CAPTURE/canCapture=true에서 같은 결제 capture, PENDING/WAIT에서 상태 조회, PAID/DONE 확인 후 완료 표시한다. [실제 검사·대기 상태·프론트 요구사항](reservation-payment-system-test-2026-10-22.md)을 참고한다. 아래 5·6번은 취소 이력으로 유지하며 사용하지 않는다.
+
+## 2026-10-22 테스트 결제 6번 취소 완료
+
+사용자 요청으로 정상 관리자 API에서 테스트 결제 6번과 연결 예약을 취소했고 HTTP 200 및 실제 DB CANCELED를 확인했다. 배정 재고를 해제했으며 기존 기록은 보존했다. 환불·캡처·새 예약·새 주문은 실행하지 않았다. **5번과 6번 모두 취소 상태이므로 이전 승인 링크나 캡처 테스트 안내는 사용하지 않는다.** 이는 서버 예약·결제 취소이며 PayPal 원격 주문 VOID 성공을 의미하지 않는다. 상세는 [서버 검증 결과](server-requirements-verification-2026-10-19.md)의 2026-10-22 취소 완료 절을 참조한다.
+
 ## 2026-10-20 테스트 결제 대상 변경
 
 사용자 승인으로 기존 테스트 예약과 결제 5번을 정상 취소했다. 기존 주문·요청·예약 이력은 보존했고 환불은 발생하지 않았다. 같은 고객·2026-10-31~2026-11-02·PREMIUM·픽업·USD 90 조건의 새 예약 요청과 관리자 승인, Sandbox 주문 생성은 실제 API에서 모두 200을 확인했다. 이후 프론트 테스트 대상은 **결제 6번**, 새 예약 `a70ec730-4b8d-4bdd-b075-f2ac4611bd72`다.

@@ -86,7 +86,10 @@ def test_openapi_has_exact_work_group_routes(client):
     assert "/api/v1/nadree/rental/requests/{request_id}" not in paths
     parameters = paths["/api/v1/nadree/rental/request"]["post"].get("parameters", [])
     assert not any(p["name"] == "Idempotency-Key" for p in parameters)
-    assert len([path for path in paths if not path.startswith("/health/")]) == 67
+    assert len([path for path in paths if not path.startswith("/health/")]) == 68
+    payment_return = paths["/api/v1/nadree/rental/payment/return"]["get"]
+    assert "text/html" in payment_return["responses"]["200"]["content"]
+    assert not payment_return.get("security")
     assert {"get", "put"}.issubset(paths["/nadreego/shop/paypal-merchant"])
     assert "/nadreego/sensor/qr/resolve" not in paths
     qr_request = paths["/nadreego/vehicle/qr/validate"]["post"]["requestBody"]["content"]["application/json"]
