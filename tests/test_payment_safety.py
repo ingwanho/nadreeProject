@@ -332,6 +332,102 @@ def test_pg_read_reconciliation_is_distinguished_from_webhook(payments, monkeypa
     assert reconcile_payments(payments["db"], payments["pg"]) == {"checked": 0, "failed": 0}
 
 
+def test_settlement_only_recovers_completed_capture_once_without_push_or_provider_writes(payments, monkeypatch):
+    from app.payment_recovery import reconcile_payments
+    ident = insert_payment(payments, paypal_order_id="safe-order", paypal_capture_id="safe-capture",
+                           capture_requested_at=payments["at"], payment_status="PENDING")
+    snapshot = {"order": {"id": "safe-order", "purchase_units": [{"payee": {"merchant_id": "SELLER1234567"}}]},
+                "capture": {"id": "safe-capture", "status": "COMPLETED", "create_time": payments["at"].isoformat() + "Z"},
+                "refunds": {}, "refund": None, "amount": ("USD", Decimal("100"))}
+    monkeypatch.setattr(payments["pg"], "snapshot", lambda event: snapshot, raising=False)
+
+    class NoPush:
+        def dispatch(self, *args):
+            pytest.fail("Settlement cron must not dispatch pushes")
+
+    assert reconcile_payments(payments["db"], payments["pg"], NoPush(), settlement_only=True) == {"checked": 1, "failed": 0, "skipped": 0}
+    row = payment_rows(payments)[0]
+    assert row["payment_id"] == ident and row["payment_status"] == "PAID" and row["paid_at"]
+    with payments["engine"].connect() as conn:
+        event = conn.execute(select(metadata.tables["MSP_PAYPAL_WEBHOOK_EVENT"])).mappings().one()
+    assert event["verification_status"] == "API_QUERY" and event["processing_status"] == "PROCESSED"
+    assert not payments["pg"].orders and not payments["pg"].captures and not payments["pg"].refunds
+    assert reconcile_payments(payments["db"], payments["pg"], settlement_only=True) == {"checked": 0, "failed": 0, "skipped": 0}
+
+
+@pytest.mark.parametrize("capture_status", [None, "PENDING", "DECLINED"])
+def test_settlement_only_preserves_unsettled_attempt_without_creating_events(payments, monkeypatch, capture_status):
+    from app.payment_recovery import reconcile_payments
+    insert_payment(payments, paypal_order_id="safe-order", capture_requested_at=payments["at"], payment_status="PENDING")
+    before = dict(payment_rows(payments)[0])
+    snapshot = {"order": {"id": "safe-order"}, "capture": {"status": capture_status} if capture_status else None}
+    monkeypatch.setattr(payments["pg"], "snapshot", lambda event: snapshot, raising=False)
+    assert reconcile_payments(payments["db"], payments["pg"], settlement_only=True) == {"checked": 0, "failed": 0, "skipped": 1}
+    assert dict(payment_rows(payments)[0]) == before
+    with payments["engine"].connect() as conn:
+        assert conn.execute(select(metadata.tables["MSP_PAYPAL_WEBHOOK_EVENT"])).first() is None
+
+
+@pytest.mark.parametrize("values", [
+    {"payment_status": "CREATED"},
+    {"payment_status": "CANCELED", "capture_requested_at": True},
+    {"payment_status": "FAILED", "capture_requested_at": True},
+    {"payment_status": "PAID", "paid_at": True, "capture_requested_at": True},
+    {"payment_status": "PENDING", "payment_environment": "LIVE", "capture_requested_at": True},
+])
+def test_settlement_only_does_not_query_out_of_scope_payments(payments, monkeypatch, values):
+    from app.payment_recovery import reconcile_payments
+    values = {key: payments["at"] if value is True else value for key, value in values.items()}
+    insert_payment(payments, paypal_order_id="safe-order", **values)
+    before = dict(payment_rows(payments)[0])
+    def forbidden(event):
+        pytest.fail("Excluded payment must not be queried")
+    monkeypatch.setattr(payments["pg"], "snapshot", forbidden, raising=False)
+    assert reconcile_payments(payments["db"], payments["pg"], settlement_only=True) == {"checked": 0, "failed": 0, "skipped": 0}
+    assert dict(payment_rows(payments)[0]) == before
+
+
+def test_settlement_cli_requires_explicit_mode():
+    from app.payment_recovery import main
+    with pytest.raises(SystemExit) as error:
+        main([])
+    assert error.value.code == 2
+
+
+def test_settlement_cli_uses_shared_lock_and_safe_output(payments, monkeypatch, capsys):
+    from app.payment_recovery import main
+    from pydantic import SecretStr
+    settings = payments["settings"].model_copy(update={"database_url": SecretStr("sqlite:///unused-injected-test-db"),
+                                                       "paypal_client_id": SecretStr("private-test-client"),
+                                                       "paypal_client_secret": SecretStr("private-test-secret")})
+    monkeypatch.setattr("app.config.Settings", lambda: settings)
+    monkeypatch.setattr("app.db.Database", lambda url: payments["db"])
+    monkeypatch.setattr("app.paypal.PayPalClient", lambda config: payments["pg"])
+    locks = []
+    def locked(db, name, callback):
+        locks.append(name)
+        return callback()
+    monkeypatch.setattr("app.jobs._run_locked", locked)
+    assert main(["--settlement-only"]) == 0
+    output = capsys.readouterr().out
+    data = json.loads(output)
+    assert locks == ["payments"] and data["status"] == "completed"
+    assert data["result"] == {"checked": 0, "failed": 0, "skipped": 0}
+    assert "private-test-client" not in output and "private-test-secret" not in output
+
+
+def test_settlement_cli_rejects_changed_environment_before_provider_access(monkeypatch, capsys):
+    from app.config import Settings
+    from app.payment_recovery import main
+    monkeypatch.setattr("app.config.Settings", lambda: Settings(_env_file=None, paypal_environment="LIVE"))
+    def forbidden(*args):
+        pytest.fail("Environment mismatch must stop before DB/provider access")
+    monkeypatch.setattr("app.db.Database", forbidden)
+    monkeypatch.setattr("app.paypal.PayPalClient", forbidden)
+    assert main(["--settlement-only", "--expected-environment", "SANDBOX"]) == 1
+    assert json.loads(capsys.readouterr().out)["status"] == "failed"
+
+
 def test_out_of_order_capture_waits_for_original_payment_result(payments):
     insert_payment(payments, paypal_order_id="original-order", payment_status="PENDING", capture_requested_at=now())
     insert_payment(payments, paypal_order_id="extra-order")

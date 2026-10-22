@@ -585,14 +585,16 @@ def nadree_profile(body: NadriProfile, request: Request, session: Session = DB):
             values[target] = getattr(body, source)
     if "fcmToken" in fields:
         lock_key(session, "nadri-user", user.uid_token)
-        session.execute(select(table).where(table.c.uid_token == user.uid_token).with_for_update()).first()
+        account = session.execute(select(table).where(table.c.uid_token == user.uid_token).with_for_update()).mappings().one()
         user_principal(request, session)
-        from app.chat import revoke_customer_chat
-        revoke_customer_chat(request, user.uid_token)
-        values.update(fcm_token=body.fcmToken, fcm_token_updated_at=now())
-    values["updated_at"] = now()
-    require_columns(table, values)
-    session.execute(update(table).where(table.c.uid_token == user.uid_token).values(**values))
+        if body.fcmToken != account.get("fcm_token"):
+            from app.chat import revoke_customer_chat
+            revoke_customer_chat(request, user.uid_token)
+            values.update(fcm_token=body.fcmToken, fcm_token_updated_at=now())
+    if values:
+        values["updated_at"] = now()
+        require_columns(table, values)
+        session.execute(update(table).where(table.c.uid_token == user.uid_token).values(**values))
     row = session.execute(select(table).where(table.c.uid_token == user.uid_token)).mappings().one()
     return {"status": "success", "user": {"uidToken": row["uid_token"], "name": row.get("name"), "age": row.get("age"),
                                              "gender": row.get("gender"), "nationality": row.get("nationality")}}

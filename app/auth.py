@@ -131,7 +131,9 @@ def logout(request: Request, session: Session = DB, current_fcm_token: str | Non
 @router.post("/fcmToken", response_model=Status, dependencies=[bearer])
 def fcm_token(body: FcmToken, request: Request, session: Session = DB):
     actor = principal(request, session)
-    lock_account(request, session, actor.admin["admin_id"], actor.session_id)
+    account = lock_account(request, session, actor.admin["admin_id"], actor.session_id)
+    if body.fcmToken == account.get("fcm_token"):
+        return {"status": "success"}
     revoke_admin_chat(request, actor.admin["admin_id"])
     admins = request.app.state.db.table("MSP_ADMIN")
     require_columns(admins, {"fcm_token": body.fcmToken, "fcm_token_updated_at": now()})
@@ -188,13 +190,14 @@ def profile(body: Profile, request: Request, session: Session = DB):
         values["phone"] = encrypted_phone(settings, body.phone)
         if getattr(admins.c.phone.type, "length", 0) and admins.c.phone.type.length < len(values["phone"]):
             raise Problem(503, "PHONE_STORAGE_MAPPING_REQUIRED")
-    if body.fcmToken is not None:
+    if body.fcmToken is not None and body.fcmToken != actor.admin.get("fcm_token"):
         values.update(fcm_token=body.fcmToken, fcm_token_updated_at=now())
         revoke_admin_chat(request, actor.admin["admin_id"])
     if body.password is not None:
         values["password_hash"] = password_hash(body.password.get_secret_value())
     require_columns(admins, values)
-    session.execute(update(admins).where(admins.c.admin_id == actor.admin["admin_id"]).values(**values))
+    if values:
+        session.execute(update(admins).where(admins.c.admin_id == actor.admin["admin_id"]).values(**values))
     if body.password is not None or body.email is not None:
         revoke_admin_chat(request, actor.admin["admin_id"])
         tokens = db.table("MSP_REFRESH_TOKEN")

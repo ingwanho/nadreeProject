@@ -1,0 +1,7 @@
+# Install as root:root 0644 at /etc/cron.d/nadree-payment-recovery.
+# Only API-query settlement runs here; full payment maintenance has separate effects.
+SHELL=/bin/sh
+PATH=/usr/local/bin:/usr/bin:/bin
+MAILTO=""
+PYTHONDONTWRITEBYTECODE=1
+* * * * * ec2-user cd /srv/nadree-api && /usr/bin/flock -n /srv/nadree-api/build/runtime/payment-recovery/job.lock /usr/bin/timeout 180s /usr/bin/systemd-cat --identifier=nadree-payment-recovery /srv/nadree-api/.venv/bin/python -m app.payment_recovery --settlement-only --expected-environment SANDBOX --expected-database RIDERLOG_V2_DATA_TEST

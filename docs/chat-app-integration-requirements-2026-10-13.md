@@ -2,6 +2,8 @@
 
 기준: 2026-10-13 사용자 결정 및 [채팅 계약](../chat/chat-contract.md). 새 앱 연동용이며 구버전 호환·기존 채팅 데이터 이전은 제공하지 않는다. 앱 소스·실기기 인수 자료는 아직 제공되지 않았다. 이 요구사항은 앱 구현 완료를 뜻하지 않는다.
 
+2026-10-22 채팅 세션·FCM 갱신 후속 연동은 [앱 담당자 작업 안내](chat-session-fcm-app-handoff-2026-10-22.md)를 우선한다. 동일 토큰 반복 등록과 실제 토큰 변경을 구분하고, 이미 회수된 세션은 유효한 업무 세션으로 채팅만 재발급한다.
+
 ## 공통 Firebase 설정과 세션
 
 FCM/Auth 프로젝트 bail-472405, Functions 리전 asia-southeast2, Firestore (default), API https://na-dree.com을 사용한다. 차량 위치 Firebase는 채팅 설정으로 사용하지 않는다. App Check 등록과 토큰 발급을 준비하고 운영 callable에는 유효한 App Check를 전달한다. 에뮬레이터는 demo-nadree-chat만 사용한다.

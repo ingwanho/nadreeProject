@@ -6,6 +6,8 @@
 
 ## 현재 상태
 
+2026-10-22 자동 정산 복구: 사용자 승인으로 완료 캡처만 API_QUERY로 반영하는 매분 cron을 등록했다. 실제 첫 cron에서 결제 8번 PAID 반영 및 고객 상태 API PAID/DONE을 확인했다. Sandbox/테스트 DB 고정·flock/공유 DB 잠금, 격리 회귀 398 passed/12 skipped. API 재시작·추가 청구·환불·만료·푸시 실행은 없다. 실제 서명 웹훅 전달은 별도 미검증이다. [설치·실제 결과·운영 방법](docs/payment-recovery-cron-deployment-2026-10-22.md).
+
 2026-10-20 고객 PayPal 결제 복귀: 신규 주문에 확정 HTTPS 복귀 주소와 취소 구분(cancelled=true)을 전달하고 payer-action 링크를 지원한다. 기본 주소는 `/api/v1/nadree/rental/payment/return`, 선택 설정은 `NADREE_PAYPAL_PAYMENT_RETURN_URL`이다. 최신 로컬 회귀 352 passed/12 skipped 및 로컬 HTTP 주문 계약 검증 통과. 실제 서버 적용·PayPal/앱 왕복 인수는 별도다. [최신 적용·프론트 계약](docs/nadree-full-change-handoff.md).
 
 2026-10-19 현재 서버 검증: 읽기 전용 마이그레이션 pending 없음, 기본 회귀 314 passed/10 skipped 재현. MySQL 포함 320 passed/4 skipped 및 별도 Firestore 4개 통과. 실제 가격 수정/원복·권한/state 차단은 통과했으나 현재 Sandbox OAuth는 401 invalid_client이며 복귀 URL은 설정 대기다. 실제 PG/탈퇴/App Check 종단과 결제 복구 운영 등록은 별도 확인이 필요하다. [요구사항 검증 결과](docs/server-requirements-verification-2026-10-19.md).

@@ -1,10 +1,16 @@
 # Nadree 전체 변경사항 및 인수 문서
 
+## 2026-10-22 02:48 UTC 최신 적용 — 자동 정산 복구 cron·8번 PAID 확인
+
+새 예약 `8e217b09-9760-4ec1-aeb4-dc2fa933fb54`·결제 8번은 PayPal USD 90 캡처 COMPLETED였으나 웹훅 미반영·자동 복구 미등록으로 PENDING/WAIT에 머물렀다. 사용자 요청으로 cronie를 설치하고 정산 복구 전용 cron을 매분 ec2-user로 등록했다. 02:47 첫 실제 cron 실행 checked=1/failed=0 및 SQL PAID·API_QUERY/PROCESSED를 확인했고, 02:48 고객 인증 API도 PAID/DONE/canCapture=false를 반환했다. 현재 진행 목록은 이 신규 8번 한 건이며 앞선 7번은 취소/환불 이력이다.
+
+등록 파일은 `/etc/cron.d/nadree-payment-recovery`, 원본은 `deployment/nadree-payment-recovery.cron`이다. Sandbox·RIDERLOG_V2_DATA_TEST를 명시적으로 고정하고 flock·기존 MySQL 결제 잠금으로 중복을 차단했다. 완료 캡처만 조회 증거로 반영하며 추가 청구·PG 환불·예약 만료·푸시는 실행하지 않는다. 전체 payments 타이머는 함께 설치하지 않았다. API 재시작 없이 PID 326499를 유지했고 다른 결제/예약·기존 식별자/금액/요청 시각은 보존했다. 최신 격리 회귀는 398 passed/12 skipped다. 실제 서명 웹훅 전달 원인은 여전히 미확인이다. [원인·설치·실제 검증·운영/중단 방법](payment-recovery-cron-deployment-2026-10-22.md)을 우선한다.
+
 ## 2026-10-22 01:47 UTC 최신 상태 — 7번 관리자 취소·전액 환불·진행 0건
 
 결제 흐름 검증 후 사용자의 정리 요청으로 테스트 결제 7번·예약 `35b12620-7ae0-4bfd-b23f-cd075229ea7b`를 정상 관리자 CANCEL API에서 취소했다. 취소 API HTTP 200·ADMIN_REFUND_100_PERCENT, 서버의 기존 환불 처리 1회 및 PayPal 환불 상세 GET 200/COMPLETED·USD 90.00을 확인했다. 현재 예약 CANCELED·재고 RELEASED, 결제 REFUNDED·refundStatus=COMPLETED다.
 
-승인된 동일 고객으로 실제 공개 API를 호출해 결제 REFUNDED/DONE/canCapture=false·예약 상세 CANCELED/REFUNDED·`/ongoing`의 totalCount=0/items=[]·`/completed`의 취소/환불 이력 보존을 확인했다. 따라서 현재 이 테스트 고객에게 진행 중인 예약/렌탈은 없다. 5·6·7번 모두 취소 이력이며 기존 승인 링크·캡처 테스트 대상으로 사용하지 않는다. 아래 01:40 PAID/DONE은 환불 전 검증 이력이다.
+승인된 동일 고객으로 실제 공개 API를 호출해 결제 REFUNDED/DONE/canCapture=false·예약 상세 CANCELED/REFUNDED·`/ongoing`의 totalCount=0/items=[]·`/completed`의 취소/환불 이력 보존을 확인했다. 이는 01:47 당시 진행 중인 예약/렌탈이 없었다는 검증 결과다. 이후 신규 8번을 생성해 현재 상태는 위 최신 절을 따른다. 5·6·7번은 취소 이력이며 기존 승인 링크·캡처 테스트 대상으로 사용하지 않는다. 아래 01:40 PAID/DONE은 환불 전 검증 이력이다.
 
 접근 제한 백업 후 수행했고 다른 결제 행·기존 주문/캡처/판매자·요청 시각·결제 시각·이력은 보존했다. 추가 캡처·주문·전체 환불 작업·서비스 재시작·설정/스키마·Firebase 변경은 없다. 실제 서명 웹훅 수신 검증의 기존 제한은 유지한다. [취소·환불·실제 API 확인 근거](reservation-payment-system-test-2026-10-22.md)의 최신 절을 우선한다.
 
