@@ -518,7 +518,18 @@ def process_event(db, client, stored, snapshot, notifier=None):
             terminal = [item["created_at"] for item in events if item["new_reservation_status"] in ("CANCELED", "EXPIRED")]
             captured_at = timestamp(capture["create_time"])
             deadline = payment_deadline(min(approvals) if approvals else reservation["created_at"], reservation["start_datetime"])
-            late = captured_at >= deadline or bool(terminal and captured_at >= min(terminal))
+            # A verified capture already accepted by settlement keeps its original
+            # classification when another event arrives after a deadline change.
+            # Merely writing PAID/capture_id is insufficient: require a matching
+            # processed, verified capture event as well as the original paid time.
+            accepted_capture = False
+            if (payment["paid_at"] == captured_at and payment["paypal_capture_id"] == capture["id"]
+                    and payment["payment_status"] in ("PAID", "PARTIALLY_REFUNDED", "REFUNDED")):
+                accepted = session.scalars(select(e.c.raw_body).where(e.c.payment_id == payment["payment_id"],
+                    e.c.processing_status == "PROCESSED", e.c.verification_status.in_(("SUCCESS", "API_QUERY")),
+                    e.c.event_type == "PAYMENT.CAPTURE.COMPLETED"))
+                accepted_capture = any(json.loads(raw).get("resource", {}).get("id") == capture["id"] for raw in accepted)
+            late = (captured_at >= deadline and not accepted_capture) or bool(terminal and captured_at >= min(terminal))
             other = session.execute(select(p.c.payment_id).where(
                 p.c.reservation_id == payment["reservation_id"], p.c.payment_environment == payment["payment_environment"],
                 p.c.payment_id != payment["payment_id"], p.c.paid_at.is_not(None),

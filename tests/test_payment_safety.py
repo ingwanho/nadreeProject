@@ -250,12 +250,77 @@ def test_refund_retries_stop_and_leave_manual_marker(payments, monkeypatch):
     assert payment_rows(payments)[0]["refund_attempt_state"]["manualRequired"] is True
 
 
-def complete_event(ctx, order_id, capture_id, captured_at):
-    event = {"id": "event-" + capture_id, "event_type": "PAYMENT.CAPTURE.COMPLETED", "resource": {"id": capture_id}}
+def complete_event(ctx, order_id, capture_id, captured_at, *, event_id=None):
+    event = {"id": event_id or "event-" + capture_id, "event_type": "PAYMENT.CAPTURE.COMPLETED", "resource": {"id": capture_id}}
     stored = save_event(ctx["db"], "SANDBOX", event, json.dumps(event), {})
     snapshot = {"order": {"id": order_id, "purchase_units": [{"payee": {"merchant_id": "SELLER1234567"}}]}, "capture": {"id": capture_id, "status": "COMPLETED",
         "create_time": captured_at.isoformat() + "Z"}, "refunds": {}, "refund": None, "amount": ("USD", Decimal("100"))}
     return process_event(ctx["db"], ctx["pg"], stored, snapshot)
+
+
+@pytest.mark.parametrize("verification", ["SUCCESS", "API_QUERY"])
+def test_verified_capture_retains_settlement_when_deadline_changes(payments, verification):
+    insert_payment(payments, paypal_order_id="safe-order")
+    complete_event(payments, "safe-order", "capture", payments["at"])
+    before = dict(payment_rows(payments)[0])
+    with payments["engine"].begin() as conn:
+        conn.execute(metadata.tables["MSP_PAYPAL_WEBHOOK_EVENT"].update().values(verification_status=verification))
+        conn.execute(metadata.tables["MSP_RESERVATION"].update().values(start_datetime=payments["at"] - timedelta(hours=1)))
+    complete_event(payments, "safe-order", "capture", payments["at"], event_id="later-capture-event")
+    after = payment_rows(payments)[0]
+    assert after["payment_status"] == "PAID" and after["paid_at"] == before["paid_at"]
+    assert after["paypal_capture_id"] == before["paypal_capture_id"]
+    assert after["refund_status"] == "NONE" and after["refund_reason"] is None
+    assert after["refund_requested_amount"] is None and not payments["pg"].refunds
+
+
+@pytest.mark.parametrize("proof", ["missing", "unverified", "unprocessed", "other-capture", "wrong-paid-time"])
+def test_paid_flags_without_matching_verified_capture_cannot_bypass_deadline(payments, proof):
+    ident = insert_payment(payments, paypal_order_id="safe-order", paypal_capture_id="capture",
+        payment_status="PAID", paid_at=payments["at"] + (timedelta(seconds=1) if proof == "wrong-paid-time" else timedelta(0)))
+    with payments["engine"].begin() as conn:
+        conn.execute(metadata.tables["MSP_RESERVATION"].update().values(start_datetime=payments["at"] - timedelta(hours=1)))
+    if proof != "missing":
+        previous = {"id": "previous-event", "event_type": "PAYMENT.CAPTURE.COMPLETED",
+                    "resource": {"id": "other" if proof == "other-capture" else "capture"}}
+        saved = save_event(payments["db"], "SANDBOX", previous, json.dumps(previous), {},
+                           verification_status="FAILURE" if proof == "unverified" else "SUCCESS")
+        with payments["engine"].begin() as conn:
+            table = metadata.tables["MSP_PAYPAL_WEBHOOK_EVENT"]
+            conn.execute(table.update().where(table.c.webhook_event_id == saved["webhook_event_id"]).values(
+                payment_id=ident, processing_status="PENDING" if proof == "unprocessed" else "PROCESSED"))
+    complete_event(payments, "safe-order", "capture", payments["at"])
+    row = payment_rows(payments)[0]
+    assert row["refund_reason"] == "LATE_CAPTURE" and row["refund_requested_amount"] == 100
+    assert row["refund_status"] == "REQUESTED"
+
+
+def test_repeated_verified_capture_preserves_customer_cancellation_refund(payments):
+    ident = insert_payment(payments, paypal_order_id="safe-order")
+    complete_event(payments, "safe-order", "capture", payments["at"])
+    terminal = payments["at"] + timedelta(minutes=5)
+    with payments["engine"].begin() as conn:
+        conn.execute(metadata.tables["MSP_RESERVATION"].update().values(reservation_status="CANCELED"))
+        conn.execute(metadata.tables["MSP_RENTAL_PAYMENT"].update().where(
+            metadata.tables["MSP_RENTAL_PAYMENT"].c.payment_id == ident).values(
+                refund_percentage=90, cancellation_requested_by_type="CUSTOMER"))
+        conn.execute(metadata.tables["MSP_RESERVATION_HISTORY"].insert().values(reservation_id="safe-booking",
+            event_type="CANCELLED", new_reservation_status="CANCELED", created_at=terminal))
+    complete_event(payments, "safe-order", "capture", payments["at"], event_id="later-capture-event")
+    row = payment_rows(payments)[0]
+    assert row["refund_requested_amount"] == 90 and row["refund_status"] == "REQUESTED"
+    assert row["refund_reason"] != "LATE_CAPTURE"
+
+
+def test_repeated_late_capture_does_not_clear_its_refund_request(payments):
+    insert_payment(payments, paypal_order_id="safe-order")
+    with payments["engine"].begin() as conn:
+        conn.execute(metadata.tables["MSP_RESERVATION"].update().values(start_datetime=payments["at"] - timedelta(hours=1)))
+    complete_event(payments, "safe-order", "capture", payments["at"])
+    complete_event(payments, "safe-order", "capture", payments["at"], event_id="later-capture-event")
+    row = payment_rows(payments)[0]
+    assert row["refund_reason"] == "LATE_CAPTURE" and row["refund_requested_amount"] == 100
+    assert row["refund_status"] == "REQUESTED"
 
 
 @pytest.mark.parametrize("late,expected", [(True, 100), (False, 90)])
