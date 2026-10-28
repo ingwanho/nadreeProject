@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.db import transaction
 from app.errors import Problem
+from app.reservation_payments import payment_flags
 from app.headers import bearer
 from app.rental_common import context, iso, resolve_spot
 from app.security import PRIMARY, roles
@@ -56,6 +57,8 @@ class HistoricalPayment(BaseModel):
 
 
 class CustomerHistoryItem(BaseModel):
+    paymentMethod: str | None = None
+    onlinePaymentEnabled: bool = False
     reservationId: str | None
     rentalContractId: str | None
     vehicleId: str | None
@@ -174,6 +177,7 @@ def history(customer_id: str, request: Request, spotMasterId: str | None = Query
         model_id = reservation["model_id"] if reservation else session.scalar(select(vehicles.c.model_id).where(vehicles.c.vehicle_id == contract["vehicle_id"]))
         vehicle_name = session.scalar(select(models.c.model_name).where(models.c.model_id == model_id))
         items.append({"reservationId": reservation["reservation_id"] if reservation else None,
+            **payment_flags(request.app.state.settings, reservation),
             "vehicleName": vehicle_name,
             "rentalContractId": contract["rental_contract_id"] if contract else None,
             "vehicleId": contract["vehicle_id"] if contract else reservation["assigned_vehicle_id"],

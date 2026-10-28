@@ -2,8 +2,9 @@
 Description=Run Nadree chat reconciliation
 
 [Timer]
-OnBootSec=1min
-OnUnitInactiveSec=1min
+OnCalendar=*-*-* *:*:00,30
+AccuracySec=1s
+RandomizedDelaySec=0
 Unit=nadree-chat-sync.service
 
 [Install]

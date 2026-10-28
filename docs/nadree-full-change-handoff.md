@@ -1,5 +1,15 @@
 # Nadree 전체 변경사항 및 인수 문서
 
+## 2026-10-28 신규 예약의 현장·외부 결제 전환 — 07:03 UTC 실제 서버 적용 완료
+
+이번 사용자의 정책 변경은 신규 예약을 `paymentMethod=EXTERNAL`로 저장하고 관리자 승인으로 확정하는 방식이다. 현장 수납·외부 환불은 지점에서 별도로 관리하며 가짜 PAID/capture/0원 결제 기록은 만들지 않는다. 기존 가격·배송·재고·권한·QR·인계·반납·채팅을 유지한다. 기존 JSON을 사용하므로 추가 DB 마이그레이션·데이터 이전은 없다.
+
+기본 `NADREE_RESERVATION_PAYMENT_METHOD=EXTERNAL`, `NADREE_PAYPAL_CHECKOUT_ENABLED=false`이며 신규 현장 예약에는 판매자 연결·온라인 결제·결제 기한·미결제 만료·결제 유도 알림을 요구하지 않는다. 방식 정보 없는 과거 예약은 PAYPAL로 유지하고 기존 거래·웹훅·정산·필요한 환불은 보존한다. 온라인 중단 중에는 구버전 앱의 주문·capture·재시도·온보딩도 서버에서 차단하고 기존 결제 GET은 DB만 조회한다. 이후 재활성화해도 과거 현장 예약의 방식은 바꾸지 않는다.
+
+고객 요청/목록/상세에 결제 방식·온라인 가능 여부를 추가하고 현장 예약의 `paymentStatus`/`payment`는 null을 허용한다. 관리자 목록·캘린더는 실제 인계 조건에 맞춰 `canHandOver`, `handoverBlockedReason`, `RENT_APPROVE`를 제공한다. 아래 과거 온라인 전용 결제 안내는 PAYPAL 예약과 온라인 기능 활성화 조건에서만 사용한다.
+
+최종 격리 회귀 **550 passed/12 skipped** 후 사용자 승인으로 **07:03 UTC API를 1회 재시작**했다. PID 2629968·active/running, 로컬/공개 live·ready·Swagger·OpenAPI 200, 새 nullable 결제 계약·실제 availability의 EXTERNAL/온라인 중단 응답을 확인했다. 기존 테스트 두 지점에 예약 가능 옵션도 확인했다. 실제 계정 로그인·예약 쓰기·PG 청구/환불·Firebase 배포·시험 푸시는 실행하지 않았으며 기존 환경 설정·채팅·정산 cron은 보존했다. 기존 계정으로 신규 예약부터 테스트할 수 있다. 인계는 예약 기간에만 가능하다. [앱 담당자용 변경 계약과 요청 예시](external-payment-app-handoff-2026-10-28.md), [구현·실제 적용·미검증·복구 범위](external-payment-implementation-result-2026-10-28.md)를 우선한다.
+
 ## 2026-10-22 02:48 UTC 최신 적용 — 자동 정산 복구 cron·8번 PAID 확인
 
 새 예약 `8e217b09-9760-4ec1-aeb4-dc2fa933fb54`·결제 8번은 PayPal USD 90 캡처 COMPLETED였으나 웹훅 미반영·자동 복구 미등록으로 PENDING/WAIT에 머물렀다. 사용자 요청으로 cronie를 설치하고 정산 복구 전용 cron을 매분 ec2-user로 등록했다. 02:47 첫 실제 cron 실행 checked=1/failed=0 및 SQL PAID·API_QUERY/PROCESSED를 확인했고, 02:48 고객 인증 API도 PAID/DONE/canCapture=false를 반환했다. 현재 진행 목록은 이 신규 8번 한 건이며 앞선 7번은 취소/환불 이력이다.

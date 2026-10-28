@@ -14,6 +14,8 @@ from app.passport import decode_masked_image, passport_key
 from app.pricing import daily_price, load_tiers
 from app.paypal import execute_refund
 from app.refunds import prepare_booking_refund
+from app.reservation_payments import (EXTERNAL, checkout_enabled, paid_booking_payment,
+                                     payment_flags, payment_method, require_no_payment_records)
 from app.rental_common import (OPEN, action_result, context, contracts_for, day_end, effective_state,
                                expire_maintenance, fleet, is_open, iso, local_date, location_snapshot, lock_key, resolve_spot, rows, verify_qr)
 from app.rental_inputs import BookingAction, BookingLocationCorrection, PassportUpload, Qr, RentApprove
@@ -189,17 +191,84 @@ def view_passport(booked_no: str, request: Request, session: Session = DB):
 
 
 def paid_booking(request, session, reservation):
+    if payment_method(reservation) == EXTERNAL:
+        require_no_payment_records(request.app.state.db, session, reservation)
+        return None
     t = request.app.state.db.table("MSP_RENTAL_PAYMENT")
     payments = session.execute(select(t).where(t.c.reservation_id == reservation["reservation_id"],
         t.c.payment_environment == request.app.state.settings.paypal_environment)
         .order_by(t.c.payment_id).with_for_update()).mappings().all()
-    eligible = [p for p in payments if p["payment_status"] == "PAID" and p["paid_at"] is not None and
-                p["paypal_capture_id"] and p["payment_provider"] == "PAYPAL" and p["refunded_amount"] == 0 and p["total_price"] > 0]
-    if len(eligible) != 1:
-        raise Problem(409, "PAYMENT_REQUIRED" if not eligible else "PAYMENT_STATE_INCONSISTENT")
-    if eligible[0]["rental_contract_id"] is not None:
-        raise Problem(409, "PAYMENT_ALREADY_LINKED")
-    return eligible[0]
+    return paid_booking_payment(payments)
+
+
+def check_handover_vehicle(request, item, contracts, tiers):
+    ident = item["vehicle"]["vehicle_id"]
+    if any(c["vehicle_id"] == ident and is_open(c) for c in contracts):
+        raise Problem(409, "VEHICLE_ALREADY_ON_RENT")
+    if (effective_state(request, item, contracts) != "AVAILABLE" or not item["vehicle"]["is_active"]
+            or not item["rental"]["rental_enabled"] or not item["model"] or not item["model"]["is_active"]):
+        raise Problem(409, "VEHICLE_UNAVAILABLE")
+    if len(item["sensors"]) > 1:
+        raise Problem(409, "SENSOR_STATE_INCONSISTENT")
+    if daily_price(item, tiers) is None:
+        raise Problem(409, "PRICE_NOT_CONFIGURED")
+    qr = item["qr"]
+    if not qr:
+        raise Problem(404, "QR_NOT_FOUND")
+    if qr["qr_status"] == "EXPIRED" or qr["expired_at"] is not None and qr["expired_at"] <= now():
+        raise Problem(410, "QR_EXPIRED")
+    if qr["qr_status"] != "ACTIVE":
+        raise Problem(409, "QR_INACTIVE")
+    if len(request.app.state.settings.qr_hash_key.get_secret_value().encode()) < 32:
+        raise Problem(503, "QR_VALIDATION_UNAVAILABLE")
+
+
+def check_handover_reservation(request, r, item, vehicles, tiers):
+    if r["reservation_status"] != "APPROVED":
+        raise Problem(409, "RESERVATION_NOT_APPROVED")
+    if r["model_id"] != item["rental"]["model_id"] or reservation_price(r, vehicles, tiers) != price_key(item, tiers):
+        raise Problem(409, "RESERVATION_VEHICLE_MISMATCH")
+    if r["vehicle_assignment_status"] == "LOCKED" and r["assigned_vehicle_id"] != item["vehicle"]["vehicle_id"]:
+        raise Problem(409, "VEHICLE_ASSIGNMENT_LOCKED")
+    if r["vehicle_assignment_status"] not in ("PROVISIONAL", "REALLOCATED", "LOCKED"):
+        raise Problem(409, "RESERVATION_ASSIGNMENT_INVALID")
+    if now() < r["start_datetime"] or now() >= reservation_end(request, r):
+        raise Problem(409, "OUTSIDE_RESERVATION_PERIOD")
+
+
+def booking_handover_status(request, session, root, reservation, *, payments=None, cache=None):
+    """Read-only action eligibility using the same guards as the locked write API."""
+    if not reservation or reservation["reservation_status"] != "APPROVED":
+        return {"canHandOver": False, "handoverBlockedReason": "RESERVATION_NOT_APPROVED"}
+    try:
+        cache = cache if cache is not None else {}
+        model_id = reservation["model_id"]
+        if model_id not in cache:
+            vehicles = fleet(request, session, root, model_id=model_id)
+            cache[model_id] = (vehicles, contracts_for(request, session, list(vehicles)),
+                               load_tiers(request, session, root["spot_master_id"]))
+        vehicles, contracts, tiers = cache[model_id]
+        item = vehicles.get(reservation["assigned_vehicle_id"])
+        if item is None:
+            raise Problem(404, "VEHICLE_NOT_FOUND")
+        require_no_contract(request, session, reservation)
+        check_handover_vehicle(request, item, contracts, tiers)
+        check_handover_reservation(request, reservation, item, vehicles, tiers)
+        customer(request, session, reservation["uid_token"])
+        if payment_method(reservation) == EXTERNAL:
+            require_no_payment_records(request.app.state.db, session, reservation)
+        else:
+            if payments is None:
+                t = request.app.state.db.table("MSP_RENTAL_PAYMENT")
+                payments = session.execute(select(t).where(t.c.reservation_id == reservation["reservation_id"],
+                    t.c.payment_environment == request.app.state.settings.paypal_environment)).mappings().all()
+            paid_booking_payment(payments)
+        compute_assignment(request, session, root, vehicles, contracts,
+            checkout=(item["vehicle"]["vehicle_id"], now(), day_end(request, local_date(request, reservation["end_datetime"]))),
+            omit_reservation=reservation["reservation_id"])
+    except Problem as error:
+        return {"canHandOver": False, "handoverBlockedReason": error.code}
+    return {"canHandOver": True, "handoverBlockedReason": None}
 
 
 
@@ -222,7 +291,7 @@ def contract_history(request, session, ident, previous, new, actor, event):
 
 @router.post("/nadreego/booking/action",
              summary="관리자 예약 승인·거절·취소",
-             description="APPROVE는 지점 merchantId가 없으면 409 SHOP_PAYPAL_MERCHANT_REQUIRED, 환경이 다르면 SHOP_PAYPAL_ENVIRONMENT_MISMATCH로 차단합니다. 예약 요청과 REJECT는 유지합니다. CANCEL은 지점 귀책 전용이며 인계 전 APPROVED 예약을 당일에도 취소하고 실제 결제 총액의 100%를 환불합니다. 고객 사유 대리 취소는 지원하지 않습니다.")
+             description="EXTERNAL 예약은 판매자 연결 없이 APPROVE로 확정합니다. 기존 PAYPAL 예약은 판매자 연결·환경 검사를 유지합니다. CANCEL은 인계 전 지점 귀책 취소이며 EXTERNAL은 PG 환불 없이 처리하고 기존 온라인 실결제에는 100% 환불 정책을 유지합니다.")
 def booking_action(body: BookingAction, request: Request, background_tasks: BackgroundTasks, session: Session = DB):
     actor, root = context(request, session, write=True)
     r = booking(request, session, root, body.bookedNo)
@@ -231,10 +300,13 @@ def booking_action(body: BookingAction, request: Request, background_tasks: Back
         raise Problem(409, "RESERVATION_STATE_INVALID")
     require_no_contract(request, session, r)
     if body.action == "APPROVE":
-        from app.merchant_accounts import spot_merchant
-        seller = spot_merchant(request.app.state.db, session, r["spot_master_id"],
-                               request.app.state.settings.paypal_environment)
-        request.app.state.paypal.verify_merchant(seller)
+        if payment_method(r) == EXTERNAL:
+            require_no_payment_records(request.app.state.db, session, r)
+        else:
+            from app.merchant_accounts import spot_merchant
+            seller = spot_merchant(request.app.state.db, session, r["spot_master_id"],
+                                   request.app.state.settings.paypal_environment)
+            request.app.state.paypal.verify_merchant(seller)
         # Serialize approval with customer requests for the same spot/model.
         # The final availability check then uses the same resource lock.
         lock_key(session, "nadri-model", r["spot_master_id"] + ":" + r["model_id"])
@@ -271,7 +343,8 @@ def booking_action(body: BookingAction, request: Request, background_tasks: Back
         if body.action == "CANCEL":
             criteria = dict(r["required_criteria_json"] or {})
             criteria["cancellation"] = {"requestedByType": "ADMIN", "requestedById": actor.admin["admin_id"],
-                                        "reasonType": "BRANCH_FAULT", "refundPercentage": 100}
+                                        "reasonType": "BRANCH_FAULT", "refundPercentage": None if payment_method(r) == EXTERNAL else 100,
+                                        "paymentMethod": payment_method(r)}
             values["required_criteria_json"] = criteria
         event = "CANCELLED" if body.action == "CANCEL" else "REJECTED"
     table = request.app.state.db.table("MSP_RESERVATION")
@@ -279,11 +352,16 @@ def booking_action(body: BookingAction, request: Request, background_tasks: Back
     reservation_history(request, session, r, values, event, actor.admin["admin_id"], body.reason)
     if body.action in ("APPROVE", "REJECT"):
         queue_reservation_decision(request.app.state.db, session, r["uid_token"],
-                                   r["reservation_id"], values["reservation_status"])
+                                   r["reservation_id"], values["reservation_status"],
+                                   payment_method=payment_method(r), online_enabled=checkout_enabled(request.app.state.settings))
     if refund_payment_id and refund_status == "REQUESTED" and refund_ready:
         background_tasks.add_task(execute_refund, request.app.state.db, request.app.state.paypal, refund_payment_id)
     data = dict(bookedNo=body.bookedNo, reservationStatus=values["reservation_status"],
-                vehicleAssignmentStatus=values["vehicle_assignment_status"])
+                vehicleAssignmentStatus=values["vehicle_assignment_status"],
+                **payment_flags(request.app.state.settings, r))
+    if payment_method(r) == EXTERNAL:
+        data.update(paymentDeadline=None, canPay=False, canCapture=False)
+    data.update(booking_handover_status(request, session, root, {**r, **values}))
     if refund_status is not None:
         data["refundStatus"] = refund_status
     if refund_amount is not None:
@@ -293,7 +371,7 @@ def booking_action(body: BookingAction, request: Request, background_tasks: Back
     return action_result(request, actor, values["reservation_status"], data)
 
 
-@router.post("/nadreego/rent/approve")
+@router.post("/nadreego/rent/approve", description="EXTERNAL 예약은 온라인 결제를 요구하지 않습니다. 기존 PAYPAL 예약은 정상 PAID·캡처 및 미환불 상태가 필요합니다. 두 방식 모두 예약 기간·소유 지점·유효 QR·차량·모델/가격·재고·기존 인계 여부를 검증합니다.")
 def approve_rent(body: RentApprove, request: Request, session: Session = DB):
     actor, root = context(request, session, write=True)
     qr = verify_qr(request, session, root, body.qrCode.get_secret_value(), lock=True)
@@ -307,31 +385,15 @@ def approve_rent(body: RentApprove, request: Request, session: Session = DB):
     if item is None:
         raise Problem(404, "VEHICLE_NOT_FOUND")
     contracts = contracts_for(request, session, list(vehicles))
-    if any(c["vehicle_id"] == qr["vehicle_id"] and is_open(c) for c in contracts):
-        raise Problem(409, "VEHICLE_ALREADY_ON_RENT")
     expire_maintenance(request, session, vehicles, contracts)
-    if effective_state(request, item, contracts) != "AVAILABLE" or not item["vehicle"]["is_active"] or not item["rental"]["rental_enabled"] or not item["model"] or not item["model"]["is_active"]:
-        raise Problem(409, "VEHICLE_UNAVAILABLE")
-    if len(item["sensors"]) > 1:
-        raise Problem(409, "SENSOR_STATE_INCONSISTENT")
     tiers = load_tiers(request, session, root["spot_master_id"])
-    if daily_price(item, tiers) is None:
-        raise Problem(409, "PRICE_NOT_CONFIGURED")
+    check_handover_vehicle(request, item, contracts, tiers)
     r, payment = None, None
     at = now()
     if body.bookedNo:
         r = booking(request, session, root, body.bookedNo)
-        if r["reservation_status"] != "APPROVED":
-            raise Problem(409, "RESERVATION_NOT_APPROVED")
         require_no_contract(request, session, r)
-        if r["model_id"] != model or reservation_price(r, vehicles, tiers) != price_key(item, tiers):
-            raise Problem(409, "RESERVATION_VEHICLE_MISMATCH")
-        if r["vehicle_assignment_status"] == "LOCKED" and r["assigned_vehicle_id"] != qr["vehicle_id"]:
-            raise Problem(409, "VEHICLE_ASSIGNMENT_LOCKED")
-        if r["vehicle_assignment_status"] not in ("PROVISIONAL", "REALLOCATED", "LOCKED"):
-            raise Problem(409, "RESERVATION_ASSIGNMENT_INVALID")
-        if at < r["start_datetime"] or at >= reservation_end(request, r):
-            raise Problem(409, "OUTSIDE_RESERVATION_PERIOD")
+        check_handover_reservation(request, r, item, vehicles, tiers)
         uid_token = r["uid_token"]
         end_date = local_date(request, r["end_datetime"])
         payment = paid_booking(request, session, r)
@@ -361,13 +423,15 @@ def approve_rent(body: RentApprove, request: Request, session: Session = DB):
                       vehicle_assignment_status="LOCKED", vehicle_assigned_at=at, updated_at=at)
         session.execute(update(reservation).where(reservation.c.reservation_id == r["reservation_id"]).values(**values))
         reservation_history(request, session, r, values, "HANDED_OVER", actor.admin["admin_id"])
-        pt = db.table("MSP_RENTAL_PAYMENT")
-        session.execute(update(pt).where(pt.c.reservation_id == r["reservation_id"], pt.c.rental_contract_id.is_(None))
-            .values(rental_contract_id=ident, updated_at=at))
+        if payment_method(r) != EXTERNAL:
+            pt = db.table("MSP_RENTAL_PAYMENT")
+            session.execute(update(pt).where(pt.c.reservation_id == r["reservation_id"], pt.c.rental_contract_id.is_(None))
+                .values(rental_contract_id=ident, updated_at=at))
     contract_history(request, session, ident, None, "ON_RENT", actor.admin["admin_id"], "STARTED")
     return action_result(request, actor, "ON_RENT", dict(bookedNo=body.bookedNo or "RT" + ident,
         rentalContractId=ident, contractStatus="ON_RENT", vehicleStatus="ON_RENT", plannedEndDate=end_date,
         pickupLocationSnapshot=pickup, returnLocationSnapshot=return_location,
+        **payment_flags(request.app.state.settings, r),
         reservationStatus="HANDED_OVER" if r else None, vehicleAssignmentStatus="LOCKED" if r else None))
 
 

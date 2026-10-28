@@ -12,6 +12,8 @@ from app.pricing import daily_price, load_tiers
 from app.rental_common import (OPEN, MOVABLE, context, contracts_for, day_end, effective_state, fleet,
     is_open, iso, local_date, midnight, page_result, resolve_spot, rows)
 from app.rental_inputs import Calendar, Operations
+from app.rentals import booking_handover_status
+from app.reservation_payments import payment_flags
 from app.security import now
 from app.vehicles import available_actions, vehicle_view
 
@@ -24,6 +26,7 @@ def reservation_view(request, r, item):
         return None
     model = item["model"] if item else None
     return dict(reservationId=r["reservation_id"], startDatetime=iso(request, r["start_datetime"]),
+        **payment_flags(request.app.state.settings, r),
         selectedPriceOption=(r.get("required_criteria_json") or {}).get("selected"),
         pricingTiers=((r.get("required_criteria_json") or {}).get("quote") or {}).get("pricingTiers", []),
         cancellation=(r.get("required_criteria_json") or {}).get("cancellation"),
@@ -42,7 +45,7 @@ def rental_view(request, c):
         plannedEndDate=c["planned_end_date"]) if c else None
 
 
-def record_actions(request, reservation, contract, sensor=False):
+def record_actions(request, reservation, contract, sensor=False, *, can_hand_over=False):
     if contract:
         if is_open(contract):
             return ["RETURN"] + (["LOCATION"] if sensor else [])
@@ -50,7 +53,7 @@ def record_actions(request, reservation, contract, sensor=False):
     if reservation["reservation_status"] == "REQUESTED":
         return ["APPROVE", "REJECT"]
     if reservation["reservation_status"] == "APPROVED":
-        return ["RENT_APPROVE", "CANCEL"]
+        return (["RENT_APPROVE"] if can_hand_over else []) + ["CANCEL"]
     return []
 
 
@@ -62,7 +65,7 @@ def fleet_details(request, session, root, vehicles):
     reservations = rows(session, r, r.c.spot_master_id == root["spot_master_id"], r.c.assigned_vehicle_id.in_(vehicles),
         r.c.reservation_status.in_(["REQUESTED", "APPROVED", "HANDED_OVER"])) if vehicles else []
     tiers = load_tiers(request, session, root["spot_master_id"])
-    items = []
+    items, handover_cache = [], {}
     for ident, item in vehicles.items():
         active = [c for c in contracts if c["vehicle_id"] == ident]
         active.sort(key=lambda c: c["rental_contract_id"])
@@ -73,6 +76,8 @@ def fleet_details(request, session, root, vehicles):
         booking = bookings[0] if bookings else None
         state = effective_state(request, item, contracts)
         current_booking = None if not booking else dict(bookedNo="BO" + booking["reservation_id"],
+            **payment_flags(request.app.state.settings, booking),
+            **booking_handover_status(request, session, root, booking, cache=handover_cache),
             reservationStatus=booking["reservation_status"], assignmentStatus=booking["vehicle_assignment_status"],
             startDatetime=iso(request, booking["start_datetime"]), endDatetime=iso(request, booking["end_datetime"]))
         current_rental = rental_view(request, contract)
@@ -195,7 +200,7 @@ def operation_details(request, session, root, records):
         order_by=[e.c.processed_at.desc(), e.c.webhook_event_id.desc()]).label("rn")).where(
         e.c.payment_id.in_([p["payment_id"] for p in payments]), e.c.processing_status == "PROCESSED").subquery()
     last_events = {e["payment_id"]: e["event_type"] for e in session.execute(select(ranked).where(ranked.c.rn == 1)).mappings()}
-    result = []
+    result, handover_cache = [], {}
     for rec in records:
         r, c = reservations.get(rec["reservation_id"]), contracts.get(rec["rental_contract_id"])
         vid, rid, cid = rec["vehicle_id"], rec["reservation_id"], rec["rental_contract_id"]
@@ -208,6 +213,9 @@ def operation_details(request, session, root, records):
         if reservation:
             reservation["requestedModelName"] = (models.get(r["model_id"]) or {}).get("model_name")
         payment = next((p for p in payments if rid and p["reservation_id"] == rid or cid and p["rental_contract_id"] == cid), None)
+        handover = booking_handover_status(request, session, root, r,
+            payments=[p for p in payments if rid and p["reservation_id"] == rid], cache=handover_cache) if not c else {
+                "canHandOver": False, "handoverBlockedReason": "RESERVATION_ALREADY_HANDED_OVER"}
         payment_view = None
         if payment:
             payment_view = {target: payment[key] for key, target in [("payment_id", "paymentId"), ("payment_provider", "paymentProvider"),
@@ -234,10 +242,12 @@ def operation_details(request, session, root, records):
                 startDeliveryFee=r["start_delivery_fee_snapshot"], returnDeliveryFee=r["return_delivery_fee_snapshot"],
                 deliveryTotalFee=r["delivery_total_fee_snapshot"])
         result.append(dict(bookedNo=rec["booked_no"], recordType=rec["record_type"], reservationStatus=rec["reservation_status"],
+            **payment_flags(request.app.state.settings, r), **handover,
             rentalStatus=rec["contract_status"], user=dict(userId=user["uid_token"], name=user["name"], phone=None,
             gender=user["gender"], age=user["age"], nationality=user["nationality"]) if user else {}, reservation=reservation, rental=rental_view(request, c),
             vehicle=vehicle, payment=payment_view, delivery=delivery, latestHistory=history_view,
-            availableActions=record_actions(request, r, c, len([s for s in sensors if s["vehicle_id"] == vid]) == 1)))
+            availableActions=record_actions(request, r, c, len([s for s in sensors if s["vehicle_id"] == vid]) == 1,
+                                            can_hand_over=handover["canHandOver"])))
     return result
 
 
@@ -318,18 +328,19 @@ def calendar(body: Calendar, request: Request, session: Session = DB):
         conditions.append(or_(rt.c.assigned_vehicle_id.in_(selected), rt.c.model_id.in_(page_models)))
     reservations = rows(session, rt, *conditions)
     events, warnings = defaultdict(list), []
+    handover_cache = {}
     by_reservation = {c["reservation_id"]: c for c in contracts if c["reservation_id"]}
 
     def warning(code, vehicle=None, booked=None):
         warnings.append(dict(code=code, vehicleId=vehicle, bookedNo=booked, message=code))
 
-    def add_event(ident, key, kind, rid, cid, start, finish, end_type, state, assignment, blocking, reassign, actions, updated, opened=False):
+    def add_event(ident, key, kind, rid, cid, start, finish, end_type, state, assignment, blocking, reassign, actions, updated, opened=False, payment_info=None):
         if ident not in selected or start is None or start >= end or (finish is not None and finish <= begin and not opened):
             return
         events[ident].append(dict(eventId=key, eventType=kind, bookedNo=key if kind != "MAINTENANCE" else None,
             reservationId=rid, rentalContractId=cid, startAt=iso(request, start), endAt=iso(request, finish), endAtType=end_type,
             status=state, assignmentStatus=assignment, isBlocking=blocking, canReassign=reassign,
-            availableActions=actions, updatedAt=iso(request, updated)))
+            availableActions=actions, updatedAt=iso(request, updated), **(payment_info or {})))
 
     for r in reservations:
         key, ident = "BO" + r["reservation_id"], r["assigned_vehicle_id"]
@@ -348,9 +359,14 @@ def calendar(body: Calendar, request: Request, session: Session = DB):
             continue
         if ident is None:
             warning("UNASSIGNED_RESERVATION", None, key)
+        handover = (booking_handover_status(request, session, spot, r, cache=handover_cache)
+            if spot["spot_master_id"] == root["spot_master_id"] else {
+                "canHandOver": False, "handoverBlockedReason": "SPOT_ACCESS_DENIED"})
         add_event(ident, key, "RESERVATION", r["reservation_id"], None, r["start_datetime"], finish, "PLANNED", r["reservation_status"],
             r["vehicle_assignment_status"], r["reservation_status"] == "APPROVED",
-            r["vehicle_assignment_status"] in MOVABLE + ("SOFT_HOLD",), record_actions(request, r, None), r["updated_at"])
+            r["vehicle_assignment_status"] in MOVABLE + ("SOFT_HOLD",),
+            record_actions(request, r, None, can_hand_over=handover["canHandOver"]), r["updated_at"],
+            payment_info={**payment_flags(request.app.state.settings, r), **handover})
     for c in contracts:
         ident = c["vehicle_id"]
         if ident not in selected or c["contract_status"] == "CANCELED":
@@ -365,7 +381,9 @@ def calendar(body: Calendar, request: Request, session: Session = DB):
         opened = is_open(c) and (finish is None or finish <= at or c["contract_status"] == "OVERDUE")
         add_event(ident, key, "RENTAL", c["reservation_id"], c["rental_contract_id"], c["actual_start_time"], finish,
             "ACTUAL" if actual else "PLANNED" if finish else "UNKNOWN", c["contract_status"], "RELEASED" if actual else "LOCKED", True, False,
-            record_actions(request, None, c, len(vehicles[ident]["sensors"]) == 1), c["updated_at"], opened=opened)
+            record_actions(request, None, c, len(vehicles[ident]["sensors"]) == 1), c["updated_at"], opened=opened,
+            payment_info=payment_flags(request.app.state.settings,
+                next((r for r in reservations if r["reservation_id"] == c["reservation_id"]), None)))
     output = []
     for ident in selected:
         item = vehicles[ident]

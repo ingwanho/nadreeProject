@@ -6,6 +6,12 @@
 
 ## 현재 상태
 
+2026-10-28 현장·외부 결제 전환 적용: 신규 예약에 결제 방식을 저장하고 관리자 승인으로 확정하며, EXTERNAL 예약은 온라인 결제 없이 기존 기간·QR·권한·재고 검사로 인계한다. 주문/capture/재시도/온보딩은 중단하고 과거 거래·정산·환불을 보존한다. 추가 마이그레이션 없음. 전체 격리 회귀 **550 passed/12 skipped**, **07:03 UTC API 재시작 완료·공개 헬스/준비/Swagger 200·실제 조회 EXTERNAL/온라인 중단 확인**. 기존 테스트 계정으로 신규 예약 테스트 가능하며 실제 요청~인계/반납·앱 인수는 별도다. [앱 전달 문서와 테스트 예시](docs/external-payment-app-handoff-2026-10-28.md), [구현·실제 적용·검증 결과](docs/external-payment-implementation-result-2026-10-28.md).
+
+2026-10-27 채팅 즉시 호출 적용: 신규 Python 함수 `dispatchChatPushEvent`가 메시지별 이벤트 생성을 감지해 OIDC 인증된 백엔드를 호출하고, 30초 작업은 복구를 유지한다. 기존 6개 함수·Rules·인덱스·만료 스케줄·결제 복구를 보존했다. 전체 격리 회귀 508 passed/12 skipped, 배포 소스 3개 일치, 무발송 이벤트의 실제 트리거→백엔드 응답 약 2.24초·SQL 알림/FCM 0건을 확인했다. 실기기 표시는 미검증이다. [실제 적용·검증 기록](docs/chat-push-trigger-deployment-result-2026-10-27.md).
+
+2026-10-27 채팅 푸시 개선 적용: 실제 약 2분이던 실행 간격을 30초 일정·1초 정확도로 변경하고, 푸시를 전체 동기화보다 먼저 처리한다. 기존 서버 전용 이벤트에 수신자별 상태를 저장해 일시 실패를 제한 재시도하며 세션·토큰·권한 변경 시 중단한다. 별도 작업 경로의 격리 회귀 454 passed/12 skipped(MySQL 8·Firestore 에뮬레이터 4), 실제 연속 간격 29.999초·30.000초·작업 오류 0·API 헬스 200을 확인했다. 실제 기기 수신은 미검증이며 [채팅 계약](chat/chat-contract.md)과 [앱 전달 사항](docs/chat-session-fcm-app-handoff-2026-10-22.md)을 따른다.
+
 2026-10-22 자동 정산 복구: 사용자 승인으로 완료 캡처만 API_QUERY로 반영하는 매분 cron을 등록했다. 실제 첫 cron에서 결제 8번 PAID 반영 및 고객 상태 API PAID/DONE을 확인했다. Sandbox/테스트 DB 고정·flock/공유 DB 잠금, 격리 회귀 398 passed/12 skipped. API 재시작·추가 청구·환불·만료·푸시 실행은 없다. 실제 서명 웹훅 전달은 별도 미검증이다. [설치·실제 결과·운영 방법](docs/payment-recovery-cron-deployment-2026-10-22.md).
 
 2026-10-20 고객 PayPal 결제 복귀: 신규 주문에 확정 HTTPS 복귀 주소와 취소 구분(cancelled=true)을 전달하고 payer-action 링크를 지원한다. 기본 주소는 `/api/v1/nadree/rental/payment/return`, 선택 설정은 `NADREE_PAYPAL_PAYMENT_RETURN_URL`이다. 최신 로컬 회귀 352 passed/12 skipped 및 로컬 HTTP 주문 계약 검증 통과. 실제 서버 적용·PayPal/앱 왕복 인수는 별도다. [최신 적용·프론트 계약](docs/nadree-full-change-handoff.md).

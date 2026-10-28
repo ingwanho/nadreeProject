@@ -125,3 +125,33 @@ firebase deploy --project bail-472405 --only functions:nadree-chat:ensureInquiry
 6. 단일 서버 동기화 타이머와 하나의 만료 스케줄을 활성화하고 상태·실행 결과를 확인한다. 배포/검증 실패 시 gate를 유지하고 실패 범위를 기록하며 기존 Node.js 보안 문제를 자동 복원하지 않는다.
 
 지금은 권한 부족 때문에 기존 함수 7개·만료 함수·스케줄·Rules·DB·API env·서비스 상태를 변경하지 않았다. 의존성 검증과 로컬 소스 분석, 읽기 전용 준비 점검만 완료했다.
+# 2026-10-27 추가 — 채팅 이벤트 즉시 호출 배포안
+
+상태: 사용자 승인 후 2026-10-27 실제 배포·API 재시작·무발송 연결 검증을 완료했다. 전체 격리 회귀 508 passed/12 skipped이며 실제 신규 함수 ACTIVE·재시도 정책·배포 소스 일치·트리거→백엔드 응답 약 2.24초를 확인했다. 기존 30초 복구 작업을 유지한다. [실제 결과](chat-push-trigger-deployment-result-2026-10-27.md). 이 절은 아래 2026-10-13의 함수 교체 작업을 다시 승인받거나 재실행하는 계획이 아니다.
+
+| 구분 | 정확한 대상·처리 |
+| --- | --- |
+| 프로젝트·리전·DB | `bail-472405` / `asia-southeast2` / Firestore `(default)` |
+| 신규 함수 | `dispatchChatPushEvent`, Python 3.12, codebase `nadree-chat` |
+| 이벤트 | `google.cloud.firestore.document.v1.created`, `chatPushEvents/{eventId}` 생성만 감지 |
+| 기존 함수 | `ensureBookingChat`, `ensureInquiryChat`, `sendChatMessage`, `markChatRead`, `getChatUnreadSummary`, `expireInactiveInquiries` 모두 보존·배포 제외 |
+| 백엔드 | 새 `POST /internal/chat/push-events`에 `eventId`만 전달. 공개 Swagger에서 숨김 |
+| 호출 인증 | Google OIDC 서명·발급자·만료·audience 검증 및 허용 서비스 계정 이메일·고유 subject 고정 |
+| 런타임 계정 | 기존 `272033658852-compute@developer.gserviceaccount.com` 사용. 새로운 키·IAM 역할 추가 없음 |
+| 서버 설정 | `NADREE_CHAT_PUSH_AUDIENCE`, `NADREE_CHAT_PUSH_INVOKER_EMAIL`, `NADREE_CHAT_PUSH_INVOKER_SUBJECT` 3개만 추가. 값은 비공개 서버 설정에 반영 |
+| 서버 재시작 | 설정·코드 반영 후 `nadree-api.service` 1회 재시작 및 헬스 확인 |
+| 중복 방지 | API와 30초 복구 작업 모두 같은 이벤트별 MySQL named lock 사용. 잠금 획득 후 원본을 재조회 |
+| 유지 | 30초 타이머, 수신자별 재시도 상태, 세션·토큰·권한 검사, 기존 결제·환불 복구 작업 |
+| 변경 없음 | SQL 스키마·기존 데이터 이전·Rules·인덱스·기존 만료 스케줄·기존 6개 함수·기존 FCM/Auth/차량 위치 |
+
+배포 전 읽기 전용 확인: 실제 Firestore 위치가 자카르타이며, 기존 로그인 계정의 함수 생성/수정·빌드·Eventarc·Cloud Run 관련 조회/생성 권한과 서비스 계정 actAs를 확인했다. 필요한 API와 Eventarc/Pub/Sub 서비스 에이전트 역할은 이미 있다. 임의 IAM 확대나 새 키 생성은 하지 않는다. API 프로세스와 현재 `.env`의 기존 NADREE 설정도 일치한다.
+
+실행 순서:
+
+1. 기존 코드·설정·함수 메타데이터를 접근 제한된 위치에 백업한다. 현재 이벤트 상태를 보존하며 과거 완료 이벤트를 재발송하지 않는다.
+2. 새 서버 설정 3개만 반영하고 API를 1회 재시작한다. 기존 NADREE 설정 값이 바뀌지 않았는지 대조하고 로컬·공개 헬스와 무인증 내부 API 거절을 확인한다.
+3. `chat` 디렉터리에서 `firebase deploy --project bail-472405 --only functions:nadree-chat:dispatchChatPushEvent --non-interactive`로 신규 함수 하나만 배포한다. 기존 함수의 소스·설정·updateTime이 유지되는지 비교한다.
+4. Python Functions SDK 0.6의 Firestore 데코레이터는 retry 인자를 지원하지 않는다. `deployment/configure_chat_push_trigger.py --apply --firebase-login-file <승인된 기존 Firebase CLI 로그인 파일>`로 신규 함수의 `eventTrigger.retryPolicy`만 `RETRY_POLICY_RETRY`로 설정하고 다시 조회한다. 이후 이 함수를 재배포할 때도 이 검사를 실행한다. 기존 함수·IAM은 변경하지 않는다.
+5. 신규 함수 ACTIVE·생성 이벤트 경로·서비스 계정·재시도 정책을 조회한다. `inboxSynced=true`, `pushPending=false`, `diagnostic=true`인 서버 전용 테스트 이벤트 1개로 트리거→OIDC→백엔드 응답을 검증한다. 이 이벤트는 메시지를 만들거나 SQL 알림함·FCM을 발송하지 않는다. 실기기 표시 검증과 구분한다.
+
+실패 시 새 함수의 `CHAT_PUSH_FORWARD_ENABLED=false`만 설정해 즉시 호출을 중지하고 기존 30초 복구 처리를 유지할 수 있다. 새 함수나 기존 데이터를 삭제하지 않는다. 미처리 전송 상태를 초기화하거나 인증 검사를 완화하지 않는다. 필요한 경우 백업으로 서버 코드·설정을 복구하되 전송 대기 상태가 남아 있으면 기존 수신자별 복구 코드를 유지한다.

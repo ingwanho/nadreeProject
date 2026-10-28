@@ -1,11 +1,13 @@
 """Deploy only to the existing FCM/Auth Firebase project."""
+import json
 import os
 
 import firebase_admin
 from firebase_admin import firestore
-from firebase_functions import https_fn, scheduler_fn, options
+from firebase_functions import https_fn, scheduler_fn, firestore_fn, options
 
 from chat_core import ChatError, ChatStore
+from chat_push_dispatch import forward_event
 
 firebase_admin.initialize_app()
 REGION = "asia-southeast2"
@@ -50,6 +52,19 @@ def markChatRead(request: https_fn.CallableRequest):
 @https_fn.on_call(region=REGION, enforce_app_check=APP_CHECK)
 def getChatUnreadSummary(request: https_fn.CallableRequest):
     return invoke(request, lambda s, u, t, d: s.unread(u, t, d.get("shopId")), ["shopId"])
+
+
+@firestore_fn.on_document_created(document="chatPushEvents/{eventId}", region=REGION,
+                                  timeout_sec=30, max_instances=2, concurrency=4, cpu=1,
+                                  preserve_external_changes=True)
+def dispatchChatPushEvent(event: firestore_fn.Event):
+    # Created-only: backend delivery-state updates must not invoke this function.
+    # Python SDK 0.6 lacks a Firestore retry option. The release procedure must
+    # set/verify the deployed v2 eventTrigger.retryPolicy after each deployment.
+    data = event.data.to_dict() or {}
+    state = forward_event(event.params["eventId"], data.get("createdAt"))
+    print(json.dumps({"severity": "INFO", "message": "Chat push callback completed",
+                      "processing": state, "diagnostic": data.get("diagnostic") is True}))
 
 
 @scheduler_fn.on_schedule(schedule="every 15 minutes", region=REGION, timezone="UTC", retry_count=3)

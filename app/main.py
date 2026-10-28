@@ -8,6 +8,7 @@ from sqlalchemy import text
 from app.auth import router as auth_router
 from app.admin_signup import router as admin_signup_router
 from app.chat import FirebaseChat, router as chat_router
+from app.chat_push_endpoint import GooglePushIdentity, router as chat_push_router
 from app.config import Settings
 from app.db import Database
 from app.errors import Problem, install_handlers
@@ -97,6 +98,7 @@ def create_app(settings=None, db=None, limiter=None, mailer=None, fcm=None, loca
         close_locations = getattr(app.state.locations, "close", None)
         if close_locations is not None:
             close_locations()
+        app.state.chat_push_identity.close()
 
     application = FastAPI(
         title="Nadree API",
@@ -126,6 +128,7 @@ def create_app(settings=None, db=None, limiter=None, mailer=None, fcm=None, loca
     application.state.fcm = fcm or FcmSender(settings)
     application.state.customer_auth = customer_auth or CustomerFirebaseAuth(settings)
     application.state.chat = FirebaseChat(settings)
+    application.state.chat_push_identity = GooglePushIdentity(settings)
     application.state.locations = locations or VehicleLocations(settings)
     application.state.passport_storage = passport_storage or PassportStorage(settings.passport_storage_root)
     application.state.paypal = PayPalClient(settings)
@@ -162,6 +165,7 @@ def create_app(settings=None, db=None, limiter=None, mailer=None, fcm=None, loca
     application.include_router(auth_router)
     application.include_router(admin_signup_router)
     application.include_router(chat_router)
+    application.include_router(chat_push_router)
     application.include_router(management_router)
     application.include_router(admin_customers_router)
     application.include_router(notifications_router)

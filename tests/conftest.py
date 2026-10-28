@@ -115,7 +115,10 @@ def setup(tmp_path, request):
     db = Database(engine=engine)
     for name in metadata.tables:
         db.table(name)
-    settings = Settings(_env_file=None, env="test", jwt_secret="isolated-test-key-not-for-deployment-123456789")
+    # Existing regression cases explicitly exercise the preserved online flow.
+    # External-payment cases override both settings; production defaults are external/off.
+    settings = Settings(_env_file=None, env="test", jwt_secret="isolated-test-key-not-for-deployment-123456789",
+                        reservation_payment_method="PAYPAL", paypal_checkout_enabled=True)
     hashed = bcrypt.hashpw(b"Test-password-123!", bcrypt.gensalt(rounds=4)).decode()
     with engine.begin() as conn:
         conn.execute(metadata.tables["MSP_CONTRACT"].insert(), [

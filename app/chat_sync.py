@@ -1,21 +1,24 @@
 """Run one reconciliation pass with `python -m app.chat_sync` (FCM project only).
 
-Run every minute with a single scheduler owner. SQL is the durable retry source:
+Run every 30 seconds with a single scheduler owner. SQL is the durable retry source:
 always read the current locked booking, never replay an old open-state event.
 """
-from datetime import timezone
+import logging
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 from google.cloud.firestore_v1.base_query import FieldFilter
 
-from app.chat import FirebaseChat, admin_uid
+from app.chat import FirebaseChat
+from app.chat_push import sync_inbox
 from app.config import Settings
 from app.db import Database
 from app.errors import Problem
-from app.fcm import FcmSender, _manager_recipients, _queue
-from app.notifications import record_notification
-from app.security import PRIMARY, GENERAL, SESSION_MARKER, check_contract, fingerprint, now, roles
+from app.fcm import FcmSender
+from app.security import PRIMARY, GENERAL, SESSION_MARKER, check_contract, now, roles
+
+
+logger = logging.getLogger(__name__)
 
 
 def reconcile_sessions(db, chat):
@@ -81,45 +84,24 @@ def sync_catalogue(db, chat):
                 collection.document(ident).set({"active": True, "displayName": name})
 
 
-def sync_inbox(db, chat, notifier):
-    store = chat.store()
-    for snapshot in store.db.collection("chatPushEvents").where(filter=FieldFilter("inboxSynced", "==", False)).limit(500).stream():
-        event = snapshot.to_dict()
-        notifications = []
-        with Session(db.engine) as session, session.begin():
-            inbox = db.table("MSP_RENTAL_NOTIFICATION")
-            key = "chat:" + snapshot.id
-            exists = session.scalar(select(inbox.c.notification_id).where(inbox.c.event_key == key))
-            record_notification(db, session, event["shopId"], "CHAT_MESSAGE", "CHAT", event["roomId"], key)
-            if not exists:
-                if event["senderKind"] == "customer":
-                    recipients = _manager_recipients(db, session, event["shopId"])
-                    table_name, key_column = "MSP_ADMIN", "admin_id"
-                else:
-                    table_name, key_column = "MSP_RENTAL_USER", "uid_token"
-                    users = db.table(table_name)
-                    row = session.execute(select(users).where(users.c.uid_token == event["customerUid"])).mappings().first()
-                    recipients = [{"id": row["uid_token"], "token": row.get("fcm_token"),
-                                   "updated_at": row.get("fcm_token_updated_at")}] if row else []
-                current = []
-                for recipient in recipients:
-                    uid = admin_uid(recipient["id"]) if table_name == "MSP_ADMIN" else recipient["id"]
-                    user = store.ref("chatUsers/" + uid).get().to_dict() or {}
-                    token = store.ref("chatPushTokens/" + uid).get().to_dict() or {}
-                    owner = store.ref("chatPushTokenOwners/" + fingerprint(recipient["token"])).get().to_dict() if recipient.get("token") else None
-                    if user.get("active") and user.get("expiresAt") > now().replace(tzinfo=timezone.utc) and token.get("sessionId") == user.get("sessionId") and token.get("token") == recipient["token"] and owner == {"uid": uid, "sessionId": user["sessionId"]}:
-                        recipient["chat_session_id"] = user["businessSessionId"]
-                        current.append(recipient)
-                _queue(session, table=table_name, key_column=key_column, recipients=current,
-                       event="CHAT_MESSAGE", title="새 채팅 알림", body="새 메시지가 도착했습니다.",
-                       data={"eventId": key, "shopId": event["shopId"], "roomId": event["roomId"]})
-            notifications = session.info.pop("fcm_notifications", [])
-        snapshot.reference.update({"inboxSynced": True})
-        notifier.dispatch(db, notifications)
-
-
 def run(db, chat, notifier):
+    # Exclude manual and second-scheduler execution against this DB as well.
+    with db.engine.connect() as connection:
+        locked = connection.dialect.name == "mysql"
+        name = "nadree:job:chat-sync"
+        if locked and connection.scalar(text("SELECT GET_LOCK(:name, 0)"), {"name": name}) != 1:
+            logger.info("Chat reconciliation skipped: already running")
+            return
+        try:
+            _run(db, chat, notifier)
+        finally:
+            if locked:
+                connection.execute(text("SELECT RELEASE_LOCK(:name)"), {"name": name})
+
+
+def _run(db, chat, notifier):
     reconcile_sessions(db, chat)
+    sync_inbox(db, chat, notifier)
     sync_catalogue(db, chat)
     table = db.table("MSP_RESERVATION")
     last = ""
@@ -132,10 +114,10 @@ def run(db, chat, notifier):
         for ident in ids:
             chat.sync_booking(db, ident)
         last = ids[-1]
-    sync_inbox(db, chat, notifier)
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s %(message)s")
     settings = Settings()
     chat = FirebaseChat(settings)
     if not settings.fcm_chat_enabled:

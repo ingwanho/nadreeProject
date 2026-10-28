@@ -16,6 +16,8 @@ from app.errors import Problem
 from app.fcm import queue_reservation_request
 from app.headers import fcm_header, refresh_header
 from app.paypal import execute_refund, identifier
+from app.reservation_payments import (EXTERNAL, PAYPAL, checkout_enabled, payment_flags,
+                                     payment_method, require_checkout)
 from app.merchant_accounts import payment_client, spot_merchant
 from app.refunds import prepare_booking_refund
 from app.payment_policy import payment_deadline
@@ -363,7 +365,7 @@ def _latest_payment(request, session, reservation_id=None, contract_id=None):
                            .order_by(table.c.payment_id.desc())).mappings().first()
 
 
-def _record_view(request, reservation, contract, payment, spot, model):
+def _record_view(request, reservation, contract, payment, spot, model, *, session=None):
     if not spot:
         return None
     criteria = (reservation or {}).get("required_criteria_json") or {}
@@ -376,7 +378,12 @@ def _record_view(request, reservation, contract, payment, spot, model):
     status = (contract or {}).get("contract_status")
     reservation_status = (reservation or {}).get("reservation_status")
     pstatus = payment.get("payment_status") if payment else None
-    if contract:
+    flags = payment_flags(request.app.state.settings, reservation)
+    external = flags["paymentMethod"] == EXTERNAL
+    window = _payment_window(request, session, reservation, payment) if reservation and session is not None else {}
+    if external:
+        availability = "WAITING_APPROVAL" if reservation_status == "REQUESTED" else "EXTERNAL_PAYMENT"
+    elif contract:
         availability = pstatus or "PAYMENT_NOT_REQUIRED"
     elif reservation_status == "REQUESTED":
         availability = "WAITING_APPROVAL"
@@ -386,6 +393,10 @@ def _record_view(request, reservation, contract, payment, spot, model):
         availability = "PAID"
     else:
         availability = "PAYMENT_REQUIRED" if reservation_status == "APPROVED" else pstatus
+    if (reservation_status == "APPROVED" and not contract and not external
+            and not checkout_enabled(request.app.state.settings)
+            and pstatus not in ("PAID", "PARTIALLY_REFUNDED", "REFUNDED")):
+        availability = "ONLINE_PAYMENT_DISABLED"
     delivery_type = (reservation or {}).get("delivery_request_type", "PICKUP")
     reservation_id = (reservation or {}).get("reservation_id")
     start_date = local_date(request, start_value) if start_value else None
@@ -420,7 +431,10 @@ def _record_view(request, reservation, contract, payment, spot, model):
             "vehicleAssignmentStatus": (reservation or {}).get("vehicle_assignment_status"),
             "shopId": spot["spot_master_id"], "spotMasterId": spot["spot_master_id"],
             "modelId": (reservation or {}).get("model_id") or (model or {}).get("model_id"),
-            "paymentAvailability": availability, "spot": dict(_spot_view(spot), location=(criteria.get("pickupLocationSnapshot") or {})) if reservation else _spot_view(spot),
+            **flags, "paymentAvailability": availability, "paymentStatus": pstatus,
+            "paymentDeadline": window.get("paymentDeadline"), "canPay": window.get("canPay", False),
+            "cannotPayReason": window.get("cannotPayReason"), "canCapture": False,
+            "spot": dict(_spot_view(spot), location=(criteria.get("pickupLocationSnapshot") or {})) if reservation else _spot_view(spot),
             "pickupLocationSnapshot": (contract or {}).get("pickup_location_snapshot") if contract else criteria.get("pickupLocationSnapshot"),
             "returnLocationSnapshot": (contract or {}).get("return_location_snapshot") if contract else criteria.get("returnLocationSnapshot"),
             "model": _model_view(model) if model else None,
@@ -481,12 +495,12 @@ def _customer_records(request, session, uid, *, completed=False, page=1, size=20
         model = models.get(reservation["model_id"]) if reservation else vehicle_models.get(contract["vehicle_id"])
         payment = _latest_payment(request, session, reservation_id=contract.get("reservation_id"), contract_id=contract["rental_contract_id"])
         spot_id = reservation["spot_master_id"] if reservation else contract["pickup_spot_master_id"]
-        records.append(_record_view(request, reservation, contract, payment, spots.get(spot_id), model))
+        records.append(_record_view(request, reservation, contract, payment, spots.get(spot_id), model, session=session))
     for reservation in reservations:
         if reservation["reservation_id"] in linked:
             continue
         payment = _latest_payment(request, session, reservation_id=reservation["reservation_id"])
-        records.append(_record_view(request, reservation, None, payment, spots.get(reservation["spot_master_id"]), models.get(reservation["model_id"])))
+        records.append(_record_view(request, reservation, None, payment, spots.get(reservation["spot_master_id"]), models.get(reservation["model_id"]), session=session))
     if completed:
         records.sort(key=lambda item: (item.get("actualEndTime") or "", item.get("rentalContractId") or ""), reverse=True)
     else:
@@ -680,7 +694,9 @@ def nadree_logout(request: Request, session: Session = DB,
              description="테스트 시 spotMasterId/shopId는 00000000-0000-4000-8000-000000000101을 사용합니다. 웹 시나리오는 NRTEST-WEB-MODEL-125(BASIC/PREMIUM)와 NRTEST-WEB-MODEL-ND(배송 미지원)를 기준으로 확인합니다.")
 def nadree_availability(body: NadriAvailability, request: Request, session: Session = DB):
     items = _availability_for(request, session, body)
-    return {"status": "success", "items": [
+    settings = request.app.state.settings
+    return {"status": "success", "newReservationPaymentMethod": settings.reservation_payment_method,
+        "onlinePaymentEnabled": settings.reservation_payment_method == PAYPAL and checkout_enabled(settings), "items": [
         {"shopId": item["spot"]["spotMasterId"], "modelId": item["model"]["modelId"],
          "spot": item["spot"], "model": item["model"], "price": item["price"],
          "canRequest": item["canRequest"], "cannotRequestReason": item["cannotRequestReason"]}
@@ -689,7 +705,7 @@ def nadree_availability(body: NadriAvailability, request: Request, session: Sess
 
 @router.post("/request", response_model=CustomerRequest,
              summary="렌탈 예약 요청",
-             description="동일 고객·지점·모델·기간의 60초 이내 활성 예약 중복을 검사합니다. 요청 키 결과 복구는 제공하지 않습니다. 배송지역은 요금표 선택이며 실제 주소 구역 검증은 제공하지 않습니다.",
+             description="생성 시 서버의 결제 방식(EXTERNAL/PAYPAL)을 예약에 저장합니다. 기본 EXTERNAL은 관리자 승인으로 확정하며 현장·외부 수납은 지점에서 관리합니다. 고객은 결제 방식을 지정하지 않습니다. 동일 고객·지점·모델·기간의 60초 이내 활성 예약 중복을 검사합니다. 배송지역은 요금표 선택이며 실제 주소 구역 검증은 제공하지 않습니다.",
              dependencies=[Depends(customer_access_token)])
 def nadree_request(body: NadriRentalRequest, request: Request, session: Session = DB):
     user = user_principal(request, session)
@@ -722,6 +738,7 @@ def nadree_request(body: NadriRentalRequest, request: Request, session: Session 
     quote["calculatedTotalFrom"] = quote["totalFrom"]
     quote["calculatedTotalTo"] = quote["totalTo"]
     criteria = {"source": "nadri.rental.availability", "availabilityRequest": availability_request,
+                "paymentMethod": request.app.state.settings.reservation_payment_method,
                 "pickupLocationSnapshot": item["spot"]["location"], "returnLocationSnapshot": item["spot"]["location"],
                 "selected": {"spotMasterId": body.spotMasterId, "modelId": body.modelId,
                              "priceOptionId": item["price"]["pricingTiers"][0]["priceOptionId"]}, "quote": quote,
@@ -741,7 +758,9 @@ def nadree_request(body: NadriRentalRequest, request: Request, session: Session 
     return {"status": "success", "reservationId": reservation_id, "bookingId": reservation_id,
             "bookedNo": "BO" + reservation_id,
             "reservationStatus": "REQUESTED", "vehicleAssignmentStatus": "SOFT_HOLD", "paymentAvailability": "WAITING_APPROVAL",
-            "paymentStatus": "WAITING_APPROVAL",
+            "paymentStatus": None if payment_method(reservation) == EXTERNAL else "WAITING_APPROVAL",
+            **payment_flags(request.app.state.settings, reservation),
+            "paymentDeadline": None, "canPay": False, "canCapture": False,
             "shopId": body.spotMasterId, "spotMasterId": body.spotMasterId, "modelId": body.modelId,
             "totalPrice": body.totalPrice,
             "currency": body.currency, "deliveryRequestType": delivery["deliveryRequestType"],
@@ -753,12 +772,17 @@ def _reservation_for_payment(request, session, user, reservation_id):
     row = session.execute(select(table).where(table.c.reservation_id == reservation_id, table.c.uid_token == user.uid_token).with_for_update()).mappings().first()
     if not row:
         raise Problem(404, "RESERVATION_NOT_FOUND")
+    require_checkout(request.app.state.settings, row)
     if row["reservation_status"] != "APPROVED":
         raise Problem(409, "RESERVATION_NOT_APPROVED_FOR_PAYMENT")
     return dict(row)
 
 
 def _payment_window(request, session, reservation, payment=None):
+    flags = payment_flags(request.app.state.settings, reservation)
+    if flags["paymentMethod"] == EXTERNAL:
+        return {**flags, "paymentDeadline": None, "canPay": False,
+                "cannotPayReason": "ONLINE_PAYMENT_NOT_REQUIRED"}
     history = _db(request).table("MSP_RESERVATION_HISTORY")
     approved_at = session.execute(select(history.c.created_at).where(
         history.c.reservation_id == reservation["reservation_id"], history.c.event_type == "APPROVED")
@@ -768,6 +792,8 @@ def _payment_window(request, session, reservation, payment=None):
     status = payment.get("payment_status") if payment else None
     if status in ("PAID", "PARTIALLY_REFUNDED", "REFUNDED"):
         can_pay, reason = False, "PAYMENT_ALREADY_COMPLETED"
+    elif not checkout_enabled(request.app.state.settings):
+        can_pay, reason = False, "ONLINE_PAYMENT_DISABLED"
     elif deadline is not None and now() >= deadline:
         can_pay, reason = False, "PAYMENT_DEADLINE_EXPIRED"
     elif reservation["reservation_status"] != "APPROVED":
@@ -776,7 +802,7 @@ def _payment_window(request, session, reservation, payment=None):
         can_pay, reason = False, "PAYMENT_IN_PROGRESS" if status == "PENDING" else "PAYMENT_NOT_AVAILABLE"
     else:
         can_pay, reason = True, None
-    return {"paymentDeadline": iso(request, deadline), "canPay": can_pay, "cannotPayReason": reason}
+    return {**flags, "paymentDeadline": iso(request, deadline), "canPay": can_pay, "cannotPayReason": reason}
 
 
 def _ensure_payment_window(request, session, reservation, payment=None):
@@ -808,6 +834,10 @@ def _revalidate_reservation_quote(request, session, reservation):
 def _payment_next_action(payment, window, order_status, approval_url, review_required):
     if payment["payment_status"] in ("PAID", "PARTIALLY_REFUNDED", "REFUNDED"):
         return "DONE"
+    if window.get("onlinePaymentEnabled") is False:
+        if payment.get("paypal_capture_id"):
+            return "WAIT"
+        return "REVIEW" if review_required or payment.get("capture_requested_at") else "NONE"
     if review_required:
         return "REVIEW"
     if payment["payment_status"] not in ("CREATED", "PENDING"):
@@ -830,6 +860,8 @@ def _payment_next_action(payment, window, order_status, approval_url, review_req
 
 
 def _payment_result(payment, approval_url=None, payment_window=None, *, provider_order_status=None, review_required=False):
+    if (payment_window or {}).get("onlinePaymentEnabled") is False:
+        approval_url = None
     view = _payment_view(payment)
     next_action = _payment_next_action(payment, payment_window or {}, provider_order_status, approval_url, review_required)
     return {"status": "success", "paymentId": payment["payment_id"], "reservationId": payment.get("reservation_id"),
@@ -844,6 +876,11 @@ def _payment_result(payment, approval_url=None, payment_window=None, *, provider
             "refundRequestedAmount": _number(payment.get("refund_requested_amount")),
             "totalPrice": _number(payment.get("total_price")), "serverTotalPrice": _number(payment.get("total_price")),
             "currency": payment["currency"], "payment": view,
+            "paymentMethod": (payment_window or {}).get("paymentMethod", PAYPAL),
+            "onlinePaymentEnabled": (payment_window or {}).get("onlinePaymentEnabled", False),
+            "paymentStateSource": "DATABASE",
+            "paymentUpdatedAt": payment.get("updated_at").isoformat() if payment.get("updated_at") else None,
+            "providerStateChecked": provider_order_status is not None,
             "paymentDeadline": (payment_window or {}).get("paymentDeadline"),
             "canPay": (payment_window or {}).get("canPay", False),
             "cannotPayReason": (payment_window or {}).get("cannotPayReason")}
@@ -868,7 +905,7 @@ def nadree_payment_return():
 
 @router.post("/payment/order", response_model=CustomerPayment,
              summary="승인 예약의 지점 판매자 PayPal 주문 생성",
-             description="APPROVED 예약의 모든 결제 시도를 먼저 확인합니다. 진행 중 주문은 재사용하며 완료·결과 불명 결제가 있으면 새 청구를 차단합니다. PAYMENT_RECONCILIATION_REQUIRED는 운영 확인이 필요합니다. 새 주문은 서버 설정의 고객 결제 복귀 URL을 사용하며 기본값은 https://na-dree.com/api/v1/nadree/rental/payment/return 입니다. 취소 복귀에는 cancelled=true가 붙습니다. 앱은 복귀 URL의 token을 해당 결제의 paypalOrderId와 대조하고 승인 건만 기존 capture API로 확정합니다. 복귀 자체는 결제 완료가 아닙니다. 설정 오류는 503 PAYPAL_PAYMENT_RETURN_URL_REQUIRED입니다.",
+             description="온라인 결제 중단 시 409 ONLINE_PAYMENT_DISABLED, EXTERNAL 예약은 409 ONLINE_PAYMENT_NOT_REQUIRED로 외부 호출·결제 행 생성 전에 차단합니다. 온라인 기능이 활성화된 PAYPAL 예약만 기존 중복 청구 방지·판매자·기한 검사를 통과해 주문을 생성합니다. 복귀 자체는 결제 완료가 아닙니다.",
              dependencies=[Depends(customer_access_token)])
 def nadree_payment_order(body: NadriPaymentOrder, request: Request, session: Session = PAYMENT_DB):
     user = user_principal(request, session)
@@ -954,7 +991,7 @@ def nadree_payment_order(body: NadriPaymentOrder, request: Request, session: Ses
 
 @router.post("/payment/capture", response_model=CustomerPayment,
              summary="PayPal 결제 캡처",
-             description="기존 결제와 PayPal 주문을 확인한 뒤 동일 요청 식별자로 캡처합니다. PENDING·PAYMENT_IN_PROGRESS이면 상태 조회를 사용하고, PAYMENT_RECONCILIATION_REQUIRED이면 운영 확인 전 새 결제를 만들지 않습니다.",
+             description="온라인 결제 중단 시 기존 결제의 capture 재시도도 409 ONLINE_PAYMENT_DISABLED로 차단합니다. EXTERNAL 예약은 ONLINE_PAYMENT_NOT_REQUIRED입니다. 활성화된 온라인 예약만 기존 소유권·판매자·중복·기한 검사 후 같은 요청 식별자로 캡처합니다.",
              dependencies=[Depends(customer_access_token)])
 def nadree_payment_capture(body: NadriPaymentCapture, request: Request, session: Session = PAYMENT_DB):
     user = user_principal(request, session)
@@ -1059,16 +1096,19 @@ def _owned_customer_payment(request, session, user, payment_id):
 
 
 @router.get("/payment/{paymentId}", response_model=CustomerPayment,
-            summary="PayPal 결제 상태 조회·복구",
+            summary="기존 온라인 결제 상태 조회",
+            description="온라인 중단 중에는 DB 기록만 반환하며 PayPal 조회도 하지 않습니다. paymentStateSource=DATABASE, providerStateChecked=false와 저장 갱신 시각을 제공합니다. 이미 요청한 캡처의 WAIT는 웹훅/정산 반영 대기이며 새 capture 허용이 아닙니다.",
             dependencies=[Depends(customer_access_token)])
 def nadree_payment_status(paymentId: int, request: Request, session: Session = DB):
     """결제 요청 응답이 유실된 경우 현재 저장된 결제·웹훅 상태를 다시 조회한다."""
     user = user_principal(request, session)
     payment = _owned_customer_payment(request, session, user, paymentId)
     reservation = payment.pop("_reservation", None)
-    window = _payment_window(request, session, reservation, payment) if reservation else None
+    window = _payment_window(request, session, reservation, payment) if reservation else {
+        "paymentMethod": PAYPAL, "onlinePaymentEnabled": checkout_enabled(request.app.state.settings),
+        "canPay": False, "cannotPayReason": "PAYMENT_NOT_AVAILABLE"}
     provider_status, approval, review_required = None, None, reservation is None
-    if (payment["payment_status"] in ("CREATED", "PENDING") and payment.get("paypal_order_id")
+    if (window["onlinePaymentEnabled"] and payment["payment_status"] in ("CREATED", "PENDING") and payment.get("paypal_order_id")
             and not payment.get("paypal_capture_id") and reservation):
         request.app.state.limiter.check("paypal-payment-status:" + user.uid_token, limit=30, seconds=60)
         try:
@@ -1123,12 +1163,12 @@ def nadree_reservation_detail(reservation_id: str, request: Request, session: Se
     model_table = db.table("MSP_VEHICLE_MODEL")
     model = session.execute(select(model_table).where(model_table.c.model_id == reservation["model_id"])).mappings().first()
     return {"status": "success", "item": _record_view(request, reservation, dict(contract) if contract else None,
-        payment, _spot(request, session, reservation["spot_master_id"], active=False), dict(model) if model else None)}
+        payment, _spot(request, session, reservation["spot_master_id"], active=False), dict(model) if model else None, session=session)}
 
 
 @router.post("/request/cancel", response_model=CustomerCancellation,
              summary="고객 예약 취소·시작일 전 90% 당일부터 0% 환불",
-             description="본인의 인계 전 REQUESTED/APPROVED 예약을 취소합니다. 업무 시간대(기본 Asia/Makassar)의 시작일 전에는 결제액 90%, 시작일 00:00부터는 0%이며 PG 환불을 요청하지 않습니다. 캡처 처리 중에는 PAYMENT_IN_PROGRESS를 반환합니다.",
+             description="본인의 인계 전 REQUESTED/APPROVED 예약을 취소합니다. EXTERNAL은 PG 환불 없이 취소하며 현장·외부 수납 환불은 지점에서 관리합니다. 기존 PAYPAL은 시작일 전 90%, 시작일 00:00부터 0% 정책을 유지하고 캡처 처리 중에는 PAYMENT_IN_PROGRESS입니다.",
              dependencies=[Depends(customer_access_token)])
 def cancel_request(body: ReservationCancel, request: Request, background_tasks: BackgroundTasks, session: Session = DB):
     user = user_principal(request, session)

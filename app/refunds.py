@@ -4,10 +4,15 @@ from sqlalchemy import select, update
 
 from app.errors import Problem
 from app.payment_policy import refund_target
+from app.reservation_payments import EXTERNAL, payment_method, require_no_payment_records
 from app.security import now
 
 
 def prepare_booking_refund(request, session, reservation, reason, *, admin_id=None, customer=False, rental_day=False):
+    if payment_method(reservation) == EXTERNAL:
+        require_no_payment_records(request.app.state.db, session, reservation)
+        # External collection/refunds are handled by the shop, never by PayPal.
+        return (None, "NOT_REQUIRED", False, Decimal("0.00"), "EXTERNAL_PAYMENT_MANAGED_BY_SHOP")
     table = request.app.state.db.table("MSP_RENTAL_PAYMENT")
     if not {"refund_requested_amount", "cancellation_requested_by_type", "cancellation_requested_by_id", "refund_percentage"}.issubset(table.c.keys()):
         raise Problem(503, "REFUND_POLICY_SCHEMA_UPDATE_REQUIRED")

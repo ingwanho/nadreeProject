@@ -15,6 +15,7 @@ from app.rental_common import context, editable_spot
 from app.schemas import Body, Identifier
 from app.security import now
 from app.responses import Status
+from app.reservation_payments import require_checkout
 
 router = APIRouter(prefix="/nadreego/shop/paypal-onboarding", tags=["PayPal onboarding"], dependencies=[bearer])
 DB = Depends(transaction, scope="function")
@@ -54,6 +55,7 @@ def target(body, request, session):
 @router.post("/start", response_model=Started, summary="미연결 지점 대표의 PayPal 연결 URL 발급")
 def start(body: Target, request: Request, session=DB):
     actor, _ = target(body, request, session)
+    require_checkout(request.app.state.settings)
     table, row = spot_row(body, request, session)
     if row["paypal_merchant_id"]:
         raise Problem(409, "SHOP_PAYPAL_ALREADY_CONNECTED")
@@ -90,6 +92,7 @@ def spot_row(body, request, session):
              description="start의 state와 같은 관리자 로그인 세션이 필요합니다. state는 30분 유효하며 브라우저 merchantId는 받지 않습니다. 완료 후 예약 승인은 별도 재요청합니다.")
 def verify(body: Verify, request: Request, session=DB):
     actor, _ = target(body, request, session)
+    require_checkout(request.app.state.settings)
     table, row = spot_row(body, request, session)
     settings = request.app.state.settings
     try:

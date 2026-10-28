@@ -112,11 +112,37 @@ class FcmSender:
             return min(float(retry_after), 3600)
         return min(2 ** attempt, 60)
 
-    def _send(self, notification):
+    def deliver_chat_once(self, db, notification):
+        """One synchronous attempt; the chat event owns durable retries."""
+        if notification.get("event") != "CHAT_MESSAGE":
+            raise ValueError("Expected chat notification")
+        current = self._current_recipients(db, notification)
+        current_ids = {item["id"] for item in current["recipients"]}
+        skipped = [item for item in notification["recipients"] if item["id"] not in current_ids]
+        empty = {"accepted": [], "invalid": [], "failed": [], "retryable": [],
+                 "skipped": skipped, "retry_after": None}
+        if not current["recipients"]:
+            return empty
+        if not self.configured:
+            return dict(empty, retryable=current["recipients"])
+        try:
+            result = self._send(current, detailed=True)
+        except Exception as exc:
+            logger.warning("Chat FCM attempt deferred: %s", type(exc).__name__)
+            return dict(empty, retryable=current["recipients"], retry_after=getattr(exc, "retry_after", None))
+        if result["invalid"]:
+            try:
+                self._clear_invalid_tokens(db, current, result["invalid"])
+            except Exception as exc:
+                # A cleanup outage must not replay other accepted recipients.
+                logger.warning("Invalid chat FCM token cleanup deferred: %s", type(exc).__name__)
+        return dict(result, skipped=skipped)
+
+    def _send(self, notification, *, detailed=False):
         from firebase_admin import messaging
 
         recipients = notification.get("recipients", [])
-        invalid, retryable = [], []
+        invalid, retryable, accepted, failed = [], [], [], []
         retry_after = None
         app = self._firebase_app()
         for offset in range(0, len(recipients), 500):
@@ -131,6 +157,7 @@ class FcmSender:
             for item, result in zip(batch, response.responses):
                 error = result.exception
                 if error is None:
+                    accepted.append(item)
                     continue
                 code = getattr(error, "code", "")
                 if isinstance(error, messaging.UnregisteredError) or code in {
@@ -142,8 +169,12 @@ class FcmSender:
                     if code == "quota-exceeded":
                         retry_after = 60
                 else:
+                    failed.append(item)
                     logger.warning("FCM provider rejected event %s for one recipient: %s",
                                    notification.get("event"), code or type(error).__name__)
+        if detailed:
+            return {"accepted": accepted, "invalid": invalid, "failed": failed,
+                    "retryable": retryable, "retry_after": retry_after}
         return invalid, retryable, retry_after
 
     @staticmethod
@@ -242,24 +273,30 @@ def queue_reservation_request(db, session, reservation_id, spot_master_id):
                  "bookedNo": "BO" + reservation_id, "reservationStatus": "REQUESTED"})
 
 
-def queue_reservation_decision(db, session, uid_token, reservation_id, status):
+def queue_reservation_decision(db, session, uid_token, reservation_id, status, *, payment_method="PAYPAL", online_enabled=True):
     users = db.table("MSP_RENTAL_USER")
     row = session.execute(select(users.c.uid_token, users.c.fcm_token, users.c.fcm_token_updated_at).where(
         users.c.uid_token == uid_token)).mappings().first()
     if not row:
         return
     approved = status == "APPROVED"
+    if payment_method == "EXTERNAL":
+        approved_body = "렌트 예약이 확정되었습니다. 결제는 지점 안내에 따라 현장 또는 외부에서 진행해 주세요."
+    elif not online_enabled:
+        approved_body = "렌트 예약이 승인되었습니다. 온라인 결제가 중단되어 지점에 진행 방법을 문의해 주세요."
+    else:
+        approved_body = ("렌트 예약이 승인되었습니다. 3일 이내에 결제를 진행해 주세요. "
+                         "렌트 시작 전까지 결제해 주세요. 시작일 전 고객 취소 시 10%가 공제되며, 렌트 당일부터는 취소해도 환불되지 않습니다.")
     _queue(session, table="MSP_RENTAL_USER", key_column="uid_token",
            recipients=[{"id": row["uid_token"], "token": row.get("fcm_token"),
                         "updated_at": row.get("fcm_token_updated_at")}],
            event="RESERVATION_APPROVED" if approved else "RESERVATION_REJECTED",
            title="예약 승인 완료" if approved else "예약 거절 안내",
-           body=("렌트 예약이 승인되었습니다. 3일 이내에 결제를 진행해 주세요. "
-                 "렌트 시작 전까지 결제해 주세요. 시작일 전 고객 취소 시 10%가 공제되며, 렌트 당일부터는 취소해도 환불되지 않습니다.") if approved
+           body=approved_body if approved
            else "요청하신 렌트 예약이 거절되었습니다.",
            data={"type": "RESERVATION_APPROVED" if approved else "RESERVATION_REJECTED",
                  "reservationId": reservation_id, "bookedNo": "BO" + reservation_id,
-                 "reservationStatus": status})
+                 "reservationStatus": status, "paymentMethod": payment_method})
 
 
 def queue_payment_deadline_reminder(db, session, uid_token, reservation_id, days_remaining, deadline_at):

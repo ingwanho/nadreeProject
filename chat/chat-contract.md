@@ -107,7 +107,11 @@ BOOKING_CHAT_SYNC_PENDING이면 예약을 다시 만들지 말고 같은 booking
 - **공유 DB를 다른 서버나 SQL로 직접 수정하면 즉시 회수를 보장하지 않는다.** 해당 변경 주체에도 채팅 무효화를 연결해야 한다. 현재 재동기화 작업은 발견 후 차단하므로 주기만큼 지연될 수 있다.
 - 기존 알림함에 eventType=CHAT_MESSAGE, targetType=CHAT, targetId=roomId로 저장한다. 목록·지점 공통 읽음은 기존 API를 사용한다.
 - 푸시는 업무 서버 한 곳에서만 발송하며 Functions는 중복 방지 이벤트만 저장한다. 개인정보·메시지 본문·여권을 푸시에 넣지 않는다. 앱은 eventId로 중복 표시를 방지한다.
-- 기존 best-effort FCM 발송기를 사용한다. 알림함 이벤트는 재시도 시 중복 저장하지 않지만 **프로세스 종료 시 푸시 영속 재전송/전달 보장은 없다**. 앱은 알림함을 기준으로 복구한다.
+- 채팅 푸시는 새 메시지와 함께 생성되는 `chatPushEvents/{eventId}`마다 `dispatchChatPushEvent`가 Google OIDC로 인증된 `POST /internal/chat/push-events`를 호출해 발송을 시도한다. 생성 이벤트만 감지하므로 읽음·방 상태·전송 결과 수정은 다시 발송을 유발하지 않는다. 기존 30초 작업은 실패·미처리 복구와 전체 동기화를 유지한다.
+- HTTP 호출과 주기 작업 모두 같은 이벤트별 MySQL named lock을 사용하고 잠금 획득 후 원본을 다시 읽는다. 호출 주체는 서명·발급자·만료·audience와 허용 서비스 계정 이메일·고유 subject로 검증한다. 발송 직전 SQL 계약·역할·직접 소속·업무 세션과 Firestore 세션·토큰 소유권을 확인한다. 앱의 Firebase Auth·App Check 검사와 callable 계약은 유지한다.
+- 기존 서버 전용 `chatPushEvents` 문서의 `pushDelivery`(version, expiresAt, recipients)·`pushPending`에 수신자별 전송 상태를 저장한다. `inboxSynced`는 SQL 알림함 반영이며 FCM 접수 완료와 별개다. 원문 FCM 토큰이나 메시지 본문은 전송 상태에 추가 저장하지 않는다. 새 SQL 테이블·컬렉션·앱 요청 필드는 없다.
+- 일시 실패는 최초 수신자의 동일 업무/채팅 세션·토큰에 한해 최초 발송 포함 최대 5회, 메시지 생성 후 1시간 이내 재시도한다. 기본 대기는 30·60·120·240초이며 공급자의 더 긴 대기 요구를 따른다. 이미 FCM이 접수한 수신자는 재시도하지 않는다. 로그아웃·만료·토큰/소유권/역할/지점 권한 변경 시 전송을 중단하며, 처음부터 수신 자격이 없었던 계정이나 이전 처리 완료 이벤트를 로그인 후 다시 발송하지 않는다.
+- FCM 접수 직후 상태 저장 전에 프로세스가 종료되면 같은 eventId가 다시 전달될 수 있다. **정확히 한 번 표시를 보장하지 않으므로 앱은 eventId로 중복 표시를 막고 알림함으로 복구한다.** FCM 접수는 실기기 수신·화면 표시 성공을 뜻하지 않는다. 전송 결과는 accepted/failed/skipped, 대기는 pending이며 개수만 서버 로그에 남긴다.
 - 기존 데이터·구버전 앱의 이전/호환 없이 신규로 시작한다. 적용 직전 동명 컬렉션의 충돌을 읽기 전용 확인한다. 충돌 문서가 발견되면 이전 코드를 추가하지 않고 대상과 처리 범위를 보고한다. 함수 정리 승인만으로 기존 문서를 일괄 삭제하지 않는다.
 
 ## 5. 배포 담당자 작업
@@ -131,7 +135,7 @@ firebase deploy --project YOUR_FCM_PROJECT_ID --only functions:nadree-chat,fires
 .venv/bin/python -m app.chat_sync
 ```
 
-8. 매분 단일 cron/systemd 실행 주체로 등록하고 실패 로그·실행시간을 감시한다. 현재는 예약/카탈로그 전량 재확인 방식이다. 한 주기보다 오래 걸리는 규모에서는 중복 실행하지 말고 증분 처리로 보완한다.
+8. `deployment/nadree-chat-sync.timer`의 매분 00초·30초 일정과 `AccuracySec=1s`를 적용하고 단일 systemd 실행 주체로 관리한다. 장시간 실행 시 같은 서비스는 겹쳐 실행하지 않으며 다음 일정에서 처리한다. 현재 예약/카탈로그는 전량 재확인 방식이므로 실행시간과 `Chat push pass`의 retry/failed/deferred 건수를 감시한다. `pushPending == true` 단일 필드 쿼리를 사용하며 Rules·복합 인덱스·함수 배포 변경은 없다.
 9. 프론트에 실제 프로젝트 ID, 자카르타 리전, 이 문서, 배포된 OpenAPI를 전달한다. 컬렉션/문서는 콘솔에서 미리 만들 필요 없이 최초 서버 쓰기에서 생성된다.
 
 채팅을 중단할 때는 환경변수만 false로 바꾸지 않는다. 먼저 채팅 접근 Rules/Functions를 차단하고 활성 chatUsers를 무효화한 뒤 동기화·API 연결을 끈다. 이미 발급된 Firebase 세션이 환경변수 변경만으로 자동 폐기되지는 않는다.

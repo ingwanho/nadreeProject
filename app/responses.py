@@ -15,6 +15,8 @@ class Error(BaseModel):
 
 
 class ShopPayPalMerchantResult(Status):
+    onlinePaymentEnabled: bool = False
+    newReservationPaymentMethod: Literal["EXTERNAL", "PAYPAL"] = "EXTERNAL"
     spotMasterId: str
     merchantId: str | None
     paymentEnvironment: Literal["SANDBOX", "LIVE"] | None
@@ -117,6 +119,13 @@ class CustomerDelivery(BaseModel):
 
 
 class CustomerRecord(BaseModel):
+    paymentMethod: Literal["EXTERNAL", "PAYPAL"] | None = None
+    onlinePaymentEnabled: bool = False
+    paymentStatus: str | None = None
+    paymentDeadline: str | None = None
+    canPay: bool = False
+    canCapture: bool = False
+    cannotPayReason: str | None = None
     pickupLocationSnapshot: CustomerLocation | None = None
     returnLocationSnapshot: CustomerLocation | None = None
     recordType: Literal["RESERVATION", "RENTAL"]
@@ -183,17 +192,24 @@ class CustomerAvailabilityItem(BaseModel):
 
 
 class CustomerAvailability(Status):
+    newReservationPaymentMethod: Literal["EXTERNAL", "PAYPAL"] = "EXTERNAL"
+    onlinePaymentEnabled: bool = False
     items: list[CustomerAvailabilityItem]
 
 
 class CustomerRequest(Status):
+    paymentMethod: Literal["EXTERNAL", "PAYPAL"]
+    onlinePaymentEnabled: bool
+    paymentDeadline: str | None = None
+    canPay: bool = False
+    canCapture: bool = False
     reservationId: str
     bookingId: str
     bookedNo: str
     reservationStatus: str
     vehicleAssignmentStatus: str
     paymentAvailability: str
-    paymentStatus: str
+    paymentStatus: str | None
     shopId: str
     spotMasterId: str
     modelId: str
@@ -218,6 +234,11 @@ class CustomerReservationDetail(Status):
 
 
 class CustomerPayment(Status):
+    paymentMethod: Literal["EXTERNAL", "PAYPAL"] = "PAYPAL"
+    onlinePaymentEnabled: bool = False
+    paymentStateSource: Literal["DATABASE"] = "DATABASE"
+    paymentUpdatedAt: str | None = None
+    providerStateChecked: bool = False
     paymentId: int
     reservationId: str | None = None
     bookingId: str | None = None

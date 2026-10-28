@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.db import require_columns, transaction
 from app.errors import Problem
+from app.reservation_payments import checkout_enabled
 from app.headers import bearer
 from app.responses import Admins, Applicants, CreatedSpot, Hierarchy, PrimaryResult, ShopProfile, ShopResult, Status, ShopPayPalMerchantResult
 from app.schemas import AdminId, RequestAction, Shop, ShopPayPalMerchant, SpotCreate
@@ -143,7 +144,9 @@ def update_paypal_merchant(body: ShopPayPalMerchant, request: Request, session: 
     session.execute(update(table).where(table.c.spot_master_id == target["spot_master_id"]).values(
         paypal_merchant_id=body.merchantId, paypal_environment=environment, updated_at=now()))
     return {"status": "success", "spotMasterId": target["spot_master_id"],
-            "merchantId": body.merchantId, "paymentEnvironment": environment}
+            "merchantId": body.merchantId, "paymentEnvironment": environment,
+            "onlinePaymentEnabled": checkout_enabled(request.app.state.settings),
+            "newReservationPaymentMethod": request.app.state.settings.reservation_payment_method}
 
 
 @router.get("/nadreego/shop/paypal-merchant", response_model=ShopPayPalMerchantResult, summary="지점 PayPal 판매자 설정 조회")
@@ -157,7 +160,9 @@ def get_paypal_merchant(request: Request, spotMasterId: str = Query(..., min_len
     if not row:
         raise Problem(404, "RENTAL_SPOT_NOT_CONFIGURED")
     return {"status": "success", "spotMasterId": target["spot_master_id"],
-            "merchantId": row["paypal_merchant_id"], "paymentEnvironment": row["paypal_environment"]}
+            "merchantId": row["paypal_merchant_id"], "paymentEnvironment": row["paypal_environment"],
+            "onlinePaymentEnabled": checkout_enabled(request.app.state.settings),
+            "newReservationPaymentMethod": request.app.state.settings.reservation_payment_method}
 
 
 @router.post("/nadreego/shop/update", response_model=ShopResult,

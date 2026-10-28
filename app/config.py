@@ -41,6 +41,9 @@ class Settings(BaseSettings):
     fcm_credential_type: str = "service_account"
     fcm_project_id: str = ""
     fcm_chat_enabled: bool = False
+    chat_push_audience: str = ""
+    chat_push_invoker_email: str = ""
+    chat_push_invoker_subject: str = ""
     fcm_private_key_id: str = ""
     fcm_private_key: SecretStr = SecretStr("")
     fcm_client_email: str = ""
@@ -50,6 +53,10 @@ class Settings(BaseSettings):
     fcm_auth_provider_x509_cert_url: str = "https://www.googleapis.com/oauth2/v1/certs"
     fcm_client_x509_cert_url: str = ""
     fcm_universe_domain: str = "googleapis.com"
+    # Snapshot the creation policy into each reservation's existing JSON.
+    reservation_payment_method: Literal["EXTERNAL", "PAYPAL"] = "EXTERNAL"
+    # Blocks checkout/onboarding commands, not existing settlement or refunds.
+    paypal_checkout_enabled: bool = False
     paypal_environment: Literal["SANDBOX", "LIVE"] = "SANDBOX"
     paypal_client_id: SecretStr = SecretStr("")
     paypal_client_secret: SecretStr = SecretStr("")

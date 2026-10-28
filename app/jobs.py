@@ -18,6 +18,7 @@ from app.fcm import (FcmSender, queue_payment_deadline_expired,
 from app.payment_policy import payment_deadline
 from app.errors import Problem
 from app.payment_attempts import confirmed_unpaid
+from app.reservation_payments import EXTERNAL, checkout_enabled, payment_method
 
 OPEN_CONTRACTS = ("ON_RENT", "OVERDUE")
 PAYMENT_REMINDERS = (2, 1)
@@ -84,6 +85,8 @@ def expire_unpaid_payments(db, settings, at=None, notifier=None, paypal=None):
                 ident = event["reservation_id"]
                 approval_at[ident] = min(approval_at.get(ident, event["created_at"]), event["created_at"])
         for reservation in rows:
+            if payment_method(reservation) == EXTERNAL:
+                continue
             reservation_id = reservation["reservation_id"]
             if reservation_id in linked_reservations:
                 continue
@@ -138,6 +141,8 @@ def expire_unpaid_payments(db, settings, at=None, notifier=None, paypal=None):
                                     "RESERVATION", reservation_id, "reservation:" + reservation_id + ":EXPIRED")
                 events.add("EXPIRED")
                 expired += 1
+                continue
+            if not checkout_enabled(settings):
                 continue
             for days_remaining in PAYMENT_REMINDERS:
                 event_name = "PAYMENT_DEADLINE_" + str(days_remaining) + "_DAY"
