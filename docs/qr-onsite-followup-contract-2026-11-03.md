@@ -1,6 +1,6 @@
 # QR 현장 신청·고객 인수 추가 요청 처리 계약
 
-2026-11-03 추가 인수서(`qr-onsite-backend-handoff (1).md`) 반영. **이 문서는 신규 코드의 계약이며 서버 적용 완료 기록이 아니다.** 마지막 서버 적용은 [기존 결과](qr-onsite-receipt-server-result-2026-11-03.md)의 인수 기능 false 상태다. 이번 코드의 앱 공동 전환·마이그레이션·배포는 별도다.
+2026-11-03 추가 인수서(`qr-onsite-backend-handoff (1).md`) 반영. **이 문서는 계약이며 실제 적용 증거는 별도 결과 문서를 따른다.** 사용자 양 앱 준비 확인 후 **07:35 UTC `254507d` 서버 전환을 완료**했다. 신규 테이블 적용·구 OFF env 제거·75개 경로/close 확인 및 시험 QR_ONLY 차량 2대 등록은 [최종 배포 결과](qr-onsite-final-server-deployment-result-2026-11-03.md)에 정리했다. [기존 결과](qr-onsite-receipt-server-result-2026-11-03.md)의 false는 이전 코드 적용 이력이며, 실제 앱 공동 시험은 계속 별도다.
 
 ## 1. 확정된 동작과 변경 범위
 

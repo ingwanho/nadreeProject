@@ -1,10 +1,10 @@
 # Nadree 전체 변경사항 및 인수 문서
 
-## 2026-11-03 추가 인수서 반영 — 로컬 구현·서버 미적용
+## 2026-11-03 추가 인수서 반영 — 07:35 UTC 실제 서버 전환 완료
 
-인수 ON/OFF와 즉시 대여 분기를 제거하고 receiptRequired=true를 유지한다. 사용자 승인으로 MSP_RENTAL_ONSITE_REQUEST 테이블 1개를 추가해 접수·확정 거절·처리 중·불명 상태를 구분하며 명시적 close로 늦은 생성을 차단한다. 관리자 홈·목록·currentBooking 식별자, 오류·상태별 Swagger 예시, NDR-와 영숫자 8자리 원문 규격을 반영했다. 격리 회귀 588 passed/15 skipped. DB 적용·서비스 전환·실기기 공동 시험은 별도다. [최신 계약](qr-onsite-followup-contract-2026-11-03.md), [서버 실행서](qr-onsite-final-server-apply-2026-11-03.md)를 우선한다. 아래 false 유지 결과는 이전 코드의 실제 적용 기록이다.
+인수 ON/OFF와 즉시 대여 분기를 제거하고 receiptRequired=true를 유지한다. 사용자 양 앱 준비 완료·즉시 배포 승인 후 구 API 드레인/종료 → 테스트 DB 새 전체 백업 → MSP_RENTAL_ONSITE_REQUEST 테이블 1개 적용 → 구 OFF env 항목만 제거 → 새 API 시작을 완료했다. 커밋 `254507d`·PID 3661271이며, 실제 헬스/준비/Swagger 정상·75개 경로/close·잔여 마이그레이션 0개·기존 예약 29건과 결제/QR 보존을 확인했다. 접수·확정 거절·처리 중·불명 상태와 명시적 close, 관리자 ID/기한/액션, NDR 원문을 제공한다. 동일 소스 격리 회귀 588 passed/15 skipped·실패 0이며 QR_ONLY 시험 차량 2대의 실제 등록·조회도 완료했다. 실기기·실제 고객 업무 공동 시험은 별도다. [최신 계약](qr-onsite-followup-contract-2026-11-03.md), [서버 실행서](qr-onsite-final-server-apply-2026-11-03.md), [실제 배포·검증 결과](qr-onsite-final-server-deployment-result-2026-11-03.md)를 우선한다. 아래 false 유지 결과는 이전 코드의 실제 적용 기록이다.
 
-프론트 전달용: [QR 현장 신청·고객 인수 연결과 테스트 순서](frontend-qr-onsite-receipt-handoff-2026-11-03.md). URL 뒤의 동일 QR 원문을 프론트가 추출해 qrCode로 전달하며, 현재 서버는 기능 비활성을 유지한다.
+프론트 전달용: [QR 현장 신청·고객 인수 연결과 테스트 순서](frontend-qr-onsite-receipt-handoff-2026-11-03.md). URL # 뒤의 동일 NDR 원문을 프론트가 추출해 qrCode로 전달한다. 현재 서버는 인수 상시 필수이며 추가 활성화 env 설정은 없다. 시험용 QR_ONLY 차량 2대는 실제 등록됐다.
 
 ## 2026-11-03 공용 QR 현장 신청·고객 인수 — 서버 적용 완료, 기능 비활성 유지
 
