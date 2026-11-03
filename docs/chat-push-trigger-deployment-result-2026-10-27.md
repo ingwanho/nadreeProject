@@ -2,6 +2,14 @@
 
 검증일: 2026-10-27 UTC. 기준 Git HEAD는 `3129beb5d0577c70e2ede52c2f033e83ad87d532`이며 이번 변경은 작업 트리의 미커밋 수정으로 적용했다. 배포 소스를 내려받아 현재 파일과 직접 대조했다. 사용자에게 승인받은 신규 함수 1개·서버 인증 설정 3개·API 재시작 1회·무발송 진단 이벤트 1개 범위로 수행했다.
 
+## 2026-10-28 08:17 UTC 후속 인증 검증
+
+사용자가 수동 검사 계정에 `iam.serviceAccounts.getOpenIdToken` 권한을 추가한 뒤 같은 실제 로그인 계정으로 반영을 확인했다. 배포 함수 `dispatchChatPushEvent`는 ACTIVE이고 실행 서비스 계정·고유 ID·콜백 주소와 실제 서버 env가 일치한다.
+
+Google IAM Credentials API에서 짧은 수명 OIDC 토큰을 발급받아 실제 `POST https://na-dree.com/internal/chat/push-events`를 호출했고 HTTP 200·`status=success`·`processing=missing`을 확인했다. 새 문서를 만들지 않고 존재하지 않는 이벤트 ID를 사용했으므로 missing은 의도한 정상 응답이다. 전후 해당 Firestore 문서 부재·SQL 알림 0개를 확인했고 푸시·Firestore/SQL 데이터 쓰기·IAM 변경·키 생성·함수 배포·API 재시작은 없다. 토큰·Authorization 헤더를 출력하거나 저장하지 않았다.
+
+이번 결과는 수동 서비스 인증과 실제 백엔드 경로의 확인이며, 새로운 Firestore 트리거 발생이나 실제 메시지/실기기 수신을 시험한 결과는 아니다. 10월 27일의 진단 이벤트 1개도 추가 생성하지 않았다. 검사 결과는 접근 제한된 `build/test-runtime/chat-callback-permission-verification-2026-10-28/result.json`에 보관한다. 수동 테스트용 추가 권한은 검증 후 회수 가능하며 에이전트가 회수하지는 않았다.
+
 ## 적용 완료
 
 | 항목 | 실제 결과 |

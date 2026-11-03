@@ -1,12 +1,12 @@
 # Nadree 전체 변경사항 및 인수 문서
 
-## 2026-11-03 공용 QR 현장 신청·고객 인수 — 로컬 구현, 서버 미적용
+## 2026-11-03 공용 QR 현장 신청·고객 인수 — 서버 적용 완료, 기능 비활성 유지
 
 고객 QR 조회·당일 견적/멱등 신청·접수 결과 조회·인수 확정, 관리자 보호 차량 회수와 Swagger 예시를 추가했다. 기존 QR 원문·대소문자를 그대로 사용한다. 관리자 인계는 HANDOVER_PENDING, 고객 확정 후에만 HANDED_OVER/ON_RENT다. 기한 초과 시 EXPIRED여도 배정·DISABLED 보호를 유지하고 직원 실물 회수 후 해제한다. 현장 신청은 EXTERNAL이다.
 
-예약 nullable 3컬럼·인덱스/CHECK 변경과 전용 receipts 만료 타이머를 준비했다. 전체 격리 회귀 **572 passed/14 skipped**. 기본 비활성이며 DB 적용·서버 재시작·타이머 설치·앱 공동 검증은 별도다. 기존 진행 계약은 재확인하지 않는다. [최신 API·적용/복구 안내](qr-onsite-receipt-handoff-2026-11-03.md)를 우선한다.
+2026-11-03 `e31008c` 기준으로 테스트 DB 76개 테이블 전체 백업 후 예약 nullable 3컬럼·인덱스 2개·상태 CHECK를 적용했다. ec2-user의 app.migrate 재계획은 잔여 0개이며 기존 예약 29건을 보존했다. **02:44:38 UTC API 재시작 완료**, 로컬/공개 live·ready·Swagger/OpenAPI 200·신규 경로 6개의 인증 차단을 확인했다. 전용 receipts 타이머를 설치했고 02:54 점검까지 자동 완료 9회·만료 0개였다. 기존 결제 cron·채팅 작업은 유지했다. 전체 격리 회귀 **572 passed/14 skipped**, 실패/오류 0개. `.env`와 실제 프로세스의 **NADREE_CUSTOMER_RECEIPT_ENABLED=false**를 유지한다. 앱 공동 검증·실기기 FCM/App Check·MySQL 동시성/Firestore 에뮬레이터는 별도다. 기존 진행 계약은 재확인하지 않는다. stash의 이전 서버 작업 기록과 새 QR 변경을 통합했고 stash는 삭제하지 않았다. [최신 API·적용/복구 안내](qr-onsite-receipt-handoff-2026-11-03.md)와 [실제 적용·미검증·남은 작업](qr-onsite-receipt-server-result-2026-11-03.md)을 우선한다.
 
-## 2026-10-28 신규 예약의 현장·외부 결제 전환 — 07:03 UTC 실제 서버 적용 완료
+## 2026-10-28 신규 예약의 현장·외부 결제 전환 — 07:50 UTC 최신 env 재검증 완료
 
 이번 사용자의 정책 변경은 신규 예약을 `paymentMethod=EXTERNAL`로 저장하고 관리자 승인으로 확정하는 방식이다. 현장 수납·외부 환불은 지점에서 별도로 관리하며 가짜 PAID/capture/0원 결제 기록은 만들지 않는다. 기존 가격·배송·재고·권한·QR·인계·반납·채팅을 유지한다. 기존 JSON을 사용하므로 추가 DB 마이그레이션·데이터 이전은 없다.
 
@@ -14,7 +14,7 @@
 
 고객 요청/목록/상세에 결제 방식·온라인 가능 여부를 추가하고 현장 예약의 `paymentStatus`/`payment`는 null을 허용한다. 관리자 목록·캘린더는 실제 인계 조건에 맞춰 `canHandOver`, `handoverBlockedReason`, `RENT_APPROVE`를 제공한다. 아래 과거 온라인 전용 결제 안내는 PAYPAL 예약과 온라인 기능 활성화 조건에서만 사용한다.
 
-최종 격리 회귀 **550 passed/12 skipped** 후 사용자 승인으로 **07:03 UTC API를 1회 재시작**했다. PID 2629968·active/running, 로컬/공개 live·ready·Swagger·OpenAPI 200, 새 nullable 결제 계약·실제 availability의 EXTERNAL/온라인 중단 응답을 확인했다. 기존 테스트 두 지점에 예약 가능 옵션도 확인했다. 실제 계정 로그인·예약 쓰기·PG 청구/환불·Firebase 배포·시험 푸시는 실행하지 않았으며 기존 환경 설정·채팅·정산 cron은 보존했다. 기존 계정으로 신규 예약부터 테스트할 수 있다. 인계는 예약 기간에만 가능하다. [앱 담당자용 변경 계약과 요청 예시](external-payment-app-handoff-2026-10-28.md), [구현·실제 적용·미검증·복구 범위](external-payment-implementation-result-2026-10-28.md)를 우선한다.
+최종 격리 회귀 **550 passed/12 skipped** 후 07:03 UTC 최초 적용했고, 사용자가 `.env`에 정책 2개를 명시한 뒤 요청한 07:22 UTC 반영 후, 최신 env 업데이트 요청으로 **07:50 UTC 재시작을 완료**했다. PID 2660137·active/running, 명시 env의 새 프로세스 전달·로컬/공개 live·ready·Swagger·OpenAPI 200·실제 availability의 EXTERNAL/온라인 중단 응답을 확인했다. 기존 채팅 인증 설정은 실제 배포 함수와 일치하며 동일 중복 3줄을 정리했다. 정상 서비스 토큰의 수동 콜백 검증은 07:50에는 조회 계정 권한이 없어 보류했으나, 사용자 권한 추가 후 08:17에 토큰 발급과 실제 콜백 HTTP 200/processing=missing을 확인했다. 새 이벤트·데이터 쓰기·푸시는 0개이며 이번 수동 인증 확인과 기존 트리거 종단 검증은 구분한다. 기존 테스트 두 지점에 예약 가능 옵션도 확인했다. 실제 계정 로그인·예약 쓰기·PG 청구/환불·Firebase 배포·시험 푸시는 실행하지 않았으며 기존 설정·채팅·정산 cron은 보존했다. 기존 계정으로 신규 예약부터 테스트할 수 있다. 인계는 예약 기간에만 가능하다. [앱 담당자용 변경 계약과 요청 예시](external-payment-app-handoff-2026-10-28.md), [구현·실제 적용·미검증·복구 범위](external-payment-implementation-result-2026-10-28.md)를 우선한다.
 
 ## 2026-10-22 02:48 UTC 최신 적용 — 자동 정산 복구 cron·8번 PAID 확인
 
