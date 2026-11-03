@@ -1,4 +1,5 @@
 import argparse
+import re
 from pathlib import Path
 
 from sqlalchemy import Column, VARCHAR, inspect, select, text
@@ -140,6 +141,45 @@ def migration_plan(db):
             operations.append(("constraint MSP_RENTAL_PAYMENT.refund_status",
                 "ALTER TABLE MSP_RENTAL_PAYMENT ADD CONSTRAINT ck_refund_status CHECK "
                 "(refund_status IN ('NONE','NOT_REQUIRED','REQUESTED','PENDING','COMPLETED','FAILED'))", {}))
+    if "MSP_RESERVATION" in tables:
+        name = "MSP_RESERVATION"
+        columns = {row["name"] for row in inspector.get_columns(name)}
+        for column, definition in (("client_request_id", "VARCHAR(64) DEFAULT NULL"),
+                                   ("handed_over_at", "DATETIME DEFAULT NULL"),
+                                   ("receipt_deadline_at", "DATETIME DEFAULT NULL")):
+            if column not in columns:
+                operations.append(("add " + name + "." + column,
+                    "ALTER TABLE " + name + " ADD COLUMN " + column + " " + definition, {}))
+        indexes = inspector.get_indexes(name)
+        unique = {tuple(item["column_names"]) for item in inspector.get_unique_constraints(name)}
+        unique.update(tuple(item["column_names"]) for item in indexes if item["unique"])
+        if ("uid_token", "client_request_id") not in unique:
+            if "uid_token" not in columns:
+                raise ValueError("MSP_RESERVATION.uid_token missing; receipt migration requires owner mapping")
+            if any(item["name"] == "uq_reservation_client_request" for item in indexes):
+                raise ValueError("uq_reservation_client_request has an incompatible definition")
+            operations.append(("unique MSP_RESERVATION.client_request_id",
+                "CREATE UNIQUE INDEX uq_reservation_client_request ON MSP_RESERVATION (uid_token, client_request_id)", {}))
+        if not any(tuple(item["column_names"]) == ("reservation_status", "receipt_deadline_at") for item in indexes):
+            if any(item["name"] == "idx_reservation_receipt_deadline" for item in indexes):
+                raise ValueError("idx_reservation_receipt_deadline has an incompatible definition")
+            operations.append(("index MSP_RESERVATION.receipt_deadline_at",
+                "CREATE INDEX idx_reservation_receipt_deadline ON MSP_RESERVATION (reservation_status, receipt_deadline_at)", {}))
+        checks = [item for item in inspector.get_check_constraints(name)
+                  if re.search(r"\breservation_status\b", item.get("sqltext", ""), re.I)]
+        for check in checks:
+            if "HANDOVER_PENDING" in check["sqltext"]:
+                continue
+            constraint = check.get("name") or ""
+            if not re.fullmatch(r"[A-Za-z0-9_]+", constraint) or not re.search(r"['\"]APPROVED['\"]", check["sqltext"]):
+                raise ValueError("Reservation status constraint requires manual review")
+            expanded = re.sub(r"(['\"])APPROVED\1", "'APPROVED','HANDOVER_PENDING'", check["sqltext"])
+            operations.append(("expand MSP_RESERVATION.reservation_status",
+                f"ALTER TABLE MSP_RESERVATION DROP CHECK `{constraint}`, ADD CONSTRAINT `{constraint}` CHECK ({expanded})", {}))
+        if not checks:
+            operations.append(("constraint MSP_RESERVATION.reservation_status",
+                "ALTER TABLE MSP_RESERVATION ADD CONSTRAINT ck_reservation_status CHECK (reservation_status IN "
+                "('REQUESTED','APPROVED','HANDOVER_PENDING','HANDED_OVER','RETURNED','REJECTED','CANCELED','EXPIRED'))", {}))
     if "MSP_RESERVATION_HISTORY" in tables:
         columns = {row["name"] for row in inspector.get_columns("MSP_RESERVATION_HISTORY")}
         if "details" not in columns:

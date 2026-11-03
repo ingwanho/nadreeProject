@@ -12,7 +12,7 @@ Plate = Annotated[str, Field(min_length=1, max_length=25, pattern=r"\S")]
 Spot = Annotated[str, Field(min_length=1, max_length=60)]
 ModelId = Annotated[str, Field(min_length=1, max_length=50)]
 VehicleState = Literal["AVAILABLE", "ON_RENT", "MAINTENANCE", "DISABLED"]
-ReservationState = Literal["REQUESTED", "APPROVED", "HANDED_OVER", "RETURNED", "REJECTED", "CANCELED", "EXPIRED"]
+ReservationState = Literal["REQUESTED", "APPROVED", "HANDOVER_PENDING", "HANDED_OVER", "RETURNED", "REJECTED", "CANCELED", "EXPIRED"]
 RentalState = Literal["ON_RENT", "OVERDUE", "RETURNED", "CANCELED"]
 Reason = Annotated[str, Field(max_length=200)]
 Uid = Annotated[str, Field(min_length=1, max_length=36, pattern=r"^\S+$")]
@@ -219,6 +219,7 @@ class NadriPaymentCapture(Body):
 
 
 class RentApprove(Qr):
+    receiptRequired: Literal[True] | None = None
     bookedNo: Annotated[str, Field(min_length=3, max_length=52, pattern=r"^BO.+$")] | None = None
     uidToken: Identifier | None = None
     plannedEndDate: Date | None = None
@@ -231,6 +232,11 @@ class RentApprove(Qr):
         elif self.uidToken is None or self.plannedEndDate is None:
             raise ValueError("walk-in requires uid token and end date")
         return self
+
+
+class ReceiptRecovery(Qr):
+    vehicleReturned: Literal[True]
+    reason: Annotated[str, Field(min_length=1, max_length=200, pattern=r"\S")]
 
 
 class PassportUpload(Body):

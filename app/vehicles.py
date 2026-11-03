@@ -13,6 +13,7 @@ from app.rental_common import (action_result, by_number, context, contracts_for,
     expire_maintenance, fleet, is_open, local_date, lock_key, page_result, qr_digest, resolve_spot, rows, verify_qr)
 from app.rental_inputs import Detach, Move, Page, Qr, Repair, VehicleCreate, VehicleNumber
 from app.responses import Status
+from app.receipt import HOLD_PREFIX, require_no_hold
 from app.security import now
 
 router = APIRouter(tags=["W03 Vehicles and QR"], dependencies=[bearer])
@@ -27,6 +28,8 @@ def qr_history(request, session, qr, actor, event, reason=None):
 
 
 def available_actions(request, item, contracts):
+    if ((item.get("state") or {}).get("status_reason") or "").startswith(HOLD_PREFIX):
+        return []
     ident = item["vehicle"]["vehicle_id"]
     if any(c["vehicle_id"] == ident and is_open(c) for c in contracts):
         return ["PRICE_CHANGE"] + (["LOCATION"] if len(item["sensors"]) == 1 else [])
@@ -133,16 +136,22 @@ def validate_qr(body: Qr, request: Request, session: Session = DB):
         raise Problem(409, "SENSOR_STATE_INCONSISTENT")
     sensor = item["sensors"][0] if item["sensors"] else None
     contracts = contracts_for(request, session, [qr["vehicle_id"]])
+    from app.readmodels import fleet_details
+    detail = fleet_details(request, session, root, {qr["vehicle_id"]: item})[0]
+    actions = available_actions(request, item, contracts)
+    if "RECOVER_VEHICLE" in (detail["currentBooking"] or {}).get("availableActions", []):
+        actions = ["RECOVER_VEHICLE"]
     return dict(status=True, errorCode=None, data=dict(vehicleId=qr["vehicle_id"], qrId=qr["qr_id"], qrStatus="ACTIVE",
         equipmentType="QR_WITH_SENSOR" if sensor else "QR_ONLY", sensorId=sensor["sensor_id"] if sensor else None,
         sensorStatus="LINKED" if sensor else "NOT_LINKED", vehicle=vehicle_view(request, item, contracts),
-        availableActions=available_actions(request, item, contracts)))
+        currentBooking=detail["currentBooking"], currentRental=detail["currentRental"], availableActions=actions))
 
 
 @router.post("/nadreego/sensor/delete", response_model=Status)
 def detach(body: Detach, request: Request, session: Session = DB):
     actor, root = context(request, session, write=True)
     item = by_number(fleet(request, session, root, lock=True), body.vehicleNumber)
+    require_no_hold(item)
     ident = item["vehicle"]["vehicle_id"]
     if any(is_open(c) for c in contracts_for(request, session, [ident])):
         raise Problem(409, "VEHICLE_ALREADY_ON_RENT")
@@ -179,6 +188,7 @@ def repair(body: Repair, request: Request, session: Session = DB):
     actor, root = context(request, session, write=True)
     vehicles = fleet(request, session, root, lock=True)
     item = by_number(vehicles, body.vehicleNumber)
+    require_no_hold(item)
     ident = item["vehicle"]["vehicle_id"]
     vehicles = {k: v for k, v in vehicles.items() if v["rental"]["model_id"] == item["rental"]["model_id"]}
     contracts = contracts_for(request, session, list(vehicles))
@@ -203,6 +213,7 @@ def move(body: Move, request: Request, session: Session = DB):
     actor, root = context(request, session, write=True)
     target = resolve_spot(request, session, root, body.spotCode, lock=True)
     item = by_number(fleet(request, session, root, lock=True), body.vehicleNumber)
+    require_no_hold(item)
     ident = item["vehicle"]["vehicle_id"]
     if target["spot_master_id"] == root["spot_master_id"]:
         return dict(status="success", spotMasterId=root["spot_master_id"])

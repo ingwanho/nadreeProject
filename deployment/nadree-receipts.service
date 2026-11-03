@@ -1,0 +1,10 @@
+[Unit]
+Description=Expire onsite requests and customer receipt deadlines
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=ec2-user
+WorkingDirectory=/srv/nadree-api
+ExecStart=/srv/nadree-api/.venv/bin/python -m app.jobs receipts
+NoNewPrivileges=true

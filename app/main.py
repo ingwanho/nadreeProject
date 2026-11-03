@@ -26,6 +26,7 @@ from app.paypal import PayPalClient, router as paypal_router
 from app.paypal_onboarding import router as paypal_onboarding_router
 from app.passport import PassportStorage
 from app.customer_rentals import router as customer_rentals_router, user_router as customer_users_router
+from app.customer_qr import router as customer_qr_router
 from app.pricing import router as pricing_router
 from app.readmodels import router as readmodels_router
 from app.rentals import router as rentals_router
@@ -153,6 +154,9 @@ def create_app(settings=None, db=None, limiter=None, mailer=None, fcm=None, loca
         with engine.connect() as connection:
             connection.execute(text("SELECT 1"))
             limitations = check_schema(application.state.db, connection)
+        if settings.customer_receipt_enabled:
+            from app.receipt import require_schema
+            require_schema(application.state.db)
         if not getattr(application.state.fcm, "configured", True):
             limitations.append("FCM_NOT_CONFIGURED")
         if settings.env == "production" and not application.state.customer_auth.configured:
@@ -177,6 +181,7 @@ def create_app(settings=None, db=None, limiter=None, mailer=None, fcm=None, loca
     application.include_router(paypal_router)
     application.include_router(paypal_onboarding_router)
     application.include_router(customer_rentals_router)
+    application.include_router(customer_qr_router)
     application.include_router(customer_users_router)
 
     def custom_openapi():

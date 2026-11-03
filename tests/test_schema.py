@@ -17,6 +17,46 @@ def test_schema_reports_known_unmapped_features(setup):
     assert limitations == ["MFA_FLOW_NOT_IMPLEMENTED"]
 
 
+def test_receipt_migration_plans_three_nullable_columns_and_preserves_old_statuses(setup):
+    with setup["engine"].begin() as conn:
+        conn.execute(text("""CREATE TABLE MSP_RESERVATION (
+            reservation_id VARCHAR(50) PRIMARY KEY, uid_token VARCHAR(36) NOT NULL,
+            spot_master_id VARCHAR(36), model_id VARCHAR(50), start_datetime DATETIME,
+            reservation_status VARCHAR(20) NOT NULL,
+            CONSTRAINT old_reservation_status CHECK (reservation_status IN ('REQUESTED','APPROVED','HANDED_OVER','EXPIRED'))
+        )"""))
+    plan = migration_plan(setup["db"])
+    sql = {label: statement for label, statement, _ in plan}
+    for column in ("client_request_id", "handed_over_at", "receipt_deadline_at"):
+        assert "DEFAULT NULL" in sql["add MSP_RESERVATION." + column]
+    assert "(uid_token, client_request_id)" in sql["unique MSP_RESERVATION.client_request_id"]
+    expanded = sql["expand MSP_RESERVATION.reservation_status"]
+    assert "DROP CHECK `old_reservation_status`" in expanded
+    assert "'APPROVED','HANDOVER_PENDING'" in expanded and "'HANDED_OVER'" in expanded
+    assert "handed_over_at" not in {c["name"] for c in inspect(setup["engine"]).get_columns("MSP_RESERVATION")}
+
+
+def test_receipt_schema_has_no_new_payment_or_qr_tables():
+    from sqlalchemy.schema import CreateTable
+    from app.rental_schema import metadata
+    ddl = str(CreateTable(metadata.tables["MSP_RESERVATION"]).compile(dialect=mysql.dialect()))
+    assert "HANDOVER_PENDING" in ddl and "UNIQUE (uid_token, client_request_id)" in ddl
+    assert "client_request_id VARCHAR(64)" in ddl
+    assert "customer_qr" not in metadata.tables["MSP_VEHICLE_QR"].c
+
+
+@pytest.mark.parametrize("index_name", ["uq_reservation_client_request", "idx_reservation_receipt_deadline"])
+def test_receipt_migration_rejects_conflicting_index_name(setup, index_name):
+    with setup["engine"].begin() as conn:
+        conn.execute(text("""CREATE TABLE MSP_RESERVATION (
+            reservation_id VARCHAR(50) PRIMARY KEY, uid_token VARCHAR(36), client_request_id VARCHAR(64),
+            spot_master_id VARCHAR(36), model_id VARCHAR(50), start_datetime DATETIME, reservation_status VARCHAR(20)
+        )"""))
+        conn.execute(text("CREATE INDEX " + index_name + " ON MSP_RESERVATION (reservation_id)"))
+    with pytest.raises(ValueError, match="incompatible definition"):
+        migration_plan(setup["db"])
+
+
 def test_schema_requires_active_rental_roles(setup):
     table = setup["db"].table("MSP_ROLE")
     with setup["engine"].begin() as conn:
@@ -79,6 +119,7 @@ def test_migration_plan_adds_rental_performance_indexes_once(setup):
         conn.execute(text("""
             CREATE TABLE MSP_RESERVATION (
                 reservation_id VARCHAR(50) PRIMARY KEY,
+                uid_token VARCHAR(36),
                 spot_master_id VARCHAR(36) NOT NULL,
                 model_id VARCHAR(50) NOT NULL,
                 reservation_status VARCHAR(20) NOT NULL,

@@ -274,6 +274,11 @@ OPENAPI_EXAMPLES = {
     "Detach": {"vehicleNumber": "DK-TEST-301", "division": "QR"},
     "PriceChange": {"vehicleNumber": "DK-TEST-301", "priceType": "BASIC", "priceInfo": None},
     "Qr": {"qrCode": "testQr123123"},
+    "Lookup": {"qrCode": "testQr123123", "reservationId": "NRTEST-RES-APP-001"},
+    "Quote": {"qrCode": "testQr123123", "returnDate": "2026-11-05"},
+    "OnsiteRequest": {"qrCode": "testQr123123", "returnDate": "2026-11-05",
+        "clientRequestId": "11111111-2222-4333-8444-555555555555", "quoteToken": "<quoteToken-from-onsite-quote>"},
+    "ReceiptRecovery": {"qrCode": "testQr123123", "vehicleReturned": True, "reason": "차량과 열쇠 실물 회수 확인"},
     "Repair": {"vehicleNumber": "DK-TEST-302", "date": "2026-10-03", "reason": "정기 점검"},
     "Move": {"vehicleNumber": "DK-TEST-301", "spotCode": TEST_SPOT["spotCode"]},
     "BookingAction": {"bookedNo": "BONRTEST-RES-REQ-001", "action": "APPROVE"},
@@ -282,7 +287,7 @@ OPENAPI_EXAMPLES = {
         "correctedLocation": {**TEST_SPOT["location"], "latitude": -8.65001},
         "reason": "같은 매장 출입구의 핀 위치 보정"},
     "ReservationCancel": {"reservationId": "NRTEST-RES-REQ-001", "reason": "테스트 취소"},
-    "RentApprove": {"qrCode": "<server-issued-qr-code>", "bookedNo": "BONRTEST-RES-APP-001"},
+    "RentApprove": {"qrCode": "testQr123123", "bookedNo": "BONRTEST-RES-APP-001", "receiptRequired": True},
     "PassportUpload": {
         "bookedNo": "BONRTEST-RES-HAND-001",
         "contentType": "image/jpeg",
@@ -335,6 +340,22 @@ OPENAPI_EXAMPLES = {
     "CustomerPrice": TEST_WEB_PRICE,
     "CustomerDelivery": TEST_WEB_DELIVERY,
     "CustomerRecord": TEST_RECORD,
+    "ReceiptInfo": {"requestType": "ONSITE", "customerReceiptRequired": True,
+        "requestDeadline": "2026-11-04T00:00:00+08:00", "handedOverAt": "2026-11-03T15:00:00+08:00",
+        "receiptDeadline": "2026-11-04T00:00:00+08:00", "receivedAt": None,
+        "canReceive": True, "receiptBlockedReason": None, "vehicleRecoveryRequired": False},
+    "CustomerQrLookup": {"status": "success", "vehicleId": "NRTEST-VEHICLE-001", "vehicleNo": "DK-TEST-301",
+        "vehicleStatus": "DISABLED", "model": TEST_MODEL_155, "spot": TEST_SPOT,
+        "reservationId": "NRTEST-RES-APP-001", "reservationStatus": "HANDOVER_PENDING", "vehicleMatch": "ASSIGNED",
+        "requestType": "ADVANCE", "customerReceiptRequired": True,
+        "handedOverAt": "2026-11-03T15:00:00+08:00", "receiptDeadline": "2026-11-04T00:00:00+08:00",
+        "receivedAt": None, "canReceive": True, "receiptBlockedReason": None, "vehicleRecoveryRequired": False,
+        "availableActions": ["CONFIRM_RECEIPT"]},
+    "CustomerOnsiteQuote": {"status": "success", "vehicleId": "NRTEST-VEHICLE-001", "spot": TEST_SPOT,
+        "startDate": "2026-11-03", "returnDate": "2026-11-05", "price": dict(TEST_PRICE,
+            rentalDays=2, rentalFrom=50, rentalTo=50, totalOptions=[50], totalFrom=50, totalTo=50,
+            requestedTotal=50, calculatedTotalFrom=50, calculatedTotalTo=50, finalTotal=50),
+        "quoteExpiresAt": "2026-11-03T07:10:00+00:00", "quoteToken": "<signed-quote-token>"},
     "CustomerUser": {
         "uidToken": "NRTEST-USER-001",
         "name": "Nadree Test Customer",
@@ -522,6 +543,7 @@ OPENAPI_RESPONSE_EXAMPLES = {
         "data": {"vehicleId": "NRTEST-VEHICLE-301", "qrId": "<qr-id>", "qrStatus": "ACTIVE",
                  "equipmentType": "QR_ONLY", "sensorId": None, "sensorStatus": "NOT_LINKED",
                  "vehicle": {"vehicleId": "NRTEST-VEHICLE-301", "vehicleNo": "DK-TEST-301", "vehicleStatus": "AVAILABLE"},
+                 "currentBooking": None, "currentRental": None,
                  "availableActions": ["PRICE_CHANGE", "SPOT_CHANGE", "REPAIR", "QR_DELETE"]},
     },
     ("POST", "/nadreego/vehicle/location"): {
@@ -579,11 +601,11 @@ OPENAPI_RESPONSE_EXAMPLES = {
         "data": {"bookedNo": "BONRTEST-RES-REQ-001", "reservationStatus": "APPROVED", "vehicleAssignmentStatus": "PROVISIONAL"},
     },
     ("POST", "/nadreego/rent/approve"): {
-        "status": True, "errorCode": None, "message": "success", "currentState": "ON_RENT",
-        "changedAt": "2026-10-01T08:00:00+08:00", "changedBy": "00000000-0000-4000-8000-000000000201",
-        "data": {"bookedNo": "BONRTEST-RES-APP-001", "rentalContractId": "<rental-contract-uuid>",
-                 "contractStatus": "ON_RENT", "vehicleStatus": "ON_RENT", "plannedEndDate": "2026-10-13",
-                 "reservationStatus": "HANDED_OVER", "vehicleAssignmentStatus": "LOCKED"},
+        "status": True, "errorCode": None, "message": "success", "currentState": "HANDOVER_PENDING",
+        "changedAt": "2026-11-03T15:00:00+08:00", "changedBy": "00000000-0000-4000-8000-000000000201",
+        "data": {"bookedNo": "BONRTEST-RES-APP-001", "reservationId": "NRTEST-RES-APP-001",
+                 "reservationStatus": "HANDOVER_PENDING", "vehicleAssignmentStatus": "LOCKED",
+                 **OPENAPI_EXAMPLES["ReceiptInfo"], "requestType": "ADVANCE", "requestDeadline": None},
     },
     ("PUT", "/nadreego/rent/passport"): {
         "status": "success", "bookedNo": "BONRTEST-RES-HAND-001", "available": True,
@@ -615,10 +637,30 @@ OPENAPI_RESPONSE_EXAMPLES = {
         "status": "success", "group": {"spotMasterId": TEST_SPOT["spotMasterId"],
         "spotCode": TEST_SPOT["spotCode"], "name": TEST_SPOT["spotName"]},
         "name": "Nadree 테스트 대표관리자", "totalVehicles": 7, "totalReservations": 2,
-        "pending": 1, "chat": 0, "todayWork": [],
+        "pending": 1, "awaitingReceipt": 1, "chat": 0, "todayWork": [],
     },
     ("POST", "/nadreego/paypal/webhook"): {"status": True},
 }
+
+_ONSITE_RECORD = dict({**TEST_RECORD, **OPENAPI_EXAMPLES["ReceiptInfo"]}, startDate="2026-11-03", returnDate="2026-11-05",
+    price=OPENAPI_EXAMPLES["CustomerOnsiteQuote"]["price"], reservationStatus="REQUESTED",
+    vehicleAssignmentStatus="SOFT_HOLD", handedOverAt=None, receiptDeadline=None, receivedAt=None,
+    canReceive=False, receiptBlockedReason="NOT_AWAITING_RECEIPT")
+OPENAPI_RESPONSE_EXAMPLES.update({
+    ("POST", "/api/v1/nadree/rental/qr/lookup"): OPENAPI_EXAMPLES["CustomerQrLookup"],
+    ("POST", "/api/v1/nadree/rental/onsite/quote"): OPENAPI_EXAMPLES["CustomerOnsiteQuote"],
+    ("POST", "/api/v1/nadree/rental/onsite/requests"): {"status": "success", "item": _ONSITE_RECORD},
+    ("GET", "/api/v1/nadree/rental/onsite/requests/{client_request_id}"): {"status": "success", "item": _ONSITE_RECORD},
+    ("POST", "/api/v1/nadree/rental/reservations/{reservation_id}/receive"): {"status": "success", "item": dict(
+        _ONSITE_RECORD, recordType="RENTAL", reservationStatus="HANDED_OVER", rentalStatus="ON_RENT",
+        rentalContractId="NRTEST-CONTRACT-RECEIVED", vehicleAssignmentStatus="LOCKED",
+        handedOverAt="2026-11-03T15:00:00+08:00", receiptDeadline="2026-11-04T00:00:00+08:00",
+        receivedAt="2026-11-03T15:05:00+08:00", actualStartTime="2026-11-03T15:05:00+08:00")},
+    ("POST", "/nadreego/booking/{booked_no}/receipt-recovery"): {
+        "status": True, "errorCode": None, "message": "success", "currentState": "CANCELED",
+        "changedAt": "2026-11-04T09:00:00+08:00", "changedBy": "00000000-0000-4000-8000-000000000201",
+        "data": {"bookedNo": "BONRTEST-RES-APP-001", "reservationStatus": "CANCELED", "vehicleStatus": "AVAILABLE"}},
+})
 
 OPENAPI_REQUEST_EXAMPLES = {
     ("POST", "/nadreego/paypal/webhook"): {

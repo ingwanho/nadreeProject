@@ -16,6 +16,7 @@ from app.errors import Problem
 from app.fcm import queue_reservation_request
 from app.headers import fcm_header, refresh_header
 from app.paypal import execute_refund, identifier
+from app.receipt import is_onsite, view as receipt_view
 from app.reservation_payments import (EXTERNAL, PAYPAL, checkout_enabled, payment_flags,
                                      payment_method, require_checkout)
 from app.merchant_accounts import payment_client, spot_merchant
@@ -421,6 +422,7 @@ def _record_view(request, reservation, contract, payment, spot, model, *, sessio
         "finalTotal": _number(quote.get("finalTotal", price_total)),
     }
     return {"recordType": "RENTAL" if contract else "RESERVATION",
+            **receipt_view(request, reservation, contract),
             "reservationId": (reservation or {}).get("reservation_id"),
             # bookingId is the customer-app alias for the server reservation ID.
             # Walk-in rentals have no booking ID and use bookedNo/rentalContractId.
@@ -467,7 +469,7 @@ def _customer_records(request, session, uid, *, completed=False, page=1, size=20
         reservations = [r for r in reservations if r["reservation_id"] in linked_ids or
                         r["reservation_status"] in ("CANCELED", "REJECTED", "EXPIRED", "RETURNED")]
     else:
-        reservations = [r for r in reservations if r["reservation_status"] in ("REQUESTED", "APPROVED", "HANDED_OVER")]
+        reservations = [r for r in reservations if r["reservation_status"] in ("REQUESTED", "APPROVED", "HANDOVER_PENDING", "HANDED_OVER")]
         contracts = [c for c in contracts if c["contract_status"] in ("ON_RENT", "OVERDUE") and c["actual_end_time"] is None]
     reservation_by_id = {r["reservation_id"]: r for r in reservations}
     vehicle_ids = {c["vehicle_id"] for c in contracts}
@@ -738,6 +740,7 @@ def nadree_request(body: NadriRentalRequest, request: Request, session: Session 
     quote["calculatedTotalFrom"] = quote["totalFrom"]
     quote["calculatedTotalTo"] = quote["totalTo"]
     criteria = {"source": "nadri.rental.availability", "availabilityRequest": availability_request,
+                "customerReceiptRequired": request.app.state.settings.customer_receipt_enabled,
                 "paymentMethod": request.app.state.settings.reservation_payment_method,
                 "pickupLocationSnapshot": item["spot"]["location"], "returnLocationSnapshot": item["spot"]["location"],
                 "selected": {"spotMasterId": body.spotMasterId, "modelId": body.modelId,
@@ -1181,6 +1184,8 @@ def cancel_request(body: ReservationCancel, request: Request, background_tasks: 
         raise Problem(404, "RESERVATION_NOT_FOUND")
     if reservation["reservation_status"] not in ("REQUESTED", "APPROVED"):
         raise Problem(409, "RESERVATION_STATE_INVALID")
+    if is_onsite(reservation) and reservation.get("hold_expires_at") and now() >= reservation["hold_expires_at"]:
+        raise Problem(409, "ONSITE_REQUEST_EXPIRED")
     rental_day = local_date(request, now()) >= local_date(request, reservation["start_datetime"])
     contract_table = db.table("MSP_RENTAL_CONTRACT")
     if session.execute(select(contract_table.c.rental_contract_id).where(

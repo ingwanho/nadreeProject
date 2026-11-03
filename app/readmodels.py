@@ -14,6 +14,7 @@ from app.rental_common import (OPEN, MOVABLE, context, contracts_for, day_end, e
 from app.rental_inputs import Calendar, Operations
 from app.rentals import booking_handover_status
 from app.reservation_payments import payment_flags
+from app.receipt import PENDING, HOLD_PREFIX, is_onsite, view as receipt_view
 from app.security import now
 from app.vehicles import available_actions, vehicle_view
 
@@ -50,10 +51,16 @@ def record_actions(request, reservation, contract, sensor=False, *, can_hand_ove
         if is_open(contract):
             return ["RETURN"] + (["LOCATION"] if sensor else [])
         return []
+    if (is_onsite(reservation) and reservation["reservation_status"] in ("REQUESTED", "APPROVED")
+            and reservation.get("hold_expires_at") and now() >= reservation["hold_expires_at"]):
+        return []
     if reservation["reservation_status"] == "REQUESTED":
         return ["APPROVE", "REJECT"]
     if reservation["reservation_status"] == "APPROVED":
         return (["RENT_APPROVE"] if can_hand_over else []) + ["CANCEL"]
+    if reservation["reservation_status"] == PENDING or (
+            reservation["reservation_status"] == "EXPIRED" and reservation.get("handed_over_at")):
+        return ["RECOVER_VEHICLE"]
     return []
 
 
@@ -63,7 +70,7 @@ def fleet_details(request, session, root, vehicles):
     contracts = rows(session, t, t.c.vehicle_id.in_(vehicles), t.c.contract_status.in_(OPEN), t.c.actual_end_time.is_(None)) if vehicles else []
     r = db.table("MSP_RESERVATION")
     reservations = rows(session, r, r.c.spot_master_id == root["spot_master_id"], r.c.assigned_vehicle_id.in_(vehicles),
-        r.c.reservation_status.in_(["REQUESTED", "APPROVED", "HANDED_OVER"])) if vehicles else []
+        r.c.reservation_status.in_(["REQUESTED", "APPROVED", PENDING, "HANDED_OVER", "EXPIRED"])) if vehicles else []
     tiers = load_tiers(request, session, root["spot_master_id"])
     items, handover_cache = [], {}
     for ident, item in vehicles.items():
@@ -71,15 +78,20 @@ def fleet_details(request, session, root, vehicles):
         active.sort(key=lambda c: c["rental_contract_id"])
         contract = active[0] if len(active) == 1 else None
         bookings = [b for b in reservations if b["assigned_vehicle_id"] == ident and
-                    (b["reservation_status"] == "HANDED_OVER" or reservation_end(request, b) > now())]
+                    (b["reservation_status"] != "EXPIRED" and (b["reservation_status"] == "HANDED_OVER" or reservation_end(request, b) > now())
+                     or b.get("handed_over_at") and (item["state"].get("status_reason") or "") == HOLD_PREFIX + b["reservation_id"])]
         bookings.sort(key=lambda b: (b["reservation_id"] != (contract or {}).get("reservation_id"), b["reservation_status"] == "REQUESTED", b["start_datetime"]))
         booking = bookings[0] if bookings else None
         state = effective_state(request, item, contracts)
         current_booking = None if not booking else dict(bookedNo="BO" + booking["reservation_id"],
+            **receipt_view(request, booking, contract),
             **payment_flags(request.app.state.settings, booking),
             **booking_handover_status(request, session, root, booking, cache=handover_cache),
             reservationStatus=booking["reservation_status"], assignmentStatus=booking["vehicle_assignment_status"],
             startDatetime=iso(request, booking["start_datetime"]), endDatetime=iso(request, booking["end_datetime"]))
+        if current_booking:
+            current_booking["availableActions"] = record_actions(request, booking, contract,
+                can_hand_over=current_booking["canHandOver"])
         current_rental = rental_view(request, contract)
         if current_rental:
             current_rental["bookedNo"] = "BO" + contract["reservation_id"] if contract["reservation_id"] else "RT" + contract["rental_contract_id"]
@@ -242,6 +254,7 @@ def operation_details(request, session, root, records):
                 startDeliveryFee=r["start_delivery_fee_snapshot"], returnDeliveryFee=r["return_delivery_fee_snapshot"],
                 deliveryTotalFee=r["delivery_total_fee_snapshot"])
         result.append(dict(bookedNo=rec["booked_no"], recordType=rec["record_type"], reservationStatus=rec["reservation_status"],
+            **receipt_view(request, r, c),
             **payment_flags(request.app.state.settings, r), **handover,
             rentalStatus=rec["contract_status"], user=dict(userId=user["uid_token"], name=user["name"], phone=None,
             gender=user["gender"], age=user["age"], nationality=user["nationality"]) if user else {}, reservation=reservation, rental=rental_view(request, c),
@@ -318,9 +331,12 @@ def calendar(body: Calendar, request: Request, session: Session = DB):
                          or_(ct.c.actual_end_time.is_(None), ct.c.actual_end_time >= begin),
                          or_(ct.c.actual_start_time.is_(None), ct.c.actual_start_time < end)) if vehicles else []
     rt = db.table("MSP_RESERVATION")
-    conditions = [rt.c.spot_master_id == spot["spot_master_id"], rt.c.start_datetime < end,
-                  rt.c.end_datetime >= begin,
-                  rt.c.reservation_status.in_(["REQUESTED", "APPROVED", "HANDED_OVER", "RETURNED"])]
+    protected_ids = {ident for ident, item in vehicles.items()
+                     if ((item["state"] or {}).get("status_reason") or "").startswith(HOLD_PREFIX)}
+    conditions = [rt.c.spot_master_id == spot["spot_master_id"],
+                  or_((rt.c.start_datetime < end) & (rt.c.end_datetime >= begin),
+                      rt.c.assigned_vehicle_id.in_(protected_ids) & rt.c.reservation_status.in_((PENDING, "EXPIRED"))),
+                  rt.c.reservation_status.in_(["REQUESTED", "APPROVED", PENDING, "HANDED_OVER", "RETURNED", "EXPIRED"])]
     if body.modelId:
         conditions.append(rt.c.model_id == body.modelId)
     elif not body.vehicleStatus:
@@ -344,6 +360,14 @@ def calendar(body: Calendar, request: Request, session: Session = DB):
 
     for r in reservations:
         key, ident = "BO" + r["reservation_id"], r["assigned_vehicle_id"]
+        held = ident in vehicles and ((vehicles[ident]["state"] or {}).get("status_reason") or "") == HOLD_PREFIX + r["reservation_id"]
+        if held:
+            add_event(ident, key, "RESERVATION", r["reservation_id"], None, r["handed_over_at"], None,
+                "OPEN", r["reservation_status"], "LOCKED", True, False,
+                record_actions(request, r, None) if spot["spot_master_id"] == root["spot_master_id"] else [],
+                r["updated_at"], opened=True, payment_info={**payment_flags(request.app.state.settings, r),
+                    **receipt_view(request, r), "canHandOver": False, "handoverBlockedReason": "VEHICLE_RECEIPT_HOLD"})
+            continue
         c = by_reservation.get(r["reservation_id"])
         if c:
             expected = "RETURNED" if c["contract_status"] == "RETURNED" else "HANDED_OVER"
@@ -364,9 +388,9 @@ def calendar(body: Calendar, request: Request, session: Session = DB):
                 "canHandOver": False, "handoverBlockedReason": "SPOT_ACCESS_DENIED"})
         add_event(ident, key, "RESERVATION", r["reservation_id"], None, r["start_datetime"], finish, "PLANNED", r["reservation_status"],
             r["vehicle_assignment_status"], r["reservation_status"] == "APPROVED",
-            r["vehicle_assignment_status"] in MOVABLE + ("SOFT_HOLD",),
+            not is_onsite(r) and r["vehicle_assignment_status"] in MOVABLE + ("SOFT_HOLD",),
             record_actions(request, r, None, can_hand_over=handover["canHandOver"]), r["updated_at"],
-            payment_info={**payment_flags(request.app.state.settings, r), **handover})
+            payment_info={**payment_flags(request.app.state.settings, r), **handover, **receipt_view(request, r)})
     for c in contracts:
         ident = c["vehicle_id"]
         if ident not in selected or c["contract_status"] == "CANCELED":
@@ -425,4 +449,4 @@ def dashboard(request: Request, session: Session = DB):
             work.append(dict(vehicleId=ident, recordType="MAINTENANCE", maintenanceUntil=s["maintenance_until"]))
     return dict(status="success", group=dict(spotMasterId=root["spot_master_id"], spotCode=root["unit_code"], name=root["spot_name"]),
         name=actor.admin["admin_name"], totalVehicles=len(vehicles), totalReservations=counts.get("APPROVED", 0),
-        pending=counts.get("REQUESTED", 0), chat=0, todayWork=work)
+        pending=counts.get("REQUESTED", 0), awaitingReceipt=counts.get(PENDING, 0), chat=0, todayWork=work)

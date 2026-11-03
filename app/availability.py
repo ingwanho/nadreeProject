@@ -85,6 +85,9 @@ def compute_assignment(request, session, spot, vehicles, contracts, *, candidate
     reservations = rows(session, t, t.c.spot_master_id == spot["spot_master_id"],
                         t.c.model_id.in_(models), t.c.reservation_status.in_(("REQUESTED", "APPROVED")))
     reservations = [r for r in reservations if r["reservation_id"] != omit_reservation and reservation_end(request, r) > at]
+    reservations = [r for r in reservations if not (
+        (r.get("required_criteria_json") or {}).get("requestType") == "ONSITE"
+        and r.get("hold_expires_at") and r["hold_expires_at"] <= at)]
     if candidate:
         reservations.append(candidate)
     start = min([at] + [r["start_datetime"] for r in reservations])
@@ -134,6 +137,9 @@ def compute_assignment(request, session, spot, vehicles, contracts, *, candidate
             raise Problem(409, "RENTAL_STATE_INCONSISTENT")
         expected = reservation_price(r, vehicles, tiers)
         eligible = [ident for ident, item in vehicles.items() if price_key(item, tiers) == expected]
+        onsite_vehicle = (r.get("required_criteria_json") or {}).get("onsiteVehicleId")
+        if onsite_vehicle:
+            eligible = [ident for ident in eligible if ident == onsite_vehicle]
         if r["vehicle_assignment_status"] == "LOCKED":
             eligible = [ident for ident in eligible if ident == r["assigned_vehicle_id"]]
         elif r["vehicle_assignment_status"] not in MOVABLE + ("SOFT_HOLD",):
@@ -157,7 +163,7 @@ def reservation_history(request, session, previous, values, event, actor_id, rea
         # Customer identities belong in the existing JSON audit field instead.
         reason=reason, changed_by=None if customer else actor_id, created_at=now(),
         **({"details": {"actorType": "CUSTOMER", "actorId": actor_id}} if customer else {})))
-    if event in ("REQUESTED", "APPROVED", "REJECTED", "CANCELLED", "EXPIRED", "HANDED_OVER"):
+    if event in ("REQUESTED", "APPROVED", "REJECTED", "CANCELLED", "EXPIRED", "HANDOVER_PENDING", "HANDED_OVER"):
         record_notification(request.app.state.db, session, new["spot_master_id"], "RESERVATION_" + event,
             "RESERVATION", new["reservation_id"], "reservation:" + new["reservation_id"] + ":" + event)
 

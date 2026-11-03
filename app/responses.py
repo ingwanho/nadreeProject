@@ -118,7 +118,19 @@ class CustomerDelivery(BaseModel):
     deliveryTotalFee: int | float | None = None
 
 
-class CustomerRecord(BaseModel):
+class ReceiptInfo(BaseModel):
+    requestDeadline: str | None = None
+    requestType: Literal["ADVANCE", "ONSITE"] = "ADVANCE"
+    customerReceiptRequired: bool = False
+    handedOverAt: str | None = None
+    receiptDeadline: str | None = None
+    receivedAt: str | None = None
+    canReceive: bool = False
+    receiptBlockedReason: str | None = None
+    vehicleRecoveryRequired: bool = False
+
+
+class CustomerRecord(ReceiptInfo):
     paymentMethod: Literal["EXTERNAL", "PAYPAL"] | None = None
     onlinePaymentEnabled: bool = False
     paymentStatus: str | None = None
@@ -231,6 +243,28 @@ class CustomerPage(Status):
 
 class CustomerReservationDetail(Status):
     item: CustomerRecord
+
+
+class CustomerQrLookup(Status, ReceiptInfo):
+    vehicleId: str
+    vehicleNo: str | None
+    vehicleStatus: str | None
+    model: CustomerModel
+    spot: CustomerSpot
+    reservationId: str | None
+    reservationStatus: str | None
+    vehicleMatch: Literal["ASSIGNED", "MODEL_PENDING"] | None
+    availableActions: list[Literal["ONSITE_QUOTE", "WAIT_APPROVAL", "WAIT_HANDOVER", "CONFIRM_RECEIPT"]]
+
+
+class CustomerOnsiteQuote(Status):
+    vehicleId: str
+    spot: CustomerSpot
+    startDate: str
+    returnDate: str
+    price: CustomerPrice
+    quoteExpiresAt: str
+    quoteToken: str
 
 
 class CustomerPayment(Status):

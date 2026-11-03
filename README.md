@@ -6,6 +6,8 @@
 
 ## 현재 상태
 
+2026-11-03 공용 QR 현장 신청·고객 인수 확인 코드를 추가했다. 관리자 인계는 HANDOVER_PENDING, 고객 인수 성공 후 HANDED_OVER/ON_RENT로 전환한다. 자정 이후 미인수 차량은 실물 회수까지 보호한다. 예약 nullable 3컬럼·인덱스/상태 제약 변경과 전용 매분 만료 작업이 필요하며 기본 `NADREE_CUSTOMER_RECEIPT_ENABLED=false`다. 격리 전체 회귀 **572 passed/14 skipped**. **서버 미적용·앱 공동 검증 전**. [API·QR 정책·배포/복구 안내](docs/qr-onsite-receipt-handoff-2026-11-03.md).
+
 2026-10-28 현장·외부 결제 전환 적용: 신규 예약에 결제 방식을 저장하고 관리자 승인으로 확정하며, EXTERNAL 예약은 온라인 결제 없이 기존 기간·QR·권한·재고 검사로 인계한다. 주문/capture/재시도/온보딩은 중단하고 과거 거래·정산·환불을 보존한다. 추가 마이그레이션 없음. 전체 격리 회귀 **550 passed/12 skipped**, **07:03 UTC API 재시작 완료·공개 헬스/준비/Swagger 200·실제 조회 EXTERNAL/온라인 중단 확인**. 기존 테스트 계정으로 신규 예약 테스트 가능하며 실제 요청~인계/반납·앱 인수는 별도다. [앱 전달 문서와 테스트 예시](docs/external-payment-app-handoff-2026-10-28.md), [구현·실제 적용·검증 결과](docs/external-payment-implementation-result-2026-10-28.md).
 
 2026-10-27 채팅 즉시 호출 적용: 신규 Python 함수 `dispatchChatPushEvent`가 메시지별 이벤트 생성을 감지해 OIDC 인증된 백엔드를 호출하고, 30초 작업은 복구를 유지한다. 기존 6개 함수·Rules·인덱스·만료 스케줄·결제 복구를 보존했다. 전체 격리 회귀 508 passed/12 skipped, 배포 소스 3개 일치, 무발송 이벤트의 실제 트리거→백엔드 응답 약 2.24초·SQL 알림/FCM 0건을 확인했다. 실기기 표시는 미검증이다. [실제 적용·검증 기록](docs/chat-push-trigger-deployment-result-2026-10-27.md).

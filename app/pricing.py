@@ -11,6 +11,7 @@ from app.headers import bearer
 from app.rental_common import by_number, context, editable_spot, fleet, resolve_spot, rows
 from app.rental_inputs import PriceChange, TierCreate, TierRange
 from app.responses import Status
+from app.receipt import require_no_hold
 from app.security import now
 
 router = APIRouter(tags=["W04 Pricing"], dependencies=[bearer])
@@ -63,6 +64,7 @@ def tier_view(row, code):
 def change_price(body: PriceChange, request: Request, session: Session = DB):
     _, root = context(request, session, write=True)
     vehicle = by_number(fleet(request, session, root, lock=True), body.vehicleNumber)
+    require_no_hold(vehicle)
     t = request.app.state.db.table("MSP_RENTAL_VEHICLE")
     session.execute(update(t).where(t.c.vehicle_id == vehicle["vehicle"]["vehicle_id"]).values(
         price_type=body.priceType, premium_daily_price=body.priceInfo, updated_at=now()))

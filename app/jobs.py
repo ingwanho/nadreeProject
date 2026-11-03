@@ -258,7 +258,7 @@ def payment_maintenance(db, settings, fcm):
 
 def main():
     parser = argparse.ArgumentParser(description="Nadree rental maintenance jobs")
-    parser.add_argument("job", choices=("maintenance", "payments", "inventory", "all"))
+    parser.add_argument("job", choices=("maintenance", "payments", "inventory", "receipts", "all"))
     parser.add_argument("--days", type=int, default=None)
     args = parser.parse_args()
     settings = Settings()
@@ -271,6 +271,9 @@ def main():
             print({"maintenanceReleased": _run_locked(db, "maintenance", lambda: expire_maintenance(db, settings))})
         elif args.job == "payments":
             print(_run_locked(db, "payments", lambda: payment_maintenance(db, settings, fcm)))
+        elif args.job == "receipts":
+            from app.receipt import expire_receipts
+            print({"receiptsExpired": _run_locked(db, "receipts", lambda: expire_receipts(db, settings))})
         elif args.job == "inventory":
             print({"inventoryRows": _run_locked(db, "inventory", lambda: rebuild_daily_inventory(db, settings, args.days))})
         else:

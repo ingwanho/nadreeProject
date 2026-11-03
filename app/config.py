@@ -23,6 +23,7 @@ class Settings(BaseSettings):
     cors_origins: str = ""
     field_encrypt_key: SecretStr = SecretStr("")
     qr_hash_key: SecretStr = SecretStr("")
+    customer_receipt_enabled: bool = False
     availability_timeout_seconds: float = Field(default=2.0, gt=0, le=10)
     firestore_project: str = ""
     # Vehicle-location credentials are separate from the FCM project below.
