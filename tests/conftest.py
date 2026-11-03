@@ -154,7 +154,11 @@ def setup(tmp_path, request):
             yield {"client": client, "db": db, "engine": engine, "settings": settings, "limiter": limiter, "app": app}
     finally:
         if mysql:
-            metadata.drop_all(engine)
+            # The guarded database was empty before this test. Rental fixtures
+            # create extra tables, including request outcomes; remove those too.
+            owned = MetaData()
+            owned.reflect(engine)
+            owned.drop_all(engine)
         engine.dispose()
 
 

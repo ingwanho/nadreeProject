@@ -6,6 +6,8 @@
 
 ## 현재 상태
 
+2026-11-03 추가 인수서 반영 — **로컬 구현·서버 미적용**: 인수 절차 상시화·OFF 설정 제거, NDR 원문 규격, 신청 결과 4상태·영속 확정 거절·명시적 close, 관리자 ID/홈 필드·상태별 Swagger 예시를 보완했다. 사용자 승인으로 요청 결과 테이블 1개가 추가된다. 전체 격리 회귀 **588 passed/15 skipped**. [최신 계약](docs/qr-onsite-followup-contract-2026-11-03.md), [서버 적용 실행서](docs/qr-onsite-final-server-apply-2026-11-03.md). 아래 false·서버 적용 완료 기록은 이번 추가 변경 전의 상태다.
+
 2026-11-03 공용 QR 현장 신청·고객 인수 확인 **서버 적용 완료·기능 비활성 유지**. 관리자 인계는 HANDOVER_PENDING, 고객 인수 성공 후 HANDED_OVER/ON_RENT로 전환하며 자정 이후 미인수 차량은 실물 회수까지 보호한다. 테스트 DB 전체 백업 후 예약 nullable 3컬럼·인덱스 2개·상태 CHECK를 적용했고 미적용 변경은 없다. API 재시작·로컬/공개 헬스/준비/Swagger 200·전용 receipts 타이머 정상 실행을 확인했다. `NADREE_CUSTOMER_RECEIPT_ENABLED=false`를 명시해 유지하고 기존 예약 29건·결제/채팅 작업을 보존했다. 격리 전체 회귀 **572 passed/14 skipped**. 앱 공동 검증·실기기 수신·MySQL/Firestore 별도 검증은 남아 있다. [API·QR 정책·배포/복구 안내](docs/qr-onsite-receipt-handoff-2026-11-03.md), [실제 적용·격리 테스트·남은 작업](docs/qr-onsite-receipt-server-result-2026-11-03.md).
 
 2026-10-28 현장·외부 결제 전환 적용: 신규 예약에 결제 방식을 저장하고 관리자 승인으로 확정하며, EXTERNAL 예약은 온라인 결제 없이 기존 기간·QR·권한·재고 검사로 인계한다. 주문/capture/재시도/온보딩은 중단하고 과거 거래·정산·환불을 보존한다. 추가 마이그레이션 없음. 전체 격리 회귀 **550 passed/12 skipped**, **07:50 UTC 최신 env 중복 정리·배포 채팅 인증 설정 일치·API 재시작 완료·공개 헬스/준비/Swagger 200·실제 조회 EXTERNAL/온라인 중단 확인**. 기존 테스트 계정으로 신규 예약 테스트 가능하며 실제 요청~인계/반납·앱 인수는 별도다. [앱 전달 문서와 테스트 예시](docs/external-payment-app-handoff-2026-10-28.md), [구현·실제 적용·검증 결과](docs/external-payment-implementation-result-2026-10-28.md).

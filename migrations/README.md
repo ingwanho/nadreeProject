@@ -1,5 +1,9 @@
 # Nadree DB 변경 안내
 
+## 2026-11-03 추가 계약 — 요청 결과 1테이블, 서버 미적용
+
+사용자 승인으로 `MSP_RENTAL_ONSITE_REQUEST`만 추가한다. 신규 코드의 `app.migrate`가 생성/호환성을 검사하며, [011_onsite_request.sql](011_onsite_request.sql)은 같은 CREATE TABLE의 별도 확인용이다. 둘을 중복 적용하지 않는다. 기존 예약 3컬럼·인덱스·CHECK는 이전 서버에 적용됐고 이번에 다시 변환하지 않는다. 고객 인수 OFF 설정이 제거되므로 [서버 적용 실행서](../docs/qr-onsite-final-server-apply-2026-11-03.md)에 따라 양 앱 전환 준비 후 배포한다. QR 시험 데이터는 [등록 요청 파일](../deployment/onsite-qr-test-requests.json)을 사용하며 실제 등록은 별도 승인된 테스트 환경에서 수행한다.
+
 ## 2026-10-18 PayPal 연결 단순화 — 서버 미적용
 
 온보딩·요청 결과·개인정보 작업 테이블을 모두 제외했다. 판매자 연결은 기존 MSP_SPOT_RENT.paypal_merchant_id 및 paypal_environment를 사용하며 결제 당시 판매자 보존 컬럼도 유지한다. 해당 컬럼이 이미 적용되어 있다면 이번 단순화로 추가할 DB 항목은 없다. 이전 미적용 변경은 app.migrate 계획에 출력될 수 있으므로 대상 DB/백업/계획을 먼저 확인한다. 기존 서버의 테이블은 자동 삭제하지 않는다. [서버 적용 안내](../docs/nadree-full-change-handoff.md) 참조.

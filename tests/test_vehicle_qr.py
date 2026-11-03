@@ -43,6 +43,19 @@ def lookup(client, headers, qr="testQr123123"):
     return client.post("/nadreego/vehicle/qr/validate", headers=headers, json={"qrCode": qr})
 
 
+def test_ndr_fragment_originals_keep_case_and_are_not_urls(client, signin, equipment):
+    from urllib.parse import urlsplit
+    headers = signin()
+    for index, original in enumerate(("NDR-Ab12Cd34", "NDR-ab12Cd34")):
+        url = "https://example.com/#" + original
+        extracted = urlsplit(url).fragment
+        assert len(extracted) == 12
+        created = register(client, headers, qr=extracted, plate="NDR-CASE-" + str(index))
+        assert created.status_code == 200, created.text
+        assert lookup(client, headers, extracted).json()["data"]["vehicleId"] == created.json()["vehicleId"]
+        assert lookup(client, headers, url).status_code == 404
+
+
 @pytest.mark.parametrize("sensor", [False, True])
 def test_qr_identifies_vehicle_with_optional_sensor(client, signin, setup, equipment, sensor):
     headers = signin()

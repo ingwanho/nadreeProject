@@ -20,7 +20,7 @@ from app.notifications import router as notifications_router
 from app.mail import PasswordMailer
 from app.locations import VehicleLocations
 from app.openapi_examples import (OPENAPI_EXAMPLES, OPENAPI_REQUEST_EXAMPLES,
-                                   OPENAPI_RESPONSE_EXAMPLES)
+                                   OPENAPI_RESPONSE_EXAMPLES, OPENAPI_STATUS_EXAMPLES)
 from app.delivery import router as delivery_router
 from app.paypal import PayPalClient, router as paypal_router
 from app.paypal_onboarding import router as paypal_onboarding_router
@@ -154,9 +154,10 @@ def create_app(settings=None, db=None, limiter=None, mailer=None, fcm=None, loca
         with engine.connect() as connection:
             connection.execute(text("SELECT 1"))
             limitations = check_schema(application.state.db, connection)
-        if settings.customer_receipt_enabled:
-            from app.receipt import require_schema
-            require_schema(application.state.db)
+        from app.receipt import require_schema
+        require_schema(application.state.db)
+        from app.onsite_requests import require_schema as require_request_schema
+        require_request_schema(application.state.db)
         if not getattr(application.state.fcm, "configured", True):
             limitations.append("FCM_NOT_CONFIGURED")
         if settings.env == "production" and not application.state.customer_auth.configured:
@@ -224,6 +225,13 @@ def create_app(settings=None, db=None, limiter=None, mailer=None, fcm=None, loca
                     response = operation.get("responses", {}).get("200")
                     if response is not None:
                         response.setdefault("content", {}).setdefault("application/json", {})["example"] = response_example
+                for status, examples in OPENAPI_STATUS_EXAMPLES.get(key, {}).items():
+                    response = operation["responses"].setdefault(str(status), {
+                        "description": "상태별 응답", "content": {"application/json": {
+                            "schema": {"$ref": "#/components/schemas/Error"}}}})
+                    content = response.setdefault("content", {}).setdefault("application/json", {})
+                    content.pop("example", None)
+                    content["examples"] = {name: {"value": value} for name, value in examples.items()}
         application.openapi_schema = schema
         return schema
 

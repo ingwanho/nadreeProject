@@ -65,7 +65,7 @@ def approve(ctx, ident):
 
 def during_period(ctx, ident, monkeypatch, *, day=0):
     at = row(ctx, ident)["start_datetime"] + timedelta(hours=12, days=day)
-    for module in ("rentals", "customer_rentals", "rental_common", "availability"):
+    for module in ("rentals", "customer_rentals", "rental_common", "availability", "receipt", "customer_qr"):
         monkeypatch.setattr("app." + module + ".now", lambda: at)
     return at
 
@@ -73,7 +73,7 @@ def during_period(ctx, ident, monkeypatch, *, day=0):
 def handover(ctx, ident, headers=None):
     r = row(ctx, ident)
     return ctx["client"].post("/nadreego/rent/approve", headers=headers or ctx["admin"],
-        json={"bookedNo": "BO" + ident, "qrCode": ctx["qrs"][r["assigned_vehicle_id"]]})
+        json={"bookedNo": "BO" + ident, "qrCode": ctx["qrs"][r["assigned_vehicle_id"]], "receiptRequired": True})
 
 
 def operation(ctx, ident):
@@ -152,7 +152,10 @@ def test_request_approval_qr_handover_return_without_paypal(external, signin, mo
         assert item["canPay"] is False and item["price"]["finalTotal"] == 30
     response = handover(ctx, ident)
     assert response.status_code == 200, response.text
-    assert response.json()["data"]["contractStatus"] == "ON_RENT"
+    assert response.json()["data"]["reservationStatus"] == "HANDOVER_PENDING"
+    received = ctx["client"].post("/api/v1/nadree/rental/reservations/" + ident + "/receive", headers=ctx["headers"],
+        json={"qrCode": ctx["qrs"][approved["assigned_vehicle_id"]]})
+    assert received.status_code == 200 and received.json()["item"]["rentalStatus"] == "ON_RENT", received.text
     with ctx["engine"].connect() as conn:
         contract = conn.execute(select(ctx["tables"]["MSP_RENTAL_CONTRACT"])).mappings().one()
         assert bool(contract["sensor_id"]) == sensor

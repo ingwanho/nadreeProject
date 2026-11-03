@@ -12,6 +12,11 @@ class Error(BaseModel):
     status: Literal["fail"] = "fail"
     errorCode: str
     paymentId: int | None = None
+    clientRequestId: str | None = None
+    requestStatus: Literal["ACCEPTED", "REJECTED", "PROCESSING", "UNKNOWN"] | None = None
+    requestFinal: bool | None = None
+    retrySameRequest: bool | None = None
+    canStartNewRequest: bool | None = None
 
 
 class ShopPayPalMerchantResult(Status):
@@ -243,6 +248,16 @@ class CustomerPage(Status):
 
 class CustomerReservationDetail(Status):
     item: CustomerRecord
+
+
+class CustomerOnsiteResult(Status):
+    item: CustomerRecord | None = None
+    clientRequestId: str
+    requestStatus: Literal["ACCEPTED", "REJECTED", "PROCESSING", "UNKNOWN"]
+    requestFinal: bool
+    retrySameRequest: bool
+    canStartNewRequest: bool
+    errorCode: str | None = None
 
 
 class CustomerQrLookup(Status, ReceiptInfo):

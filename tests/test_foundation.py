@@ -86,7 +86,7 @@ def test_openapi_has_exact_work_group_routes(client):
     assert "/api/v1/nadree/rental/requests/{request_id}" not in paths
     parameters = paths["/api/v1/nadree/rental/request"]["post"].get("parameters", [])
     assert not any(p["name"] == "Idempotency-Key" for p in parameters)
-    assert len([path for path in paths if not path.startswith("/health/")]) == 74
+    assert len([path for path in paths if not path.startswith("/health/")]) == 75
     assert "post" in paths["/api/v1/nadree/rental/reservations/{reservation_id}/receive"]
     assert "post" in paths["/api/v1/nadree/rental/onsite/requests"]
     payment_return = paths["/api/v1/nadree/rental/payment/return"]["get"]
@@ -95,7 +95,7 @@ def test_openapi_has_exact_work_group_routes(client):
     assert {"get", "put"}.issubset(paths["/nadreego/shop/paypal-merchant"])
     assert "/nadreego/sensor/qr/resolve" not in paths
     qr_request = paths["/nadreego/vehicle/qr/validate"]["post"]["requestBody"]["content"]["application/json"]
-    assert qr_request["example"] == {"qrCode": "testQr123123"}
+    assert qr_request["example"] == {"qrCode": "NDR-Ab12Cd34"}
     assert "post" in paths["/nadreego/booking/location-correction"]
     assert "get" in paths["/nadreego/booking/{booked_no}/location-corrections"]
     correction = paths["/nadreego/booking/location-correction"]["post"]["requestBody"]["content"]["application/json"]
@@ -125,6 +125,13 @@ def test_openapi_has_exact_work_group_routes(client):
     assert openapi["components"]["schemas"]["RentApprove"]["example"]["receiptRequired"] is True
     assert openapi["components"]["schemas"]["CustomerQrLookup"]["example"]["reservationStatus"] == "HANDOVER_PENDING"
     assert paths["/nadreego/rent/approve"]["post"]["responses"]["200"]["content"]["application/json"]["example"]["currentState"] == "HANDOVER_PENDING"
+    outcomes = paths["/api/v1/nadree/rental/onsite/requests/{client_request_id}"]["get"]["responses"]
+    assert outcomes["404"]["content"]["application/json"]["examples"]["notFoundIsNotFinal"]["value"]["requestStatus"] == "UNKNOWN"
+    assert outcomes["202"]["content"]["application/json"]["examples"]["processing"]["value"]["requestFinal"] is False
+    assert outcomes["200"]["content"]["application/json"]["examples"]["rejected"]["value"]["canStartNewRequest"] is True
+    assert "post" in paths["/api/v1/nadree/rental/onsite/requests/{client_request_id}/close"]
+    blocked = paths["/api/v1/nadree/rental/reservations/{reservation_id}/receive"]["post"]["responses"]["409"]
+    assert blocked["content"]["application/json"]["examples"]["RECEIPT_DEADLINE_EXPIRED"]["value"]["errorCode"] == "RECEIPT_DEADLINE_EXPIRED"
     delivery_example = paths["/nadreego/shop/delivery/regions"]["get"]["responses"]["200"]
     assert delivery_example["content"]["application/json"]["example"]["items"][1]["regionCode"] == "NRTEST-CANGGU"
 

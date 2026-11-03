@@ -1,0 +1,28 @@
+[
+  {
+    "qrOriginal": "NDR-Ab12Cd34",
+    "qrUrlExample": "https://example.com/#NDR-Ab12Cd34",
+    "method": "POST",
+    "path": "/nadreego/vehicle/create",
+    "body": {
+      "qrToken": "NDR-Ab12Cd34",
+      "brand": "Honda",
+      "vehicleName": "Vario Web Test 125",
+      "modelId": "NRTEST-WEB-MODEL-125",
+      "plateNumber": "DK-NDR-ONLY-001"
+    }
+  },
+  {
+    "qrOriginal": "NDR-Ef56Gh78",
+    "qrUrlExample": "https://example.com/#NDR-Ef56Gh78",
+    "method": "POST",
+    "path": "/nadreego/vehicle/create",
+    "body": {
+      "qrToken": "NDR-Ef56Gh78",
+      "brand": "Honda",
+      "vehicleName": "Vario Web Test 125",
+      "modelId": "NRTEST-WEB-MODEL-125",
+      "plateNumber": "DK-NDR-ONLY-002"
+    }
+  }
+]

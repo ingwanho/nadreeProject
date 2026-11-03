@@ -33,6 +33,15 @@ class Database:
 
 
 def transaction(request: Request):
+    yield from _business_transaction(request, checkpoints=False)
+
+
+def request_transaction(request: Request):
+    """Persist request intent before the atomic reservation/outcome transaction."""
+    yield from _business_transaction(request, checkpoints=True)
+
+
+def _business_transaction(request: Request, *, checkpoints):
     db = request.app.state.db
     if db.engine is None:
         raise Problem(503, "DATABASE_NOT_CONFIGURED")
@@ -44,8 +53,16 @@ def transaction(request: Request):
             consistent_read = request.url.path in read_paths or request.method == "GET" and request.url.path.startswith("/nadreego/shop/")
             if consistent_read and connection.dialect.name == "mysql":
                 connection.execution_options(isolation_level="REPEATABLE READ")
-            with session.begin():
-                yield session
+            if checkpoints:
+                try:
+                    yield session
+                    session.commit()
+                except Exception:
+                    session.rollback()
+                    raise
+            else:
+                with session.begin():
+                    yield session
             notifications = session.info.pop("fcm_notifications", [])
             for ident in session.info.pop("chat_bookings", set()):
                 try:

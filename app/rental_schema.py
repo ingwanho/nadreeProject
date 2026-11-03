@@ -94,6 +94,15 @@ Table("MSP_RESERVATION", metadata,
       CheckConstraint("vehicle_assignment_status IN ('SOFT_HOLD','PROVISIONAL','REALLOCATED','LOCKED','RELEASED')", name="ck_assignment_status"),
       CheckConstraint("start_delivery_fee_snapshot >= 0 AND return_delivery_fee_snapshot >= 0 AND "
                       "delivery_total_fee_snapshot = start_delivery_fee_snapshot + return_delivery_fee_snapshot", name="ck_delivery_snapshot"))
+Table("MSP_RENTAL_ONSITE_REQUEST", metadata,
+      C("uid_token", String(36), primary_key=True), C("client_request_id", String(64), primary_key=True),
+      C("request_fingerprint", String(64)), C("request_state", String(20), nullable=False),
+      C("reservation_id", String(50)), C("error_code", String(80)), C("http_status", Integer), *timestamps(),
+      CheckConstraint("(request_state = 'PROCESSING' AND request_fingerprint IS NOT NULL AND reservation_id IS NULL "
+                      "AND error_code IS NULL AND http_status IS NULL) OR "
+                      "(request_state = 'ACCEPTED' AND reservation_id IS NOT NULL AND error_code IS NULL AND http_status IS NULL) OR "
+                      "(request_state = 'REJECTED' AND reservation_id IS NULL AND error_code IS NOT NULL "
+                      "AND http_status BETWEEN 400 AND 499)", name="ck_onsite_request_outcome"))
 Table("MSP_RESERVATION_HISTORY", metadata,
       C("history_id", ID, primary_key=True, autoincrement=True), C("reservation_id", String(50), nullable=False),
       C("event_type", String(30), nullable=False), C("previous_reservation_status", String(20)),
@@ -168,7 +177,7 @@ Table("MSP_RENTAL_NOTIFICATION", metadata,
       C("read_at", DateTime), Index("ix_notification_shop_read", "spot_master_id", "read_at", "notification_id"))
 
 # Opaque provider identifiers and QR digests require case-sensitive MySQL comparisons.
-for name in ("MSP_RENTAL_PAYMENT", "MSP_PAYPAL_WEBHOOK_EVENT", "MSP_VEHICLE_QR"):
+for name in ("MSP_RENTAL_PAYMENT", "MSP_PAYPAL_WEBHOOK_EVENT", "MSP_VEHICLE_QR", "MSP_RENTAL_ONSITE_REQUEST"):
     metadata.tables[name].dialect_options["mysql"]["collate"] = "utf8mb4_bin"
 for table in metadata.tables.values():
     table.dialect_options["mysql"]["engine"] = "InnoDB"

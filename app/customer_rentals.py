@@ -740,7 +740,7 @@ def nadree_request(body: NadriRentalRequest, request: Request, session: Session 
     quote["calculatedTotalFrom"] = quote["totalFrom"]
     quote["calculatedTotalTo"] = quote["totalTo"]
     criteria = {"source": "nadri.rental.availability", "availabilityRequest": availability_request,
-                "customerReceiptRequired": request.app.state.settings.customer_receipt_enabled,
+                "customerReceiptRequired": True,
                 "paymentMethod": request.app.state.settings.reservation_payment_method,
                 "pickupLocationSnapshot": item["spot"]["location"], "returnLocationSnapshot": item["spot"]["location"],
                 "selected": {"spotMasterId": body.spotMasterId, "modelId": body.modelId,

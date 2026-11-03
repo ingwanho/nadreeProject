@@ -45,6 +45,24 @@ def test_receipt_schema_has_no_new_payment_or_qr_tables():
     assert "customer_qr" not in metadata.tables["MSP_VEHICLE_QR"].c
 
 
+def test_onsite_request_migration_is_read_only_and_idempotent(setup):
+    from app.rental_schema import metadata
+    plan = migration_plan(setup["db"])
+    sql = next(sql for label, sql, _ in plan if label == "create MSP_RENTAL_ONSITE_REQUEST")
+    assert "PRIMARY KEY (uid_token, client_request_id)" in sql
+    assert "InnoDB" in sql and "utf8mb4_bin" in sql and "ck_onsite_request_outcome" in sql
+    assert "MSP_RENTAL_ONSITE_REQUEST" not in inspect(setup["engine"]).get_table_names()
+    metadata.tables["MSP_RENTAL_ONSITE_REQUEST"].create(setup["engine"])
+    assert "create MSP_RENTAL_ONSITE_REQUEST" not in {label for label, _, _ in migration_plan(setup["db"])}
+
+
+def test_onsite_request_migration_rejects_incompatible_existing_table(setup):
+    with setup["engine"].begin() as conn:
+        conn.execute(text("CREATE TABLE MSP_RENTAL_ONSITE_REQUEST (uid_token VARCHAR(36) PRIMARY KEY)"))
+    with pytest.raises(ValueError, match="incompatible definition"):
+        migration_plan(setup["db"])
+
+
 @pytest.mark.parametrize("index_name", ["uq_reservation_client_request", "idx_reservation_receipt_deadline"])
 def test_receipt_migration_rejects_conflicting_index_name(setup, index_name):
     with setup["engine"].begin() as conn:
@@ -72,6 +90,7 @@ def test_migration_plan_is_read_only_and_idempotent_after_expected_changes(setup
     assert "MSP_RENTAL_PRIVACY_TASK" not in metadata.tables
     assert "MSP_PAYPAL_ONBOARDING" not in metadata.tables
     metadata.tables["MSP_RENTAL_NOTIFICATION"].create(setup["engine"])
+    metadata.tables["MSP_RENTAL_ONSITE_REQUEST"].create(setup["engine"])
     plan = migration_plan(setup["db"])
     assert [label for label, sql, params in plan] == ["index MSP_ADMIN.fcm_token"]
     with setup["engine"].begin() as conn:
@@ -243,6 +262,7 @@ def test_profile_migration_only_adds_missing_columns(setup, monkeypatch, existin
     from app.rental_schema import metadata
     assert "MSP_PAYPAL_ONBOARDING" not in metadata.tables
     metadata.tables["MSP_RENTAL_NOTIFICATION"].create(setup["engine"])
+    metadata.tables["MSP_RENTAL_ONSITE_REQUEST"].create(setup["engine"])
     profile = {"introduction", "contact_email"}
     reflected_columns(setup, monkeypatch, lambda name, columns:
         [column for column in columns if column["name"] not in profile - set(existing)] if name == "MSP_SPOT_RENT" else columns)

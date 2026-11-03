@@ -219,8 +219,10 @@ def test_nadri_reservation_payment_checkout_and_return(setup, signin, monkeypatc
     assert recovered.json()["refundedAmount"] == 0
     handover_time = datetime.combine(start, datetime.min.time())
     monkeypatch.setattr("app.rentals.now", lambda: handover_time)
+    monkeypatch.setattr("app.receipt.now", lambda: handover_time)
+    monkeypatch.setattr("app.customer_qr.now", lambda: handover_time)
     blocked = client.post("/nadreego/rent/approve", headers=admin_headers,
-                          json={"bookedNo": "BO" + reservation_id, "qrCode": raw_qr})
+                          json={"bookedNo": "BO" + reservation_id, "qrCode": raw_qr, "receiptRequired": True})
     assert blocked.status_code == 409 and blocked.json()["errorCode"] == "PAYMENT_REQUIRED"
 
     with setup["engine"].begin() as conn:
@@ -237,9 +239,12 @@ def test_nadri_reservation_payment_checkout_and_return(setup, signin, monkeypatc
     assert any({recipient["token"] for recipient in item["recipients"]} == {"customer-device"}
                for item in payment_pushes)
     handed_over = client.post("/nadreego/rent/approve", headers=admin_headers,
-                              json={"bookedNo": "BO" + reservation_id, "qrCode": raw_qr})
+                              json={"bookedNo": "BO" + reservation_id, "qrCode": raw_qr, "receiptRequired": True})
     assert handed_over.status_code == 200, handed_over.text
-    assert handed_over.json()["data"]["contractStatus"] == "ON_RENT"
+    assert handed_over.json()["data"]["reservationStatus"] == "HANDOVER_PENDING"
+    received = client.post("/api/v1/nadree/rental/reservations/" + reservation_id + "/receive", headers=customer_headers,
+                           json={"qrCode": raw_qr})
+    assert received.status_code == 200 and received.json()["item"]["rentalStatus"] == "ON_RENT", received.text
 
     returned = client.post("/nadreego/vehicle/return", headers=admin_headers, json={"qrCode": raw_qr})
     assert returned.status_code == 200, returned.text

@@ -84,6 +84,7 @@ def fleet_details(request, session, root, vehicles):
         booking = bookings[0] if bookings else None
         state = effective_state(request, item, contracts)
         current_booking = None if not booking else dict(bookedNo="BO" + booking["reservation_id"],
+            reservationId=booking["reservation_id"], vehicleId=ident,
             **receipt_view(request, booking, contract),
             **payment_flags(request.app.state.settings, booking),
             **booking_handover_status(request, session, root, booking, cache=handover_cache),
@@ -253,7 +254,8 @@ def operation_details(request, session, root, records):
                 spotDeliveryServiceType=spot_rent["delivery_service_type"] if spot_rent else "NONE",
                 startDeliveryFee=r["start_delivery_fee_snapshot"], returnDeliveryFee=r["return_delivery_fee_snapshot"],
                 deliveryTotalFee=r["delivery_total_fee_snapshot"])
-        result.append(dict(bookedNo=rec["booked_no"], recordType=rec["record_type"], reservationStatus=rec["reservation_status"],
+        result.append(dict(bookedNo=rec["booked_no"], reservationId=rid, vehicleId=vid,
+            recordType=rec["record_type"], reservationStatus=rec["reservation_status"],
             **receipt_view(request, r, c),
             **payment_flags(request.app.state.settings, r), **handover,
             rentalStatus=rec["contract_status"], user=dict(userId=user["uid_token"], name=user["name"], phone=None,
@@ -439,10 +441,13 @@ def dashboard(request: Request, session: Session = DB):
         .group_by(r.c.reservation_status)).all())
     today = local_date(request, now())
     base, source, where = filtered_operations(request, root, Operations(page=1, pageSize=100, startDate=today, endDate=today))
-    records = session.execute(select(base).select_from(source).where(where).order_by(base.c.begin, base.c.booked_no)).mappings().all()
-    work = [dict(bookedNo=r["booked_no"], recordType=r["record_type"], reservationStatus=r["reservation_status"],
-                 rentalStatus=r["contract_status"], vehicleId=r["vehicle_id"], startAt=iso(request, r["begin"])) for r in records]
     vehicles = fleet(request, session, root)
+    protected = [(item["state"].get("status_reason") or "")[len(HOLD_PREFIX):] for item in vehicles.values()
+                 if item["state"] and (item["state"].get("status_reason") or "").startswith(HOLD_PREFIX)]
+    records = session.execute(select(base).select_from(source).where(or_(where, base.c.reservation_id.in_(protected)))
+        .order_by(base.c.begin, base.c.booked_no)).mappings().all()
+    work = [dict(detail, vehicleId=row["vehicle_id"], startAt=iso(request, row["begin"]))
+            for row, detail in zip(records, operation_details(request, session, root, records))]
     for ident, item in vehicles.items():
         s = item["state"]
         if s and s["status"] == "MAINTENANCE" and s["maintenance_until"] is not None and s["maintenance_until"] >= today:

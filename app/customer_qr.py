@@ -5,20 +5,21 @@ from datetime import date, timedelta, timezone
 from typing import Annotated
 
 import jwt
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Request, Response
 from pydantic import Field, SecretStr
 from sqlalchemy import select
 
 from app.availability import compute_assignment, price_key, reservation_history
 from app.customer_rentals import (_model_view, _price_view, _spot, _spot_view, customer_access_token,
                                   nadree_reservation_detail)
-from app.db import transaction
+from app.db import request_transaction, transaction
 from app.errors import Problem
 from app.fcm import queue_reservation_request
 from app.pricing import load_tiers
-from app.receipt import PENDING, enabled, hold_reason, require_schema, view
+from app.receipt import PENDING, hold_reason, require_schema, view
 from app.reservation_payments import EXTERNAL
-from app.responses import CustomerOnsiteQuote, CustomerQrLookup, CustomerReservationDetail
+from app.responses import CustomerOnsiteQuote, CustomerOnsiteResult, CustomerQrLookup, CustomerReservationDetail
+from app import onsite_requests as outcomes
 from app.rental_common import (contracts_for, day_end, fleet, iso, local_date, location_snapshot,
                                lock_key, qr_digest, verify_qr)
 from app.rental_inputs import Qr
@@ -29,6 +30,7 @@ from app.security import now, user_principal
 router = APIRouter(prefix="/api/v1/nadree/rental", tags=["Nadree customer rentals"],
                    dependencies=[Depends(customer_access_token)])
 DB = Depends(transaction, scope="function")
+REQUEST_DB = Depends(request_transaction, scope="function")
 RequestKey = Annotated[str, Field(min_length=16, max_length=64, pattern=r"^[a-z0-9_-]+$")]
 
 
@@ -43,12 +45,6 @@ class Quote(Qr):
 class OnsiteRequest(Quote):
     clientRequestId: RequestKey
     quoteToken: SecretStr = Field(min_length=1, max_length=8192)
-
-
-def require_feature(request):
-    if not request.app.state.settings.customer_receipt_enabled:
-        raise Problem(409, "CUSTOMER_RECEIPT_NOT_ENABLED")
-    require_schema(request.app.state.db)
 
 
 def resolve(request, session, raw, *, lock=False):
@@ -90,8 +86,6 @@ def lookup(body: Lookup, request: Request, session=DB):
             r.c.uid_token == user.uid_token)).mappings().first()
         if not own:
             raise Problem(404, "RESERVATION_NOT_FOUND")
-    if not enabled(request, own):
-        require_feature(request)
     require_schema(db)
     spot, item = resolve(request, session, body.qrCode.get_secret_value())
     vehicle = item["vehicle"]["vehicle_id"]
@@ -159,7 +153,7 @@ def quote_key(request):
 @router.post("/onsite/quote", response_model=CustomerOnsiteQuote, summary="공용 QR 차량의 발리 당일 견적·10분 유효 토큰")
 def quote(body: Quote, request: Request, session=DB):
     user = user_principal(request, session)
-    require_feature(request)
+    require_schema(request.app.state.db)
     limited(request, user.uid_token)
     spot, item = resolve(request, session, body.qrCode.get_secret_value())
     _, price = plan(request, session, spot, item, body.returnDate)
@@ -211,21 +205,57 @@ def create_walkin(request, session, spot, item, uid, return_date, admin_id):
     return reservation
 
 
-@router.post("/onsite/requests", response_model=CustomerReservationDetail, summary="멱등 요청 키로 차량 고정 현장 신청")
-def onsite_request(body: OnsiteRequest, request: Request, session=DB):
+@router.post("/onsite/requests", response_model=CustomerOnsiteResult, responses={202: {"model": CustomerOnsiteResult}},
+             summary="멱등 요청 키·영속 결과로 차량 고정 현장 신청")
+def onsite_request(body: OnsiteRequest, request: Request, response: Response, session=REQUEST_DB):
     user = user_principal(request, session)
-    require_feature(request)
+    require_schema(request.app.state.db)
+    table = outcomes.require_schema(request.app.state.db)
     limited(request, user.uid_token)
     db = request.app.state.db
+    key = body.clientRequestId
+    if not outcomes.try_lock(session, user.uid_token, key):
+        response.status_code, response.headers["Retry-After"] = 202, "2"
+        return {"status": "success", **outcomes.outcome(key, "PROCESSING")}
     lock_key(session, "nadri-user", user.uid_token)
     user = user_principal(request, session)
-    claims = decode_quote(request, body.quoteToken.get_secret_value(), user.uid_token)
+    digest = outcomes.fingerprint(body)
+    record = outcomes.find(session, table, user.uid_token, key)
+    ident = outcomes.accepted_id(db, session, user.uid_token, key)
+    if ident:
+        if record and record["request_fingerprint"] != digest:
+            raise Problem(409, "REQUEST_KEY_REUSED", request_outcome={
+                **outcomes.outcome(key, "ACCEPTED"), "retrySameRequest": False})
+        if not record:
+            try:
+                result = _submit_onsite(body, request, session, user.uid_token)
+            except Problem as error:
+                error.request_outcome = {**outcomes.outcome(key, "ACCEPTED"), "retrySameRequest": False}
+                raise
+            session.execute(table.insert().values(uid_token=user.uid_token, client_request_id=key,
+                request_fingerprint=digest, request_state="ACCEPTED", reservation_id=ident,
+                created_at=now(), updated_at=now()))
+        else:
+            result = nadree_reservation_detail(ident, request, session)
+        return {**result, **outcomes.outcome(key, "ACCEPTED")}
+    outcomes.start(session, table, user.uid_token, key, digest, record)
+    try:
+        result = _submit_onsite(body, request, session, user.uid_token)
+    except Problem as error:
+        outcomes.reject(session, table, user.uid_token, key, error)
+    outcomes.accept(session, table, user.uid_token, key, result["item"]["reservationId"])
+    return {**result, **outcomes.outcome(key, "ACCEPTED")}
+
+
+def _submit_onsite(body, request, session, uid):
+    db = request.app.state.db
+    claims = decode_quote(request, body.quoteToken.get_secret_value(), uid)
     evidence = {key: claims[key] for key in ("vehicleId", "startDate", "returnDate", "totalPrice", "currency")}
     evidence["qrDigest"] = qr_digest(request, body.qrCode.get_secret_value())
     if str(body.returnDate) != claims["returnDate"]:
         raise Problem(409, "ONSITE_QUOTE_MISMATCH")
     r = db.table("MSP_RESERVATION")
-    existing = session.execute(select(r).where(r.c.uid_token == user.uid_token,
+    existing = session.execute(select(r).where(r.c.uid_token == uid,
         r.c.client_request_id == body.clientRequestId).with_for_update()).mappings().first()
     if existing:
         if (existing["required_criteria_json"] or {}).get("onsiteRequest") != evidence:
@@ -242,23 +272,56 @@ def onsite_request(body: OnsiteRequest, request: Request, session=DB):
     _, price = plan(request, session, spot, item, body.returnDate)
     if price["totalFrom"] != claims["totalPrice"] or price["currency"] != claims["currency"]:
         raise Problem(409, "ONSITE_QUOTE_CHANGED")
-    reservation = insert_reservation(request, session, spot, item, user.uid_token, body.returnDate,
+    reservation = insert_reservation(request, session, spot, item, uid, body.returnDate,
                                      key=body.clientRequestId, evidence=evidence)
-    reservation_history(request, session, reservation, {}, "REQUESTED", user.uid_token, customer=True)
+    reservation_history(request, session, reservation, {}, "REQUESTED", uid, customer=True)
     queue_reservation_request(db, session, reservation["reservation_id"], spot["spot_master_id"])
     return nadree_reservation_detail(reservation["reservation_id"], request, session)
 
 
-@router.get("/onsite/requests/{client_request_id}", response_model=CustomerReservationDetail, summary="재설치·응답 유실 후 본인 신청 키로 결과 조회")
-def request_result(client_request_id: RequestKey, request: Request, session=DB):
+@router.get("/onsite/requests/{client_request_id}", response_model=CustomerOnsiteResult,
+            responses={202: {"model": CustomerOnsiteResult}}, summary="본인 신청의 접수·확정 거절·처리 중·불명 결과 조회")
+def request_result(client_request_id: RequestKey, request: Request, response: Response, session=DB):
     user = user_principal(request, session)
     require_schema(request.app.state.db)
-    r = request.app.state.db.table("MSP_RESERVATION")
-    ident = session.scalar(select(r.c.reservation_id).where(r.c.uid_token == user.uid_token,
-        r.c.client_request_id == client_request_id))
-    if not ident:
-        raise Problem(404, "ONSITE_REQUEST_NOT_FOUND")
-    return nadree_reservation_detail(ident, request, session)
+    table = outcomes.require_schema(request.app.state.db)
+    return _request_result(request, session, response, user.uid_token, client_request_id, table)
+
+
+def _request_result(request, session, response, uid, key, table):
+    ident = outcomes.accepted_id(request.app.state.db, session, uid, key)
+    if ident:
+        return {**nadree_reservation_detail(ident, request, session), **outcomes.outcome(key, "ACCEPTED")}
+    record = outcomes.find(session, table, uid, key)
+    if record and record["request_state"] == "REJECTED":
+        return {"status": "success", **outcomes.outcome(key, "REJECTED", code=record["error_code"])}
+    if outcomes.processing(session, uid, key):
+        response.status_code, response.headers["Retry-After"] = 202, "2"
+        return {"status": "success", **outcomes.outcome(key, "PROCESSING")}
+    code = "ONSITE_REQUEST_OUTCOME_UNKNOWN" if record else "ONSITE_REQUEST_NOT_FOUND"
+    raise Problem(503 if record else 404, code, request_outcome=outcomes.outcome(key, "UNKNOWN"))
+
+
+@router.post("/onsite/requests/{client_request_id}/close", response_model=CustomerOnsiteResult,
+             responses={202: {"model": CustomerOnsiteResult}}, summary="미접수 신청 키를 확정 종료해 늦은 생성 차단")
+def close_request(client_request_id: RequestKey, request: Request, response: Response, session=REQUEST_DB):
+    user = user_principal(request, session)
+    limited(request, user.uid_token)
+    require_schema(request.app.state.db)
+    table = outcomes.require_schema(request.app.state.db)
+    if not outcomes.try_lock(session, user.uid_token, client_request_id):
+        response.status_code, response.headers["Retry-After"] = 202, "2"
+        return {"status": "success", **outcomes.outcome(client_request_id, "PROCESSING")}
+    ident = outcomes.accepted_id(request.app.state.db, session, user.uid_token, client_request_id)
+    if ident:
+        return {**nadree_reservation_detail(ident, request, session), **outcomes.outcome(client_request_id, "ACCEPTED")}
+    record = outcomes.find(session, table, user.uid_token, client_request_id)
+    if record and record["request_state"] == "ACCEPTED":
+        raise Problem(503, "ONSITE_RESULT_UNAVAILABLE", request_outcome=outcomes.outcome(client_request_id, "UNKNOWN"))
+    if not record or record["request_state"] != "REJECTED":
+        outcomes.close(session, table, user.uid_token, client_request_id, record)
+    return {"status": "success", **outcomes.outcome(client_request_id, "REJECTED",
+        code=record["error_code"] if record and record["request_state"] == "REJECTED" else "ONSITE_REQUEST_CLOSED")}
 
 
 @router.post("/reservations/{reservation_id}/receive", response_model=CustomerReservationDetail, summary="본인 예약·공용 QR 확인 후 명시적 인수 확정")
@@ -284,10 +347,11 @@ def receive(reservation_id: str, body: Qr, request: Request, session=DB):
         raise Problem(409, "RESERVATION_VEHICLE_MISMATCH")
     if reservation["reservation_status"] in ("HANDED_OVER", "RETURNED") and reservation.get("handed_over_at"):
         return nadree_reservation_detail(reservation_id, request, session)
+    if (reservation["reservation_status"] in (PENDING, "EXPIRED") and reservation.get("handed_over_at")
+            and (not reservation.get("receipt_deadline_at") or now() >= reservation["receipt_deadline_at"])):
+        raise Problem(409, "RECEIPT_DEADLINE_EXPIRED")
     if reservation["reservation_status"] != PENDING:
         raise Problem(409, "NOT_AWAITING_RECEIPT")
-    if not reservation.get("receipt_deadline_at") or now() >= reservation["receipt_deadline_at"]:
-        raise Problem(409, "RECEIPT_DEADLINE_EXPIRED")
     paid_booking(request, session, reservation)
     vehicles = fleet(request, session, spot, model_id=reservation["model_id"], lock=True)
     item = vehicles.get(qr["vehicle_id"])
@@ -299,6 +363,5 @@ def receive(reservation_id: str, body: Qr, request: Request, session=DB):
     from app.rentals import require_no_contract
     require_no_contract(request, session, reservation)
     start_contract(request, session, spot, item, vehicles, contracts, user.uid_token,
-        local_date(request, reservation["end_datetime"]), reservation=reservation,
-        actor_id=user.uid_token, customer_receipt=True)
+        local_date(request, reservation["end_datetime"]), reservation=reservation)
     return nadree_reservation_detail(reservation_id, request, session)

@@ -14,7 +14,6 @@ BASE = "/api/v1/nadree/rental"
 
 @pytest.fixture
 def receipt(external):
-    external["settings"].customer_receipt_enabled = True
     return external
 
 
@@ -40,7 +39,7 @@ def receive(ctx, ident, qr=None, headers=None):
 
 def count(ctx, table):
     with ctx["engine"].connect() as conn:
-        return conn.scalar(select(func.count()).select_from(ctx["tables"][table]))
+        return conn.scalar(select(func.count()).select_from(ctx["db"].table(table)))
 
 
 def new_quote(ctx, qr=None, days=1):
@@ -178,12 +177,10 @@ def test_onsite_requests_expire_without_a_physical_hold(receipt):
     assert count(ctx, "MSP_RENTAL_CONTRACT") == 0
 
 
-def test_disabled_feature_and_manual_direct_walkin(receipt):
+def test_receipt_is_always_available_and_manual_walkin_waits_for_customer(receipt):
     ctx = receipt
-    ctx["settings"].customer_receipt_enabled = False
     response = ctx["client"].post(BASE + "/qr/lookup", headers=ctx["headers"], json={"qrCode": next(iter(ctx["qrs"].values()))})
-    assert response.status_code == 409 and response.json()["errorCode"] == "CUSTOMER_RECEIPT_NOT_ENABLED"
-    ctx["settings"].customer_receipt_enabled = True
+    assert response.status_code == 200 and response.json()["availableActions"] == ["ONSITE_QUOTE"]
     from app.rental_common import local_date
     from types import SimpleNamespace
     end = local_date(SimpleNamespace(app=ctx["app"]), now()) + timedelta(days=1)
@@ -250,13 +247,16 @@ def test_hold_blocks_vehicle_mutations_and_expiry_is_idempotent(receipt, monkeyp
     assert "RECOVER_VEHICLE" in operation(ctx, ident)["availableActions"]
 
 
-def test_receipt_still_finishes_after_feature_is_disabled(receipt, monkeypatch):
+def test_obsolete_false_setting_cannot_disable_customer_receipt(receipt, monkeypatch):
     ctx = receipt
     ident = ctx["request_booking"](0)["reservationId"]
     approve(ctx, ident)
     at_period(ctx, ident, monkeypatch)
     assert prepare(ctx, ident).status_code == 200
-    ctx["settings"].customer_receipt_enabled = False
+    from app.config import Settings
+    monkeypatch.setenv("NADREE_CUSTOMER_RECEIPT_ENABLED", "false")
+    ctx["app"].state.settings = Settings(_env_file=None, **ctx["settings"].model_dump())
+    assert "customer_receipt_enabled" not in Settings.model_fields
     lookup = ctx["client"].post(BASE + "/qr/lookup", headers=ctx["headers"], json={
         "qrCode": ctx["qrs"][row(ctx, ident)["assigned_vehicle_id"]], "reservationId": ident})
     assert lookup.status_code == 200 and lookup.json()["canReceive"] is True
@@ -313,13 +313,13 @@ def test_customer_lookup_does_not_expose_other_customer_reservation(receipt):
     assert response.status_code == 404
 
 
-def test_new_client_cannot_use_legacy_start_when_feature_disabled(external, monkeypatch):
+def test_old_client_cannot_skip_customer_confirmation(external, monkeypatch):
     ctx = external
     ident = ctx["request_booking"](0)["reservationId"]
     approve(ctx, ident)
     at_period(ctx, ident, monkeypatch)
-    response = prepare(ctx, ident)
-    assert response.json()["errorCode"] == "CUSTOMER_RECEIPT_NOT_ENABLED"
+    response = prepare(ctx, ident, required=False)
+    assert response.json()["errorCode"] == "CLIENT_UPDATE_REQUIRED"
     assert count(ctx, "MSP_RENTAL_CONTRACT") == 0
 
 
@@ -328,8 +328,13 @@ def test_existing_rental_is_not_required_to_receive_again(external, monkeypatch)
     ident = ctx["request_booking"](0)["reservationId"]
     approve(ctx, ident)
     at_period(ctx, ident, monkeypatch)
-    assert prepare(ctx, ident, required=False).status_code == 200
-    ctx["settings"].customer_receipt_enabled = True
+    assert prepare(ctx, ident).status_code == 200
+    assert receive(ctx, ident).status_code == 200
+    # A migrated contract has no administrator/customer receipt timestamps.
+    reservation = ctx["tables"]["MSP_RESERVATION"]
+    with ctx["engine"].begin() as conn:
+        conn.execute(reservation.update().where(reservation.c.reservation_id == ident).values(
+            handed_over_at=None, receipt_deadline_at=None))
     result = ctx["client"].get(BASE + "/reservations/" + ident, headers=ctx["headers"]).json()["item"]
     assert result["rentalStatus"] == "ON_RENT" and result["customerReceiptRequired"] is False
     assert result["canReceive"] is False
@@ -348,6 +353,50 @@ def test_expired_handover_cannot_be_quoted_or_reassigned(receipt, monkeypatch):
     assert response.status_code == 409
     assert row(ctx, ident)["assigned_vehicle_id"] == held["assigned_vehicle_id"]
     assert calendar_event(ctx, ident)["isBlocking"] is True
+
+
+def test_admin_read_views_share_receipt_identifiers_and_keep_expired_work(receipt, monkeypatch):
+    ctx = receipt
+    ident = ctx["request_booking"](0)["reservationId"]
+    approve(ctx, ident)
+    at = at_period(ctx, ident, monkeypatch)
+    monkeypatch.setattr("app.readmodels.now", lambda: at)
+    assert prepare(ctx, ident).status_code == 200
+    held = row(ctx, ident)
+    scanned = ctx["client"].post("/nadreego/vehicle/qr/validate", headers=ctx["admin"],
+        json={"qrCode": ctx["qrs"][held["assigned_vehicle_id"]]}).json()["data"]
+    assert scanned["currentBooking"]["reservationId"] == ident
+    assert scanned["currentBooking"]["vehicleId"] == held["assigned_vehicle_id"]
+    operation_item = operation(ctx, ident)
+    assert operation_item["reservationId"] == operation_item["reservation"]["reservationId"] == ident
+    assert operation_item["vehicleId"] == operation_item["vehicle"]["vehicleId"] == held["assigned_vehicle_id"]
+    home = ctx["client"].get("/nadreego/main", headers=ctx["admin"]).json()
+    work = next(r for r in home["todayWork"] if r.get("reservationId") == ident)
+    assert work["requestType"] == "ADVANCE" and work["receiptDeadline"] is not None
+    assert work["availableActions"] == ["RECOVER_VEHICLE"] and work["canHandOver"] is False
+    expire_receipts(ctx["db"], ctx["settings"], at=held["receipt_deadline_at"])
+    after_original_end = held["end_datetime"] + timedelta(days=2)
+    monkeypatch.setattr("app.readmodels.now", lambda: after_original_end)
+    monkeypatch.setattr("app.receipt.now", lambda: after_original_end)
+    home = ctx["client"].get("/nadreego/main", headers=ctx["admin"]).json()
+    work = next(r for r in home["todayWork"] if r.get("reservationId") == ident)
+    assert work["reservationStatus"] == "EXPIRED" and work["vehicleRecoveryRequired"] is True
+    assert work["receiptBlockedReason"] == "RECEIPT_DEADLINE_EXPIRED"
+    assert work["availableActions"] == ["RECOVER_VEHICLE"]
+
+
+def test_admin_home_has_contract_and_return_action_after_customer_receipt(receipt, monkeypatch):
+    ctx = receipt
+    ident = ctx["request_booking"](0)["reservationId"]
+    approve(ctx, ident)
+    at = at_period(ctx, ident, monkeypatch)
+    monkeypatch.setattr("app.readmodels.now", lambda: at)
+    prepare(ctx, ident)
+    received = receive(ctx, ident).json()["item"]
+    home = ctx["client"].get("/nadreego/main", headers=ctx["admin"]).json()
+    work = next(r for r in home["todayWork"] if r.get("reservationId") == ident)
+    assert work["rentalStatus"] == "ON_RENT" and "RETURN" in work["availableActions"]
+    assert work["rental"]["rentalContractId"] == received["rentalContractId"]
 
 
 @pytest.mark.mysql

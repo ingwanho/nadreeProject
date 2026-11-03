@@ -14,11 +14,6 @@ def require_schema(db):
         raise Problem(503, "RECEIPT_SCHEMA_UPDATE_REQUIRED")
 
 
-def enabled(request, reservation=None):
-    criteria = (reservation or {}).get("required_criteria_json") or {}
-    return bool(request.app.state.settings.customer_receipt_enabled or criteria.get("customerReceiptRequired"))
-
-
 def is_onsite(reservation):
     return ((reservation or {}).get("required_criteria_json") or {}).get("requestType") == "ONSITE"
 
@@ -37,9 +32,11 @@ def view(request, reservation, contract=None):
     deadline = reservation.get("receipt_deadline_at")
     pending = reservation.get("reservation_status") == PENDING
     can_receive = bool(pending and deadline and now() < deadline)
-    required = enabled(request, reservation) if reservation else False
+    required = bool(reservation)
     if reservation.get("reservation_status") in ("HANDED_OVER", "RETURNED") and not reservation.get("handed_over_at"):
         required = False
+    needs_recovery = bool(reservation.get("handed_over_at") and
+        (reservation.get("reservation_status") == "EXPIRED" or pending and deadline and now() >= deadline))
     return {"requestType": "ONSITE" if is_onsite(reservation) else "ADVANCE",
             "requestDeadline": iso(request, reservation.get("hold_expires_at")) if is_onsite(reservation) else None,
             "customerReceiptRequired": required,
@@ -47,9 +44,8 @@ def view(request, reservation, contract=None):
             "receiptDeadline": iso(request, deadline),
             "receivedAt": iso(request, (contract or {}).get("actual_start_time")) if reservation.get("handed_over_at") else None,
             "canReceive": can_receive,
-            "receiptBlockedReason": None if can_receive else "RECEIPT_DEADLINE_EXPIRED" if pending else "NOT_AWAITING_RECEIPT",
-            "vehicleRecoveryRequired": bool(reservation.get("handed_over_at") and
-                (reservation.get("reservation_status") == "EXPIRED" or pending and deadline and now() >= deadline))}
+            "receiptBlockedReason": None if can_receive else "RECEIPT_DEADLINE_EXPIRED" if needs_recovery else "NOT_AWAITING_RECEIPT",
+            "vehicleRecoveryRequired": needs_recovery}
 
 
 def prepare(request, session, reservation, vehicle_id, admin_id):

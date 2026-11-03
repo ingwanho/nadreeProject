@@ -42,6 +42,14 @@ def migration_plan(db):
         raise ValueError("Existing service tables missing: " + ", ".join(sorted(missing_tables)))
     operations = []
     from app.rental_schema import metadata as rental_metadata
+    name = "MSP_RENTAL_ONSITE_REQUEST"
+    table = rental_metadata.tables[name]
+    if name not in tables:
+        operations.append(("create " + name, str(CreateTable(table).compile(dialect=mysql.dialect())), {}))
+    else:
+        columns = {row["name"] for row in inspector.get_columns(name)}
+        if set(table.c.keys()) - columns or tuple(inspector.get_pk_constraint(name)["constrained_columns"]) != ("uid_token", "client_request_id"):
+            raise ValueError(name + " has an incompatible definition; manual migration required")
     if "MSP_RENTAL_NOTIFICATION" not in tables:
         table = rental_metadata.tables["MSP_RENTAL_NOTIFICATION"]
         operations.append(("create MSP_RENTAL_NOTIFICATION", str(CreateTable(table).compile(dialect=mysql.dialect())), {}))

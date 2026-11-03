@@ -306,7 +306,7 @@ def queue_receipt_required(db, session, uid_token, reservation_id, deadline_at):
         _queue(session, table="MSP_RENTAL_USER", key_column="uid_token",
                recipients=[{"id": uid_token, "token": row.get("fcm_token"), "updated_at": row.get("fcm_token_updated_at")}],
                event="CUSTOMER_RECEIPT_REQUIRED", title="차량 인수 확인 안내",
-               body="관리자가 차량을 인계했습니다. 발리 현지 기준 오늘이 끝나기 전에 앱에서 차량 QR을 확인하고 인수를 확정해 주세요.",
+               body="관리자의 인계 처리가 완료되었습니다. 발리 현지 기준 오늘이 끝나기 전에 차량을 확인하고 앱에서 인수를 확정해 주세요.",
                data={"type": "CUSTOMER_RECEIPT_REQUIRED", "eventId": "receipt:" + reservation_id,
                      "reservationId": reservation_id, "bookedNo": "BO" + reservation_id,
                      "reservationStatus": "HANDOVER_PENDING", "receiptDeadline": deadline_at.isoformat() + "Z"})

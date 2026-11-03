@@ -1,5 +1,11 @@
 # Nadree 전체 변경사항 및 인수 문서
 
+## 2026-11-03 추가 인수서 반영 — 로컬 구현·서버 미적용
+
+인수 ON/OFF와 즉시 대여 분기를 제거하고 receiptRequired=true를 유지한다. 사용자 승인으로 MSP_RENTAL_ONSITE_REQUEST 테이블 1개를 추가해 접수·확정 거절·처리 중·불명 상태를 구분하며 명시적 close로 늦은 생성을 차단한다. 관리자 홈·목록·currentBooking 식별자, 오류·상태별 Swagger 예시, NDR-와 영숫자 8자리 원문 규격을 반영했다. 격리 회귀 588 passed/15 skipped. DB 적용·서비스 전환·실기기 공동 시험은 별도다. [최신 계약](qr-onsite-followup-contract-2026-11-03.md), [서버 실행서](qr-onsite-final-server-apply-2026-11-03.md)를 우선한다. 아래 false 유지 결과는 이전 코드의 실제 적용 기록이다.
+
+프론트 전달용: [QR 현장 신청·고객 인수 연결과 테스트 순서](frontend-qr-onsite-receipt-handoff-2026-11-03.md). URL 뒤의 동일 QR 원문을 프론트가 추출해 qrCode로 전달하며, 현재 서버는 기능 비활성을 유지한다.
+
 ## 2026-11-03 공용 QR 현장 신청·고객 인수 — 서버 적용 완료, 기능 비활성 유지
 
 고객 QR 조회·당일 견적/멱등 신청·접수 결과 조회·인수 확정, 관리자 보호 차량 회수와 Swagger 예시를 추가했다. 기존 QR 원문·대소문자를 그대로 사용한다. 관리자 인계는 HANDOVER_PENDING, 고객 확정 후에만 HANDED_OVER/ON_RENT다. 기한 초과 시 EXPIRED여도 배정·DISABLED 보호를 유지하고 직원 실물 회수 후 해제한다. 현장 신청은 EXTERNAL이다.

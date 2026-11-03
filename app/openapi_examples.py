@@ -3,6 +3,7 @@
 Secrets are deliberately represented by placeholders because this data is
 served from the public OpenAPI document.
 """
+from app.onsite_requests import outcome as onsite_outcome
 
 TEST_SPOT = {
     "shopId": "00000000-0000-4000-8000-000000000101",
@@ -264,7 +265,7 @@ OPENAPI_EXAMPLES = {
     },
     "VehicleNumber": {"vehicleNumber": "DK-TEST-301"},
     "VehicleCreate": {
-        "qrToken": "testQr123123",
+        "qrToken": "NDR-Ab12Cd34",
         "brand": "Honda",
         "vehicleName": "Vario 125",
         "modelId": "NRTEST-MODEL-125",
@@ -273,12 +274,12 @@ OPENAPI_EXAMPLES = {
     },
     "Detach": {"vehicleNumber": "DK-TEST-301", "division": "QR"},
     "PriceChange": {"vehicleNumber": "DK-TEST-301", "priceType": "BASIC", "priceInfo": None},
-    "Qr": {"qrCode": "testQr123123"},
-    "Lookup": {"qrCode": "testQr123123", "reservationId": "NRTEST-RES-APP-001"},
-    "Quote": {"qrCode": "testQr123123", "returnDate": "2026-11-05"},
-    "OnsiteRequest": {"qrCode": "testQr123123", "returnDate": "2026-11-05",
+    "Qr": {"qrCode": "NDR-Ab12Cd34"},
+    "Lookup": {"qrCode": "NDR-Ab12Cd34", "reservationId": "NRTEST-RES-APP-001"},
+    "Quote": {"qrCode": "NDR-Ab12Cd34", "returnDate": "2026-11-05"},
+    "OnsiteRequest": {"qrCode": "NDR-Ab12Cd34", "returnDate": "2026-11-05",
         "clientRequestId": "11111111-2222-4333-8444-555555555555", "quoteToken": "<quoteToken-from-onsite-quote>"},
-    "ReceiptRecovery": {"qrCode": "testQr123123", "vehicleReturned": True, "reason": "차량과 열쇠 실물 회수 확인"},
+    "ReceiptRecovery": {"qrCode": "NDR-Ab12Cd34", "vehicleReturned": True, "reason": "차량과 열쇠 실물 회수 확인"},
     "Repair": {"vehicleNumber": "DK-TEST-302", "date": "2026-10-03", "reason": "정기 점검"},
     "Move": {"vehicleNumber": "DK-TEST-301", "spotCode": TEST_SPOT["spotCode"]},
     "BookingAction": {"bookedNo": "BONRTEST-RES-REQ-001", "action": "APPROVE"},
@@ -287,7 +288,7 @@ OPENAPI_EXAMPLES = {
         "correctedLocation": {**TEST_SPOT["location"], "latitude": -8.65001},
         "reason": "같은 매장 출입구의 핀 위치 보정"},
     "ReservationCancel": {"reservationId": "NRTEST-RES-REQ-001", "reason": "테스트 취소"},
-    "RentApprove": {"qrCode": "testQr123123", "bookedNo": "BONRTEST-RES-APP-001", "receiptRequired": True},
+    "RentApprove": {"qrCode": "NDR-Ab12Cd34", "bookedNo": "BONRTEST-RES-APP-001", "receiptRequired": True},
     "PassportUpload": {
         "bookedNo": "BONRTEST-RES-HAND-001",
         "contentType": "image/jpeg",
@@ -649,8 +650,10 @@ _ONSITE_RECORD = dict({**TEST_RECORD, **OPENAPI_EXAMPLES["ReceiptInfo"]}, startD
 OPENAPI_RESPONSE_EXAMPLES.update({
     ("POST", "/api/v1/nadree/rental/qr/lookup"): OPENAPI_EXAMPLES["CustomerQrLookup"],
     ("POST", "/api/v1/nadree/rental/onsite/quote"): OPENAPI_EXAMPLES["CustomerOnsiteQuote"],
-    ("POST", "/api/v1/nadree/rental/onsite/requests"): {"status": "success", "item": _ONSITE_RECORD},
-    ("GET", "/api/v1/nadree/rental/onsite/requests/{client_request_id}"): {"status": "success", "item": _ONSITE_RECORD},
+    ("POST", "/api/v1/nadree/rental/onsite/requests"): {"status": "success", "item": _ONSITE_RECORD,
+        **onsite_outcome("11111111-2222-4333-8444-555555555555", "ACCEPTED")},
+    ("GET", "/api/v1/nadree/rental/onsite/requests/{client_request_id}"): {"status": "success", "item": _ONSITE_RECORD,
+        **onsite_outcome("11111111-2222-4333-8444-555555555555", "ACCEPTED")},
     ("POST", "/api/v1/nadree/rental/reservations/{reservation_id}/receive"): {"status": "success", "item": dict(
         _ONSITE_RECORD, recordType="RENTAL", reservationStatus="HANDED_OVER", rentalStatus="ON_RENT",
         rentalContractId="NRTEST-CONTRACT-RECEIVED", vehicleAssignmentStatus="LOCKED",
@@ -668,4 +671,109 @@ OPENAPI_REQUEST_EXAMPLES = {
         "resource_type": "capture", "event_type": "PAYMENT.CAPTURE.COMPLETED",
         "summary": "Test capture completed", "resource": {"id": "NRTEST-CAPTURE-PAID-001", "status": "COMPLETED"},
     },
+}
+
+# Named examples show only the state-dependent fields consumers need to bind.
+_REQUEST_KEY = "11111111-2222-4333-8444-555555555555"
+_CUSTOMER_BASE = "/api/v1/nadree/rental"
+_PROCESSING = {"status": "success", "item": None, "errorCode": None, **onsite_outcome(_REQUEST_KEY, "PROCESSING")}
+_REJECTED = {"status": "success", "item": None, **onsite_outcome(_REQUEST_KEY, "REJECTED", code="ONSITE_QUOTE_EXPIRED")}
+_ADMIN_PENDING = {
+    "bookedNo": "BONRTEST-RES-APP-001", "reservationId": "NRTEST-RES-APP-001", "recordType": "RESERVATION",
+    "vehicleId": "NRTEST-NDR-ONLY-001", "reservationStatus": "HANDOVER_PENDING", "rentalStatus": None,
+    **OPENAPI_EXAMPLES["ReceiptInfo"], "canHandOver": False, "handoverBlockedReason": "RESERVATION_NOT_APPROVED",
+    "availableActions": ["RECOVER_VEHICLE"],
+    "reservation": {"reservationId": "NRTEST-RES-APP-001", "assignedVehicleId": "NRTEST-NDR-ONLY-001",
+        "assignmentStatus": "LOCKED", "startDatetime": "2026-11-03T14:00:00+08:00", "endDatetime": "2026-11-05T23:59:59+08:00"},
+    "vehicle": {"vehicleId": "NRTEST-NDR-ONLY-001", "vehicleNo": "DK-NDR-ONLY-001", "vehicleStatus": "DISABLED"},
+    "rental": None,
+}
+_ADMIN_EXPIRED = dict(_ADMIN_PENDING, reservationStatus="EXPIRED", canReceive=False,
+    receiptBlockedReason="RECEIPT_DEADLINE_EXPIRED", vehicleRecoveryRequired=True)
+_ADMIN_APPROVED = dict(_ADMIN_PENDING, reservationStatus="APPROVED", handedOverAt=None,
+    receiptDeadline=None, canReceive=False, receiptBlockedReason="NOT_AWAITING_RECEIPT", canHandOver=True,
+    handoverBlockedReason=None, availableActions=["RENT_APPROVE", "CANCEL"],
+    reservation=dict(_ADMIN_PENDING["reservation"], assignmentStatus="PROVISIONAL"),
+    vehicle=dict(_ADMIN_PENDING["vehicle"], vehicleStatus="AVAILABLE"))
+_ADMIN_REQUESTED = dict(_ADMIN_APPROVED, reservationStatus="REQUESTED", vehicleId=None,
+    canHandOver=False, handoverBlockedReason="RESERVATION_NOT_APPROVED", availableActions=["APPROVE", "REJECT"],
+    reservation=dict(_ADMIN_APPROVED["reservation"], assignedVehicleId=None, assignmentStatus="SOFT_HOLD"), vehicle={})
+_ADMIN_RENTAL = dict(_ADMIN_PENDING, reservationStatus="HANDED_OVER", recordType="RENTAL", rentalStatus="ON_RENT",
+    receivedAt="2026-11-03T15:05:00+08:00", canReceive=False, receiptBlockedReason="NOT_AWAITING_RECEIPT",
+    handoverBlockedReason="RESERVATION_ALREADY_HANDED_OVER", availableActions=["RETURN"],
+    vehicle=dict(_ADMIN_PENDING["vehicle"], vehicleStatus="ON_RENT"),
+    rental={"rentalContractId": "NRTEST-CONTRACT-RECEIVED", "contractStatus": "ON_RENT",
+        "actualStartTime": "2026-11-03T15:05:00+08:00", "actualEndTime": None, "plannedEndDate": "2026-11-05"})
+
+
+def _page_example(item):
+    return {"status": True, "items": [item], "page": 1, "pageSize": 20, "totalCount": 1, "hasNext": False}
+
+
+def _booking_example(item):
+    return {key: item[key] for key in ("bookedNo", "reservationId", "vehicleId", "requestType",
+        "requestDeadline", "customerReceiptRequired", "handedOverAt", "receiptDeadline", "receivedAt",
+        "canReceive", "receiptBlockedReason", "vehicleRecoveryRequired", "reservationStatus", "canHandOver",
+        "handoverBlockedReason", "availableActions")} | {
+            "assignmentStatus": "LOCKED", "startDatetime": item["reservation"]["startDatetime"],
+            "endDatetime": item["reservation"]["endDatetime"]}
+
+
+OPENAPI_STATUS_EXAMPLES = {
+    ("POST", _CUSTOMER_BASE + "/onsite/requests"): {
+        202: {"processing": _PROCESSING},
+        409: {code: {"status": "fail", **onsite_outcome(_REQUEST_KEY, "REJECTED", code=code)} for code in
+            ("ONSITE_QUOTE_EXPIRED", "ONSITE_QUOTE_CHANGED", "VEHICLE_UNAVAILABLE", "ONSITE_REQUEST_CLOSED")},
+        503: {"unavailableOutcomeUnknown": {"status": "fail", "errorCode": "DATABASE_UNAVAILABLE"}},
+    },
+    ("GET", _CUSTOMER_BASE + "/onsite/requests/{client_request_id}"): {
+        200: {"accepted": OPENAPI_RESPONSE_EXAMPLES[("POST", _CUSTOMER_BASE + "/onsite/requests")], "rejected": _REJECTED},
+        202: {"processing": _PROCESSING},
+        404: {"notFoundIsNotFinal": {"status": "fail", "errorCode": "ONSITE_REQUEST_NOT_FOUND",
+            **onsite_outcome(_REQUEST_KEY, "UNKNOWN")}},
+        503: {"interruptedAttempt": {"status": "fail", "errorCode": "ONSITE_REQUEST_OUTCOME_UNKNOWN",
+            **onsite_outcome(_REQUEST_KEY, "UNKNOWN")}},
+    },
+    ("POST", _CUSTOMER_BASE + "/onsite/requests/{client_request_id}/close"): {
+        200: {"closed": dict(_REJECTED, errorCode="ONSITE_REQUEST_CLOSED"),
+            "alreadyAccepted": OPENAPI_RESPONSE_EXAMPLES[("POST", _CUSTOMER_BASE + "/onsite/requests")]},
+        202: {"stillProcessing": _PROCESSING},
+    },
+    ("POST", _CUSTOMER_BASE + "/reservations/{reservation_id}/receive"): {
+        409: {code: {"status": "fail", "errorCode": code} for code in
+            ("RESERVATION_VEHICLE_MISMATCH", "NOT_AWAITING_RECEIPT", "RECEIPT_DEADLINE_EXPIRED", "QR_INACTIVE", "RECEIPT_HOLD_INCONSISTENT")},
+        404: {"notOwnedOrNotFound": {"status": "fail", "errorCode": "RESERVATION_NOT_FOUND"},
+            "qrNotFound": {"status": "fail", "errorCode": "QR_NOT_FOUND"}},
+        410: {"qrExpired": {"status": "fail", "errorCode": "QR_EXPIRED"}},
+    },
+    ("POST", "/nadreego/booking/select"): {200: {
+        "onsiteRequested": _page_example(_ADMIN_REQUESTED), "approved": _page_example(_ADMIN_APPROVED),
+        "awaitingReceipt": _page_example(_ADMIN_PENDING), "expiredNeedsRecovery": _page_example(_ADMIN_EXPIRED),
+        "rental": _page_example(_ADMIN_RENTAL)}},
+    ("GET", "/nadreego/main"): {200: {"receiptWork": {
+        **OPENAPI_RESPONSE_EXAMPLES[("GET", "/nadreego/main")], "todayWork": [
+            dict(item, startAt=item["reservation"]["startDatetime"]) for item in (_ADMIN_PENDING, _ADMIN_EXPIRED, _ADMIN_RENTAL)]}}},
+    ("POST", "/nadreego/main/calendar"): {200: {"protectedVehicle": {
+        **_page_example({**_ADMIN_PENDING["vehicle"], "events": [{
+            **{key: _ADMIN_EXPIRED[key] for key in ("bookedNo", "reservationId", "requestType", "receiptDeadline", "canReceive", "vehicleRecoveryRequired", "availableActions")},
+            "eventId": _ADMIN_EXPIRED["bookedNo"], "eventType": "RESERVATION", "status": "EXPIRED",
+            "startAt": _ADMIN_EXPIRED["handedOverAt"], "endAt": None, "endAtType": "OPEN", "assignmentStatus": "LOCKED",
+            "isBlocking": True, "canReassign": False, "canHandOver": False, "handoverBlockedReason": "VEHICLE_RECEIPT_HOLD"}]}),
+        "startDate": "2026-11-04", "endDate": "2026-11-06", "timeZone": "Asia/Makassar", "warnings": []}}},
+    ("POST", "/nadreego/vehicle/select"): {200: {"awaitingReceipt": _page_example({
+        "vehicle": _ADMIN_PENDING["vehicle"], "currentBooking": _booking_example(_ADMIN_PENDING),
+        "currentRental": None, "availableActions": []})}},
+    ("POST", "/nadreego/vehicle/qr/validate"): {200: {"awaitingReceipt": {
+        "status": True, "errorCode": None, "data": {"vehicleId": _ADMIN_PENDING["vehicleId"],
+            "qrId": "NRTEST-NDR-QR-001", "qrStatus": "ACTIVE", "equipmentType": "QR_ONLY", "sensorId": None,
+            "sensorStatus": "NOT_LINKED", "vehicle": _ADMIN_PENDING["vehicle"],
+            "currentBooking": _booking_example(_ADMIN_PENDING), "currentRental": None, "availableActions": ["RECOVER_VEHICLE"]}}}},
+    ("POST", "/nadreego/rent/approve"): {409: {
+        "oldClient": {"status": "fail", "errorCode": "CLIENT_UPDATE_REQUIRED"},
+        "expiredProtectedVehicle": {"status": "fail", "errorCode": "VEHICLE_UNAVAILABLE"},
+        "wrongVehicle": {"status": "fail", "errorCode": "RESERVATION_VEHICLE_MISMATCH"}}},
+    ("POST", "/nadreego/booking/action"): {409: {"receiptProtected": {"status": "fail", "errorCode": "RESERVATION_STATE_INVALID"}}},
+    ("POST", "/nadreego/vehicle/return"): {409: {"receiptProtected": {"status": "fail", "errorCode": "VEHICLE_RECEIPT_HOLD"}}},
+    ("POST", "/nadreego/booking/{booked_no}/receipt-recovery"): {409: {code: {"status": "fail", "errorCode": code} for code in
+        ("NOT_AWAITING_RECOVERY", "RESERVATION_VEHICLE_MISMATCH", "RECEIPT_HOLD_INCONSISTENT")}},
 }
