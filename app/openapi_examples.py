@@ -434,6 +434,8 @@ OPENAPI_EXAMPLES = {
 }
 
 OPENAPI_EXAMPLES.update({
+    "AdminAccountDeletion": {"status": "success", "deleted": True, "scope": "SELF",
+        "spotMasterId": TEST_SPOT["spotMasterId"], "deletedAdminCount": 1, "deletedSpotCount": 0},
     "SignedInAdmin": dict(OPENAPI_EXAMPLES["Admin"], spotMasterId=TEST_SPOT["spotMasterId"]),
     "SignedIn": {
         "status": "success", "accessToken": "<nadree-access-token>", "refreshToken": "<nadree-refresh-token>",
@@ -720,6 +722,16 @@ def _booking_example(item):
 
 
 OPENAPI_STATUS_EXAMPLES = {
+    ("DELETE", "/nadreego/admin/account"): {
+        200: {
+            "general": OPENAPI_EXAMPLES["AdminAccountDeletion"],
+            "primary": {"status": "success", "deleted": True, "scope": "SUBTREE",
+                "spotMasterId": TEST_SPOT["spotMasterId"], "deletedAdminCount": 4, "deletedSpotCount": 2},
+        },
+        401: {"invalidSession": {"status": "fail", "errorCode": "AUTH_REQUIRED"}},
+        403: {"missingDirectScope": {"status": "fail", "errorCode": "SPOT_ACCESS_DENIED"}},
+        503: {"chatRevocationFailed": {"status": "fail", "errorCode": "CHAT_SYNC_FAILED"}},
+    },
     ("POST", _CUSTOMER_BASE + "/onsite/requests"): {
         202: {"processing": _PROCESSING},
         409: {code: {"status": "fail", **onsite_outcome(_REQUEST_KEY, "REJECTED", code=code)} for code in

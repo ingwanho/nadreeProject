@@ -6,6 +6,8 @@
 
 ## 현재 상태
 
+2026-11-05 관리자 본인 요청 탈퇴 **로컬 구현·서버 미적용**: `DELETE /nadreego/admin/account`. 일반관리자는 본인만, 대표관리자는 본인과 본인 지점·모든 하위 지점의 렌탈 관리자 전원을 탈퇴시키고 해당 지점을 논리 삭제한다. 기존 공유 식별 행·업무 이력은 보존하고 세션·채팅·FCM을 회수한다. 새 DB/env/Firebase 배포 없음. 추가 테스트 16개·전체 회귀 **604 passed/15 skipped**, Swagger 76개 경로 확인. [계약·앱 전달·서버 적용](docs/admin-account-deletion-handoff-2026-11-05.md).
+
 2026-11-03 추가 인수서 반영 — **07:35 UTC 실제 서버 전환 완료**: 사용자 양 앱 준비 확인·배포 승인 후 구 API를 정상 종료하고 새 백업·요청 결과 테이블 1개 적용·구 OFF env 항목 제거·새 API 시작을 완료했다. 인수 절차는 상시 필수이며 NDR 원문·요청 결과 4상태·영속 거절·close·관리자 응답을 제공한다. 실제 공개 OpenAPI 75개 경로와 close, 헬스/준비/Swagger 정상·잔여 마이그레이션 0개·기존 데이터/결제/채팅/receipts 작업 보존을 확인했다. QR_ONLY 시험 차량 2대 등록·실제 QR 조회도 완료했다. 동일 소스의 격리 회귀 **588 passed/15 skipped**, 실패 0. 실제 고객 업무 왕복·실기기 인수는 별도다. [최신 계약](docs/qr-onsite-followup-contract-2026-11-03.md), [서버 적용 실행서](docs/qr-onsite-final-server-apply-2026-11-03.md), [실제 배포·시험 QR·미검증 결과](docs/qr-onsite-final-server-deployment-result-2026-11-03.md). 아래 false 유지 기록은 이전 코드의 적용 이력이다.
 
 2026-11-03 공용 QR 현장 신청·고객 인수 확인 **서버 적용 완료·기능 비활성 유지**. 관리자 인계는 HANDOVER_PENDING, 고객 인수 성공 후 HANDED_OVER/ON_RENT로 전환하며 자정 이후 미인수 차량은 실물 회수까지 보호한다. 테스트 DB 전체 백업 후 예약 nullable 3컬럼·인덱스 2개·상태 CHECK를 적용했고 미적용 변경은 없다. API 재시작·로컬/공개 헬스/준비/Swagger 200·전용 receipts 타이머 정상 실행을 확인했다. `NADREE_CUSTOMER_RECEIPT_ENABLED=false`를 명시해 유지하고 기존 예약 29건·결제/채팅 작업을 보존했다. 격리 전체 회귀 **572 passed/14 skipped**. 앱 공동 검증·실기기 수신·MySQL/Firestore 별도 검증은 남아 있다. [API·QR 정책·배포/복구 안내](docs/qr-onsite-receipt-handoff-2026-11-03.md), [실제 적용·격리 테스트·남은 작업](docs/qr-onsite-receipt-server-result-2026-11-03.md).

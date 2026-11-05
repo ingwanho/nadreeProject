@@ -86,7 +86,7 @@ def test_openapi_has_exact_work_group_routes(client):
     assert "/api/v1/nadree/rental/requests/{request_id}" not in paths
     parameters = paths["/api/v1/nadree/rental/request"]["post"].get("parameters", [])
     assert not any(p["name"] == "Idempotency-Key" for p in parameters)
-    assert len([path for path in paths if not path.startswith("/health/")]) == 75
+    assert len([path for path in paths if not path.startswith("/health/")]) == 76
     assert "post" in paths["/api/v1/nadree/rental/reservations/{reservation_id}/receive"]
     assert "post" in paths["/api/v1/nadree/rental/onsite/requests"]
     payment_return = paths["/api/v1/nadree/rental/payment/return"]["get"]

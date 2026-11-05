@@ -8,6 +8,14 @@ class Status(BaseModel):
     status: Literal["success"] = "success"
 
 
+class AdminAccountDeletion(Status):
+    deleted: Literal[True] = True
+    scope: Literal["SELF", "SUBTREE"]
+    spotMasterId: str
+    deletedAdminCount: int = Field(ge=1)
+    deletedSpotCount: int = Field(ge=0)
+
+
 class Error(BaseModel):
     status: Literal["fail"] = "fail"
     errorCode: str

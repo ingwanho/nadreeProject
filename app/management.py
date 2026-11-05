@@ -10,7 +10,7 @@ from app.db import require_columns, transaction
 from app.errors import Problem
 from app.reservation_payments import checkout_enabled
 from app.headers import bearer
-from app.responses import Admins, Applicants, CreatedSpot, Hierarchy, PrimaryResult, ShopProfile, ShopResult, Status, ShopPayPalMerchantResult
+from app.responses import AdminAccountDeletion, Admins, Applicants, CreatedSpot, Hierarchy, PrimaryResult, ShopProfile, ShopResult, Status, ShopPayPalMerchantResult
 from app.schemas import AdminId, RequestAction, Shop, ShopPayPalMerchant, SpotCreate
 from app.rental_common import context, editable_spot, resolve_spot
 from app.security import (GENERAL, PRIMARY, SESSION_MARKER, active_spot, check_contract, in_subtree,
@@ -107,6 +107,67 @@ def delete_admin(body: AdminId, request: Request, session: Session = DB):
     session.execute(update(admins).where(admins.c.admin_id == body.adminId)
                     .values(fcm_token=None, fcm_token_updated_at=now()))
     return {"status": "success"}
+
+
+@router.delete("/nadreego/admin/account", response_model=AdminAccountDeletion,
+               summary="관리자 본인 요청 회원탈퇴",
+               description="본문 없음. 현재 일반관리자는 본인만 탈퇴합니다. 대표관리자는 본인과 본인 지점·모든 하위 지점의 렌탈 관리자 전원을 탈퇴시키고 해당 지점들을 논리 삭제(is_active=0)합니다. 같은 계약·회사·계층 경계로 제한하며 상위·형제·다른 회사 지점은 제외합니다. 렌탈 역할·본 서비스 세션·FCM 토큰과 채팅 접근을 회수합니다. 공유 관리자 식별 행·다른 서비스 역할·지점/예약/차량/결제 이력은 보존하며 예약 취소·환불은 실행하지 않습니다. 기존 활성 지점·계약·직접 manage 권한을 검증하고 성공 후 앱은 저장한 인증 정보를 폐기합니다.")
+def delete_own_admin_account(request: Request, session: Session = DB):
+    actor = principal(request, session)
+    root = active_spot(request, session, actor, lock=True)
+    db = request.app.state.db
+    admins, mapping = db.table("MSP_ADMIN"), db.table("MSP_ADMIN_ROLE")
+    delete_subtree = PRIMARY in roles(session, db, actor.admin["admin_id"])
+    spots = [root]
+    if delete_subtree:
+        master = db.table("MSP_SPOT_MASTER")
+        condition = ((master.c.contract_id == root["contract_id"]) & (master.c.org_id == root["org_id"]) &
+                     or_(master.c.spot_master_id == root["spot_master_id"],
+                         master.c.unit_code.startswith(root["unit_code"] + "-", autoescape=True)))
+        locked = set()
+        while True:
+            spots = session.execute(select(master).where(condition)
+                .order_by(master.c.unit_code, master.c.spot_master_id).with_for_update()).mappings().all()
+            spot_ids = {spot["spot_master_id"] for spot in spots}
+            if spot_ids == locked:
+                break
+            # A descendant may have been created while waiting for its parent
+            # lock. Re-read after all existing parents are locked.
+            locked = spot_ids
+    query = select(admins.c.admin_id).where(admins.c.primary_spot_master_id.in_(
+        [spot["spot_master_id"] for spot in spots]))
+    if delete_subtree:
+        query = query.where(admins.c.admin_id.in_(select(mapping.c.admin_id).where(
+            mapping.c.role_code.in_([PRIMARY, GENERAL]))))
+    else:
+        query = query.where(admins.c.admin_id == actor.admin["admin_id"])
+    # The spot lock serializes membership/role changes; account locks prevent
+    # login, refresh and chat issuance from restoring a removed session.
+    admin_ids = session.scalars(query.order_by(admins.c.admin_id).with_for_update()).all()
+    from app.security import lock_account
+    lock_account(request, session, actor.admin["admin_id"], actor.session_id)
+    from app.chat import revoke_admin_chat
+    for admin_id in admin_ids:
+        revoke_admin_chat(request, admin_id)
+    session.execute(delete(mapping).where(mapping.c.admin_id.in_(admin_ids),
+        mapping.c.role_code.in_([PRIMARY, GENERAL])))
+    current = now()
+    tokens = db.table("MSP_REFRESH_TOKEN")
+    session.execute(update(tokens).where(tokens.c.admin_id.in_(admin_ids),
+        tokens.c.user_agent == SESSION_MARKER, tokens.c.revoked_at.is_(None)).values(revoked_at=current))
+    session.execute(update(admins).where(admins.c.admin_id.in_(admin_ids))
+                    .values(fcm_token=None, fcm_token_updated_at=current))
+    if delete_subtree:
+        session.execute(update(master).where(master.c.spot_master_id.in_(spot_ids)).values(is_active=0))
+        for level in ("org", "region", "local", "spot"):
+            codes = [spot["unit_code"] for spot in spots if spot["hierarchy_level"] == level]
+            if codes:
+                normal = db.table("MSP_" + level.upper())
+                session.execute(update(normal).where(normal.c.contract_id == root["contract_id"],
+                    normal.c.unit_code.in_(codes)).values(is_active=0))
+    return {"status": "success", "deleted": True, "scope": "SUBTREE" if delete_subtree else "SELF",
+            "spotMasterId": root["spot_master_id"], "deletedAdminCount": len(admin_ids),
+            "deletedSpotCount": len(spots) if delete_subtree else 0}
 
 
 @router.get("/nadreego/shop/profile", response_model=ShopProfile, summary="매장 전체 프로필 조회")
