@@ -40,6 +40,31 @@ def account_change_allowed(request, admin_id):
         raise Problem(409, "DELETION_REQUEST_IN_PROGRESS")
 
 
+def pending_scope_allowed(store, snapshot, *, request_id=None):
+    """Check durable requests under capture's SQL spot locks before side effects.
+
+    A Firestore request may exist even when its later SQL gate commit failed.
+    Unrelated SELF requests in one shop may proceed independently.
+    """
+    if not store.configured:
+        return
+    admins = {member["id"] for member in snapshot["admins"]}
+    spots = {spot["id"] for spot in snapshot["spots"]} if snapshot["scope"] == "SUBTREE" else set()
+    try:
+        for row in store.pending():
+            if request_id and row["requestId"] == request_id:
+                continue
+            other = row["snapshot"]
+            other_admins = {member["id"] for member in other["admins"]}
+            other_spots = {spot["id"] for spot in other["spots"]} if other["scope"] == "SUBTREE" else set()
+            if admins & other_admins or spots & other_spots:
+                raise Problem(409, "DELETION_SCOPE_IN_PROGRESS")
+    except Problem:
+        raise
+    except Exception:
+        raise Problem(503, "DELETION_STATUS_UNAVAILABLE") from None
+
+
 def capture(db, session, admin_id, *, lock=True):
     admins, mapping, master = (db.table(name) for name in ("MSP_ADMIN", "MSP_ADMIN_ROLE", "MSP_SPOT_MASTER"))
     account = session.execute(select(admins).where(admins.c.admin_id == admin_id)).mappings().first()

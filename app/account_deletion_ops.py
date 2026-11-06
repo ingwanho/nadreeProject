@@ -10,7 +10,7 @@ from types import SimpleNamespace
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
-from app.account_deletion_scope import capture, outstanding
+from app.account_deletion_scope import capture, outstanding, pending_scope_allowed
 from app.account_deletion_security import email_hash, validate_keys
 from app.account_deletion_store import DeletionStore, TERMINAL, body_digest, digest, request_id, utc
 from app.account_deletions import make_record, public
@@ -64,9 +64,10 @@ def act(db, settings, store, command, *, operator, evidence, ident=None, email=N
             if not account or not hmac.compare_digest(email_hash(settings, account.get("email") or ""), email_hash(settings, email)):
                 raise Problem(403, "IDENTITY_NOT_VERIFIED")
             snapshot, _, members = capture(db, session, admin_id)
+            pending_scope_allowed(store, snapshot)
             account = next(member for member in members if member["admin_id"] == admin_id)
             work = outstanding(db, session, snapshot)
-            if snapshot["scope"] == "SUBTREE":
+            if snapshot["spots"]:
                 rent = db.table("MSP_SPOT_RENT")
                 current = session.execute(select(rent).where(rent.c.spot_master_id.in_([s["id"] for s in snapshot["spots"]])))
                 if any(value.get("deletion_request_id") not in (None, request_id(idempotency)) for value in current.mappings()):

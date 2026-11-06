@@ -1,6 +1,6 @@
 # 관리자 앱 전달: 탈퇴·개인정보 삭제 요청
 
-2026-11-06. 로컬 구현 및 OpenAPI 반영본이다. **서버 적용과 앱 공동 인수는 별도**다. 이전 관리자 DELETE 전달서 이후 추가된 계약과 여권 API 등록 중단을 포함한다. [서버 준비·검증·필드별 처리](admin-privacy-server-apply-2026-11-06.md)를 함께 참고한다.
+2026-11-06. **08:16 UTC 서버 반영·5분 자동 처리 활성화 완료**, 실제 OpenAPI 78개 경로·여권 PUT/GET 404를 확인했다. **실제 탈퇴·메일/Auth 삭제·앱 공동 인수는 별도 미검증**이다. 이전 관리자 DELETE 전달서 이후 추가된 계약과 여권 API 등록 중단을 포함한다. [서버 실제 결과](admin-privacy-server-result-2026-11-06.md), [필드별 처리](admin-privacy-server-apply-2026-11-06.md)를 함께 참고한다.
 
 ## 대상과 화면
 
@@ -67,6 +67,8 @@ Content-Type: application/json
 POST 응답을 잃으면 같은 키/영수증으로 조회한다. 원래 본문·키·영수증 그대로 재전송하면 기존 요청을 반환하며, 접근 토큰이 회수된 뒤에도 유효한 동일 요청 재생은 읽기만 수행한다. 다른 본문에 같은 키면 `409 IDEMPOTENCY_KEY_REUSED`, 다른 키의 진행 요청이 있으면 `409 DELETION_REQUEST_ALREADY_ACTIVE`다. context의 `activeRequestId` 또는 본인 확인된 운영 조회로 연결한다.
 
 조회 404는 미존재·권한/영수증 오류·만료를 구분하지 않으며 **미접수 확정 근거가 아니다**. 401/503/통신 오류로 완료 표시하거나 구형 DELETE로 우회하지 않는다. 429는 `Retry-After: 60`을 따른다. 범위 불일치 409는 `requestAccepted=false/nextAction=RELOAD_AND_RECONFIRM`, 저장 결과 불명 503은 `DELETION_OUTCOME_UNKNOWN`이며 같은 영수증으로 확인한다.
+
+`409 DELETION_SCOPE_IN_PROGRESS`는 포함 대상이 다른 진행 요청과 겹친다는 뜻이다. 일반 SELF와 대표 SUBTREE, 상하위 대표 요청 모두 적용되며 기존 DELETE로 우회하지 않는다. 다른 요청자의 영수증/상태에 접근하지 말고 본인 요청 조회 또는 운영자 안내를 사용한다. 서로 무관한 SELF 요청은 계속 허용한다.
 
 영수증과 최소 기록은 **완료 후 30일** 유지한다. 진행/실패 요청은 기간 때문에 버리지 않는다. 완료 작업 기록에서 원본 이름·이메일·대상 목록·연락처 암호문을 제거한다.
 

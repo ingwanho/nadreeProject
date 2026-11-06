@@ -1,8 +1,10 @@
 # Nadree DB 변경 안내
 
-## 2026-11-06 관리자 개인정보 요청 — 1컬럼, 서버 미적용
+## 2026-11-06 관리자 개인정보 요청 — 1컬럼, 서버 적용 완료
 
 신규 SQL 테이블 없이 `MSP_SPOT_RENT.deletion_request_id VARCHAR(80) NULL`만 추가한다. 대표 삭제 대기 중 신규 예약/가입 유입을 같은 지점 잠금 아래 차단하는 포인터이며 작업은 기존 FCM Firestore에 보관한다. `app.migrate`로 계획/적용/재계획한다. [012_account_deletion_gate.sql](012_account_deletion_gate.sql)은 같은 ALTER의 검토용이라 중복 실행하지 않는다. 컬럼 적용 후 API 재시작·배치 설치가 필요하며 [전체 적용서](../docs/admin-privacy-server-apply-2026-11-06.md)를 따른다. 완료 최소 기록은 30일, 미완료는 보존한다. 여권 라우트 등록 중단은 스키마 변경·이미지 삭제를 포함하지 않는다.
+
+**2026-11-06 08:16 UTC 실제 적용:** 사용자 승인 후 RIDERLOG_V2_DATA_TEST의 대상 테이블을 접근 제한 백업하고 ec2-user로 승인된 컬럼 1개만 적용했다. 기존 2행의 모든 값은 동일하고 새 컬럼은 NULL이다. 재계획 **No pending changes.**·API 재시작·5분 배치 최초 실행 완료. 아래 수동 SQL을 다시 실행할 필요는 없다. [실제 결과·백업](../docs/admin-privacy-server-result-2026-11-06.md).
 
 ## 2026-11-03 추가 계약 — 요청 결과 1테이블, 서버 미적용
 

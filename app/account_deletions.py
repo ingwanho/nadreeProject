@@ -8,7 +8,7 @@ from pydantic import Field, SecretStr, StrictBool
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
-from app.account_deletion_scope import capture, gate, outstanding, scope_hash
+from app.account_deletion_scope import capture, gate, outstanding, pending_scope_allowed, scope_hash
 from app.account_deletion_security import confirmation, email_hash, seal, validate_keys, verify_confirmation
 from app.account_deletion_store import body_digest, digest, receipt_matches, request_id, utc
 from app.errors import Problem
@@ -138,12 +138,12 @@ def submit_deletion(body: DeletionConfirmation, request: Request,
         active = storage(lambda: store.active(actor.admin["admin_id"]))
         if active:
             raise Problem(409, "DELETION_REQUEST_ALREADY_ACTIVE", request_outcome={"requestAccepted": False})
+        pending_scope_allowed(store, snapshot)
         work = outstanding(db, session, snapshot)
-        if snapshot["scope"] == "SUBTREE":
-            for spot in snapshot["spots"]:
-                current = gate(db, session, spot["id"], lock=True)
-                if current and current != ident:
-                    raise Problem(409, "DELETION_SCOPE_IN_PROGRESS", request_outcome={"requestAccepted": False})
+        for spot in snapshot["spots"]:
+            current = gate(db, session, spot["id"], lock=True)
+            if current and current != ident:
+                raise Problem(409, "DELETION_SCOPE_IN_PROGRESS", request_outcome={"requestAccepted": False})
         row = make_record(request, actor, snapshot, members, work, ident, secret, fingerprint)
         # Durable acceptance precedes SQL side effects. If SQL subsequently fails,
         # the same Firestore request is recovered by the worker, not forgotten.
@@ -202,7 +202,8 @@ def reconfirm_deletion(deletion_id: str, body: DeletionConfirmation, request: Re
         snapshot, _, members = capture(db, session, actor.admin["admin_id"])
         verify_confirmation(request.app.state.settings, body.confirmationToken.get_secret_value(),
                             actor.admin["admin_id"], scope_hash(snapshot))
-        for spot in snapshot["spots"] if snapshot["scope"] == "SUBTREE" else []:
+        pending_scope_allowed(store, snapshot, request_id=deletion_id)
+        for spot in snapshot["spots"]:
             value = gate(db, session, spot["id"], lock=True)
             if value and value != deletion_id:
                 raise Problem(409, "DELETION_SCOPE_IN_PROGRESS")

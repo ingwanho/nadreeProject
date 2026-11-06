@@ -151,6 +151,17 @@ def delete_own_admin_account(request: Request, session: Session = DB):
     # The spot lock serializes membership/role changes; account locks prevent
     # login, refresh and chat issuance from restoring a removed session.
     admin_ids = session.scalars(query.order_by(admins.c.admin_id).with_for_update()).all()
+    # A representative's old DELETE must not revoke a descendant whose
+    # recoverable privacy request is already in progress.
+    for admin_id in admin_ids:
+        account_change_allowed(request, admin_id)
+    from app.account_deletion_scope import new_work_allowed, pending_scope_allowed
+    pending_scope_allowed(request.app.state.deletions, {
+        "scope": "SUBTREE" if delete_subtree else "SELF",
+        "admins": [{"id": ident} for ident in admin_ids],
+        "spots": [{"id": spot["spot_master_id"]} for spot in spots]})
+    for spot in spots:
+        new_work_allowed(db, session, spot["spot_master_id"], lock=True)
     from app.security import lock_account
     lock_account(request, session, actor.admin["admin_id"], actor.session_id)
     from app.chat import revoke_admin_chat
@@ -348,6 +359,8 @@ def create_spot(body: SpotCreate, request: Request, session: Session = DB):
         table.c.is_active == 1).with_for_update()).mappings().first()
     if not parent or not in_subtree(root, parent):
         raise Problem(404, "PARENT_SPOT_NOT_FOUND")
+    from app.account_deletion_scope import new_work_allowed
+    new_work_allowed(db, session, parent["spot_master_id"], lock=True)
     check_contract(session, db, parent, request.app.state.settings)
     if body.unit_type == "spot":
         if not body.address or not body.address.strip() or body.email is None or body.lat is None or body.lng is None:

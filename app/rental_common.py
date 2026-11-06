@@ -55,6 +55,9 @@ def context(request, session, *, write=False, representative=False, settlement=F
 
 def resolve_spot(request, session, root, code=None, *, lock=False):
     if code is None or code in (root["spot_master_id"], root["unit_code"]):
+        if lock and request.method not in ("GET", "HEAD"):
+            from app.account_deletion_scope import new_work_allowed
+            new_work_allowed(request.app.state.db, session, root["spot_master_id"], lock=True)
         return root
     db = request.app.state.db
     t, rent = db.table("MSP_SPOT_MASTER"), db.table("MSP_SPOT_RENT")
@@ -63,6 +66,11 @@ def resolve_spot(request, session, root, code=None, *, lock=False):
     rows = session.execute(query.with_for_update() if lock else query).mappings().all()
     if len(rows) != 1 or not rows[0]["is_active"] or not in_subtree(root, rows[0]):
         raise Problem(404, "SPOT_NOT_FOUND")
+    # The actor may belong to an open ancestor of the closing target. Check
+    # the selected write target under its own lock, while preserving reads.
+    if lock and request.method not in ("GET", "HEAD"):
+        from app.account_deletion_scope import new_work_allowed
+        new_work_allowed(db, session, rows[0]["spot_master_id"], lock=True)
     check_contract(session, db, rows[0], request.app.state.settings)
     return rows[0]
 

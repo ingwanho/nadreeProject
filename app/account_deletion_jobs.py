@@ -8,7 +8,7 @@ from sqlalchemy import delete, select, text, update
 from sqlalchemy.orm import Session
 
 from app.account_deletion_data import cleanup_chat, cleanup_sql
-from app.account_deletion_scope import capture, gate, outstanding, scope_hash
+from app.account_deletion_scope import capture, gate, outstanding, pending_scope_allowed, scope_hash
 from app.account_deletion_security import unseal
 from app.account_deletion_store import TERMINAL, DeletionStore, utc
 from app.chat import FirebaseChat, admin_uid
@@ -65,6 +65,7 @@ def withdraw(db, store, chat, row, at):
         latest = store.get(row["requestId"])
         if latest["scopeHash"] != row["scopeHash"]:
             return False  # A concurrent reconfirmation has already saved a new scope.
+        pending_scope_allowed(store, snapshot, request_id=row["requestId"])
         # A committed revocation may precede the Firestore checkpoint. Claims
         # and SQL gates prevent the old account from joining again in this gap.
         missing_roles = all(not roles(session, db, ident) & {PRIMARY, GENERAL} for ident in ids)

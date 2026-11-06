@@ -1,6 +1,6 @@
 # Nadree API 구현 안내
 
-2026-11-06 관리자 개인정보 요청 **로컬 구현·서버 미적용**: 기존 DELETE를 유지하며 비동기 범위/접수/영수증 조회/재확인 4개 API와 기존 FCM Firestore 기록·5분 배치를 추가했다. SQL은 기존 지점의 유입 차단 포인터 1컬럼만 추가하고 새 테이블은 없다. 완료 최소 기록은 30일, 미완료는 보존한다. 여권 2개 라우트는 등록을 주석 처리했다. [서버 적용·필드별 처리·운영 도구](docs/admin-privacy-server-apply-2026-11-06.md), [프론트 전달](docs/frontend-admin-privacy-handoff-2026-11-06.md). 아래 과거 배포 완료는 이번 기능의 적용을 의미하지 않는다.
+2026-11-06 관리자 개인정보 요청 **08:16 UTC 서버 적용 완료**: `73564d4` + 서버 로컬의 탈퇴 우회/범위 중첩·하위 지점 차단 보완을 적용했다. 테스트 DB에 nullable 포인터 1컬럼을 백업 후 추가했고 미적용 변경은 없다. API 1회 재시작·5분 자동 처리 활성화 완료, 최초 처리 **0건**, 공개/로컬 헬스·준비·Swagger 정상·**78개 경로**, 여권 PUT/GET은 **404**다. 관련 검사만 실행했으며 최종 보완 검사 **46 passed/1 skipped**, 별도 Firestore **3 passed**다. 실제 탈퇴·메일/Auth 삭제·앱 공동 인수와 운영 보관 정책 확인은 별도다. 새 env·Firebase 배포는 없다. [실제 적용 결과](docs/admin-privacy-server-result-2026-11-06.md), [처리·운영 도구](docs/admin-privacy-server-apply-2026-11-06.md), [프론트 전달](docs/frontend-admin-privacy-handoff-2026-11-06.md).
 
 최종 수정일: 2026-09-28
 
