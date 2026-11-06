@@ -6,6 +6,10 @@
 
 ## 현재 상태
 
+2026-11-06 반납 완료 90일 채팅 정리 **로컬 구현·서버 미적용**: SQL의 RETURNED 계약/예약·actual_end_time으로 대상을 재검사하고 예약방·메시지·읽음·연결 이벤트만 삭제한다. 내용 없는 기존 예약 매핑의 삭제 표시로 동기화 재생성을 막으며 렌트/결제 기록과 다른 문의·예약은 보존한다. 기본 명령은 SQL 대상 확인, 실제 삭제는 --apply이며 발리 04:15 일일 타이머 템플릿을 추가했다. 추가 검사 18개·전체 회귀 **622 passed/16 skipped**, 별도 Firestore 에뮬레이터 5개 통과. 스키마/env 변경 없음. **네 채팅 callable 업데이트·새 코드 전환 후 배치를 활성화**한다. [정책·명령·서버 적용 순서](docs/chat-retention-90-days-2026-11-06.md).
+
+관리자 탈퇴 프론트 전달용: [권한별 삭제 범위·호출·화면 처리·공동 시험](docs/frontend-admin-account-deletion-handoff-2026-11-05.md).
+
 2026-11-05 관리자 본인 요청 탈퇴 **11:16 UTC 서버 반영 완료**: `DELETE /nadreego/admin/account`. 일반관리자는 본인만, 대표관리자는 본인과 본인 지점·모든 하위 지점의 렌탈 관리자 전원을 탈퇴시키고 해당 지점을 논리 삭제한다. 기존 공유 식별 행·업무 이력은 보존하고 세션·채팅·FCM을 회수한다. 격리 관련 검사 16개·전체 회귀 **604 passed/15 skipped**, 실패 0. API 1회 재시작 후 로컬/공개 헬스·준비·Swagger 정상과 실제 OpenAPI 76개 경로를 확인했다. DB/env/Firebase 변경과 실제 탈퇴 요청은 없으며 MySQL 경합·실제 Firebase 회수·앱 화면은 미검증이다. [계약·앱 전달](docs/admin-account-deletion-handoff-2026-11-05.md), [실제 적용·검증 결과](docs/admin-account-deletion-server-result-2026-11-05.md).
 
 2026-11-03 추가 인수서 반영 — **07:35 UTC 실제 서버 전환 완료**: 사용자 양 앱 준비 확인·배포 승인 후 구 API를 정상 종료하고 새 백업·요청 결과 테이블 1개 적용·구 OFF env 항목 제거·새 API 시작을 완료했다. 인수 절차는 상시 필수이며 NDR 원문·요청 결과 4상태·영속 거절·close·관리자 응답을 제공한다. 실제 공개 OpenAPI 75개 경로와 close, 헬스/준비/Swagger 정상·잔여 마이그레이션 0개·기존 데이터/결제/채팅/receipts 작업 보존을 확인했다. QR_ONLY 시험 차량 2대 등록·실제 QR 조회도 완료했다. 동일 소스의 격리 회귀 **588 passed/15 skipped**, 실패 0. 실제 고객 업무 왕복·실기기 인수는 별도다. [최신 계약](docs/qr-onsite-followup-contract-2026-11-03.md), [서버 적용 실행서](docs/qr-onsite-final-server-apply-2026-11-03.md), [실제 배포·시험 QR·미검증 결과](docs/qr-onsite-final-server-deployment-result-2026-11-03.md). 아래 false 유지 기록은 이전 코드의 적용 이력이다.

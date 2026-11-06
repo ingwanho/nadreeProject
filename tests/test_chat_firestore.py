@@ -93,3 +93,21 @@ def test_admin_permissions_read_positions_and_event_deduplication(chat):
     store.ref("chatUsers/" + uid).set({"expiresAt": utcnow() - timedelta(seconds=1)}, merge=True)
     with pytest.raises(ChatError, match="CHAT_SESSION_REQUIRED"):
         store.send(uid, "sid", room, str(uuid4()), "expired")
+
+
+def test_retention_removes_messages_reads_events_and_prevents_recreation(chat):
+    store, uid, shop = chat
+    booking = str(uuid4())
+    room = store.sync_booking(booking, uid, shop, "APPROVED")["roomId"]
+    store.send(uid, "sid", room, str(uuid4()), "retention test")
+    store.sync_booking(booking, uid, shop, "RETURNED")
+    assert store.purge_booking(booking, uid, shop) == "deleted"
+    ref = store.ref("chatRoomAccess/" + room)
+    assert ref.get().to_dict() is None
+    assert list(ref.collection("messages").stream()) == []
+    assert list(ref.collection("reads").stream()) == []
+    from google.cloud.firestore_v1.base_query import FieldFilter
+    assert list(store.db.collection("chatPushEvents").where(filter=FieldFilter("roomId", "==", room)).stream()) == []
+    assert store.sync_booking(booking, uid, shop, "RETURNED")["roomId"] is None
+    with pytest.raises(ChatError, match="CHAT_NOT_FOUND"):
+        store.ensure_booking(uid, "sid", booking)

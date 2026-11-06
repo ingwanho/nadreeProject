@@ -1,0 +1,10 @@
+[Unit]
+Description=Run Nadree chat retention daily at 04:15 Bali time
+
+[Timer]
+OnCalendar=*-*-* 20:15:00 UTC
+Persistent=true
+Unit=nadree-chat-retention.service
+
+[Install]
+WantedBy=timers.target

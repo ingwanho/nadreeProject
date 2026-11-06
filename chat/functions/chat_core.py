@@ -61,6 +61,8 @@ class ChatStore:
             allowed = member and (not write or member.get("canReply"))
         if not allowed:
             raise ChatError("permission-denied", "CHAT_ACCESS_DENIED")
+        if room.get("retentionDeletingAt") or room.get("retentionDeletedAt"):
+            raise ChatError("not-found", "CHAT_NOT_FOUND")
         if write:
             if room.get("blocked") or room["status"] != "open" or self.expired(room):
                 raise ChatError("failed-precondition", "CHAT_READ_ONLY")
@@ -123,6 +125,10 @@ class ChatStore:
         new_id = str(uuid.uuid4())
         def action(tx):
             link = self.read(tx, key)
+            if link and (link.get("retentionDeletingAt") or link.get("retentionDeletedAt")):
+                if link.get("customerUid") != uid or link.get("shopId") != shop:
+                    raise ChatError("failed-precondition", "BOOKING_IDENTITY_CHANGED")
+                return {"roomId": None, "bookingId": booking}
             inquiry = self.read(tx, inquiry_key)
             old = self.read(tx, "chatRoomAccess/" + inquiry["roomId"]) if inquiry else None
             room_id = link.get("roomId") if link else None
@@ -153,6 +159,8 @@ class ChatStore:
         identifier(booking)
         def action(tx):
             link = self.read(tx, "bookingChatAccess/" + digest(booking))
+            if link and (link.get("retentionDeletingAt") or link.get("retentionDeletedAt")):
+                self.access(tx, uid, sid, link)
             if not link or not link.get("roomId"):
                 raise ChatError("failed-precondition", "BOOKING_CHAT_SYNC_PENDING")
             room = self.read(tx, "chatRoomAccess/" + link["roomId"])
@@ -227,11 +235,73 @@ class ChatStore:
         count, total = 0, 0
         for snapshot in rooms.stream():
             row = snapshot.to_dict()
+            if row.get("retentionDeletingAt"):
+                continue
             read = snapshot.reference.collection("reads").document(uid).get().to_dict()
             unread = max(0, row["lastSequence"] - (read["position"] if read else 0))
             count += unread > 0
             total += unread
         return {"unreadMessages": total, "unreadRooms": count}
+
+    def _delete_documents(self, query):
+        while True:
+            documents = list(query.limit(200).stream())
+            if not documents:
+                return
+            batch = self.db.batch()
+            for document in documents:
+                batch.delete(document.reference)
+            batch.commit()
+
+    def purge_booking(self, booking, uid, shop):
+        """Only the SQL retention job may call this after locking an old return."""
+        identifier(booking), identifier(uid), identifier(shop)
+        key = "bookingChatAccess/" + digest(booking)
+        inquiry_key = "chatInquiryKeys/" + digest(uid + "\n" + shop)
+        identity = {"bookingId": booking, "customerUid": uid, "shopId": shop}
+
+        def begin(tx):
+            link = self.read(tx, key) or {}
+            if any(field in link and link[field] != value for field, value in identity.items()):
+                raise ChatError("failed-precondition", "BOOKING_IDENTITY_CHANGED")
+            room_id = link.get("roomId")
+            if room_id and any(link.get(field) != value for field, value in identity.items()):
+                raise ChatError("failed-precondition", "BOOKING_IDENTITY_CHANGED")
+            if link.get("retentionDeletedAt"):
+                return "alreadyDeleted", None
+            at = link.get("retentionDeletingAt") or utcnow()
+            if not room_id:
+                tx.set(self.ref(key), {**identity, "roomId": None, "closed": True,
+                    "blocked": True, "retentionDeletedAt": at})
+                return "noRoom", None
+            identifier(room_id)
+            room = self.read(tx, "chatRoomAccess/" + room_id)
+            inquiry = self.read(tx, inquiry_key)
+            if room and (room.get("kind") != "booking" or
+                         any(room.get(field) != value for field, value in identity.items())):
+                raise ChatError("failed-precondition", "BOOKING_IDENTITY_CHANGED")
+            tx.set(self.ref(key), {**identity, "roomId": room_id, "closed": True,
+                "blocked": True, "retentionDeletingAt": at})
+            if room:
+                tx.update(self.ref("chatRoomAccess/" + room_id),
+                    {"status": "read_only", "blocked": True, "retentionDeletingAt": at})
+            if inquiry and inquiry.get("roomId") == room_id:
+                tx.delete(self.ref(inquiry_key))
+            return "deleted", room_id
+
+        result, room_id = self.run(begin)
+        if room_id:
+            reference = self.ref("chatRoomAccess/" + room_id)
+            # Hide the room first. Rules require the parent for message reads,
+            # and callable transactions can no longer create new child rows.
+            reference.delete()
+            for collection in ("messages", "reads"):
+                self._delete_documents(reference.collection(collection))
+            self._delete_documents(self.db.collection("chatPushEvents").where(
+                filter=FieldFilter("roomId", "==", room_id)))
+            self.ref(key).set({**identity, "roomId": None, "closed": True,
+                "blocked": True, "retentionDeletedAt": utcnow()})
+        return result
 
     def expire_inquiries(self):
         query = self.db.collection("chatRoomAccess").where(filter=FieldFilter("kind", "==", "inquiry"))

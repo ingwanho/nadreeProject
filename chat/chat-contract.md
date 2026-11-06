@@ -1,5 +1,7 @@
 # 나드리 신규 채팅 연동 계약
 
+2026-11-06 사용자 요청·로컬 구현: **반납 완료 시각에서 90일 지난 렌트의 예약 채팅을 일일 배치로 삭제**한다. SQL 계약/예약 RETURNED와 actual_end_time으로 판정하며 messages·reads·연결 push 이벤트까지 정리하고, 기존 bookingChatAccess에 내용 없는 삭제 표시를 남겨 재생성을 막는다. 문의·취소/거절/만료·진행/연체는 이번 범위에서 제외한다. 서버 적용 전이며 아래 2026-10-18 본문 정리 제외 결정은 당시 기록이다. [정책·배포 순서](../docs/chat-retention-90-days-2026-11-06.md).
+
 2026-10-18 정정: 개인정보 전용 테이블·자동 정리 타이머·채팅 본문 삭제 및 privacyStatus 추가는 사용자 결정으로 제외한다. 기존 탈퇴 시 계정 삭제·채팅 세션 회수를 검증하며 Functions/Rules 경로는 유지한다. scripts/verify_app_check.py 디버그 검증 도구는 유지하고 실제 검증은 미실행이다. [최신 인수 문서](../docs/nadree-full-change-handoff.md) 참조.
 
 
@@ -77,7 +79,7 @@ Firebase SDK의 인증된 callable 호출을 사용한다. 표의 반환값은 S
 
 주요 callable 오류: unauthenticated/CHAT_SESSION_REQUIRED, permission-denied/CHAT_ACCESS_DENIED 또는 CUSTOMER_REQUIRED, not-found/CHAT_SHOP_NOT_FOUND·CHAT_PRODUCT_NOT_FOUND·CHAT_NOT_FOUND·MESSAGE_NOT_FOUND, failed-precondition/BOOKING_CHAT_SYNC_PENDING·CHAT_READ_ONLY, already-exists/MESSAGE_ID_CONFLICT, invalid-argument/INVALID_MESSAGE·INVALID_IDENTIFIER·INVALID_INPUT.
 
-BOOKING_CHAT_SYNC_PENDING이면 예약을 다시 만들지 말고 같은 bookingId로 잠시 후 재시도한다.
+BOOKING_CHAT_SYNC_PENDING이면 예약을 다시 만들지 말고 같은 bookingId로 잠시 후 재시도한다. 90일 보관 기간 정리로 삭제 중/삭제 완료된 예약방은 권한 검증 후 CHAT_NOT_FOUND다. 이 경우 방을 자동 재생성하지 않고 보관 기간 종료를 안내한다. 목록의 삭제 이벤트를 반영하고 과거 알림에서 사라진 방에 진입하는 경우를 처리한다. 해당 동작은 새 callable 소스 적용 후 제공된다.
 
 ## 3. Firestore 읽기 계약
 
@@ -94,6 +96,8 @@ BOOKING_CHAT_SYNC_PENDING이면 예약을 다시 만들지 말고 같은 booking
 | chatPushTokens, chatPushTokenOwners, chatPushEvents | 서버 전용 토큰/최근 채팅 세션 토큰 소유권/알림 중복 방지 이벤트 |
 
 방 필드: customerUid, shopId, bookingId(null 가능), kind(inquiry/booking), status(open/read_only), blocked, createdAt, updatedAt, lastMessageAt(null 가능), expiresAt(예약방 null), lastSequence, productId/productDisplayName(null 가능). 시각은 Firestore Timestamp다.
+
+2026-11-06 보관 정리: 서버 전용 bookingChatAccess의 retentionDeletingAt/retentionDeletedAt은 삭제 재시도·재생성 방지 표시다. 앱이 직접 조회/쓰기하거나 TTL로 제거하지 않는다. 삭제 시작 직후 방 문서를 먼저 제거하고 하위 메시지/읽음을 배치로 정리한다. 기존 문의 무대화 168시간 read_only와 별개이며 예약방의 expiresAt을 TTL 삭제 기준으로 바꾸지 않는다.
 
 관리자 목록은 `where(shopId == 선택한 직접 지점)`, 고객 목록은 `where(customerUid == 본인 UID)`로 제한한다. `orderBy(updatedAt, descending)`·`limit(50)`·`startAfter(lastSnapshot)`으로 페이지 처리한다. 지점 하나씩 조회한다. 전역 목록은 거절된다. 메시지는 해당 방의 messages를 sequence 오름차순·limit/startAfter로 조회한다.
 
