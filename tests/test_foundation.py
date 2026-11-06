@@ -86,7 +86,7 @@ def test_openapi_has_exact_work_group_routes(client):
     assert "/api/v1/nadree/rental/requests/{request_id}" not in paths
     parameters = paths["/api/v1/nadree/rental/request"]["post"].get("parameters", [])
     assert not any(p["name"] == "Idempotency-Key" for p in parameters)
-    assert len([path for path in paths if not path.startswith("/health/")]) == 76
+    assert len([path for path in paths if not path.startswith("/health/")]) == 78
     assert "post" in paths["/api/v1/nadree/rental/reservations/{reservation_id}/receive"]
     assert "post" in paths["/api/v1/nadree/rental/onsite/requests"]
     payment_return = paths["/api/v1/nadree/rental/payment/return"]["get"]
@@ -106,19 +106,13 @@ def test_openapi_has_exact_work_group_routes(client):
                  "/api/v1/nadree/rental/request", "/api/v1/nadree/rental/payment/order",
                  "/api/v1/nadree/rental/payment/capture", "/api/v1/nadree/rental/payment/{paymentId}",
                  "/api/v1/nadree/rental/ongoing",
-                 "/api/v1/nadree/rental/completed", "/api/v1/nadree/user/refresh", "/api/v1/nadree/user/logout",
-                 "/nadreego/rent/passport", "/nadreego/rent/passport/{booked_no}"):
+                 "/api/v1/nadree/rental/completed", "/api/v1/nadree/user/refresh", "/api/v1/nadree/user/logout"):
         assert path in paths
     assert "/nadreego/admin/refresh" in paths
     assert "get" in paths["/nadreego/admin/refresh"]
     assert "post" in paths["/nadreego/admin/fcmToken"]
-    passport_request = paths["/nadreego/rent/passport"]["put"]["requestBody"]["content"]["application/json"]
-    assert passport_request["example"]["masked"] is True
-    assert passport_request["example"]["contentType"] == "image/jpeg"
-    assert paths["/nadreego/rent/passport"]["put"]["responses"]["200"]["content"]["application/json"]["example"]["available"] is True
-    passport_response = paths["/nadreego/rent/passport/{booked_no}"]["get"]["responses"]["200"]["content"]
-    assert passport_response["image/jpeg"]["schema"] == {"type": "string", "format": "binary"}
-    assert passport_response["image/png"]["schema"] == {"type": "string", "format": "binary"}
+    assert "/nadreego/rent/passport" not in paths
+    assert "/nadreego/rent/passport/{booked_no}" not in paths
     assert openapi["info"]["description"].find("NRTEST-WEB-MODEL-125") >= 0
     assert openapi["components"]["schemas"]["CustomerModel"]["example"]["modelId"] == "NRTEST-WEB-MODEL-125"
     assert openapi["components"]["schemas"]["CustomerPrice"]["example"]["totalOptions"] == [105, 165]

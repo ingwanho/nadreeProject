@@ -19,7 +19,6 @@ from app.reservation_payments import (EXTERNAL, checkout_enabled, paid_booking_p
 from app.rental_common import (OPEN, action_result, context, contracts_for, day_end, effective_state,
                                expire_maintenance, fleet, is_open, iso, local_date, lock_key, resolve_spot, rows, verify_qr)
 from app.rental_inputs import BookingAction, BookingLocationCorrection, PassportUpload, Qr, RentApprove, ReceiptRecovery
-from app.responses import PassportUploadResult
 from app.receipt import (PENDING, hold_reason, is_onsite,
                          prepare as prepare_receipt, view as receipt_view)
 from app.security import now
@@ -130,16 +129,17 @@ def passport_storage(request):
     return storage
 
 
-@router.put(
-    "/nadreego/rent/passport",
-    response_model=PassportUploadResult,
-    summary="활성 렌탈의 비식별 여권 이미지 업로드",
-    description=(
-        "진행 중인 렌탈(`ON_RENT` 또는 `OVERDUE`)에 한해 이미 마스킹된 JPEG/PNG를 업로드합니다. "
-        "`imageBase64`는 data URL 접두사 없이 보내며, 여권번호와 개인정보가 보이지 않는 이미지일 때만 "
-        "`masked=true`로 요청해야 합니다. 반납된 렌탈은 업로드할 수 없습니다."
-    ),
-)
+# 여권 API 사용 보류: 재사용 승인 전에는 라우트를 등록하지 않는다.
+# @router.put(
+#     "/nadreego/rent/passport",
+#     response_model=PassportUploadResult,
+#     summary="활성 렌탈의 비식별 여권 이미지 업로드",
+#     description=(
+#         "진행 중인 렌탈(`ON_RENT` 또는 `OVERDUE`)에 한해 이미 마스킹된 JPEG/PNG를 업로드합니다. "
+#         "`imageBase64`는 data URL 접두사 없이 보내며, 여권번호와 개인정보가 보이지 않는 이미지일 때만 "
+#         "`masked=true`로 요청해야 합니다. 반납된 렌탈은 업로드할 수 없습니다."
+#     ),
+# )
 def upload_passport(body: PassportUpload, request: Request, session: Session = DB):
     _, root = context(request, session, write=True)
     contract, user = passport_contract(request, session, root, body.bookedNo, lock=True)
@@ -162,24 +162,25 @@ def upload_passport(body: PassportUpload, request: Request, session: Session = D
             "downloadPath": "/nadreego/rent/passport/" + body.bookedNo}
 
 
-@router.get(
-    "/nadreego/rent/passport/{booked_no}",
-    response_class=Response,
-    summary="활성 렌탈의 비식별 여권 이미지 조회",
-    description=(
-        "활성 렌탈의 비식별 여권 이미지를 원본 바이트로 반환합니다. 응답 Content-Type은 업로드 형식에 따라 "
-        "`image/jpeg` 또는 `image/png`이며, 반납된 렌탈은 조회할 수 없습니다."
-    ),
-    responses={
-        200: {
-            "description": "비식별 여권 이미지 바이너리",
-            "content": {
-                "image/jpeg": {"schema": {"type": "string", "format": "binary"}},
-                "image/png": {"schema": {"type": "string", "format": "binary"}},
-            },
-        },
-    },
-)
+# 여권 API 사용 보류: 재사용 승인 전에는 라우트를 등록하지 않는다.
+# @router.get(
+#     "/nadreego/rent/passport/{booked_no}",
+#     response_class=Response,
+#     summary="활성 렌탈의 비식별 여권 이미지 조회",
+#     description=(
+#         "활성 렌탈의 비식별 여권 이미지를 원본 바이트로 반환합니다. 응답 Content-Type은 업로드 형식에 따라 "
+#         "`image/jpeg` 또는 `image/png`이며, 반납된 렌탈은 조회할 수 없습니다."
+#     ),
+#     responses={
+#         200: {
+#             "description": "비식별 여권 이미지 바이너리",
+#             "content": {
+#                 "image/jpeg": {"schema": {"type": "string", "format": "binary"}},
+#                 "image/png": {"schema": {"type": "string", "format": "binary"}},
+#             },
+#         },
+#     },
+# )
 def view_passport(booked_no: str, request: Request, session: Session = DB):
     _, root = context(request, session)
     _, user = passport_contract(request, session, root, booked_no)
@@ -302,7 +303,7 @@ def contract_history(request, session, ident, previous, new, actor, event):
              summary="관리자 예약 승인·거절·취소",
              description="EXTERNAL 예약은 판매자 연결 없이 APPROVE로 확정합니다. 기존 PAYPAL 예약은 판매자 연결·환경 검사를 유지합니다. CANCEL은 인계 전 지점 귀책 취소이며 EXTERNAL은 PG 환불 없이 처리하고 기존 온라인 실결제에는 100% 환불 정책을 유지합니다.")
 def booking_action(body: BookingAction, request: Request, background_tasks: BackgroundTasks, session: Session = DB):
-    actor, root = context(request, session, write=True)
+    actor, root = context(request, session, write=True, settlement=body.action in ("CANCEL", "REJECT"))
     r = booking(request, session, root, body.bookedNo)
     if is_onsite(r) and r["reservation_status"] in ("REQUESTED", "APPROVED") and r.get("hold_expires_at") and now() >= r["hold_expires_at"]:
         raise Problem(409, "ONSITE_REQUEST_EXPIRED")
@@ -474,7 +475,7 @@ def start_contract(request, session, root, item, vehicles, contracts, uid_token,
 
 @router.post("/nadreego/booking/{booked_no}/receipt-recovery", summary="매장 차량·열쇠 회수 확인 후 인수 보호 해제")
 def recover_receipt(booked_no: str, body: ReceiptRecovery, request: Request, background_tasks: BackgroundTasks, session: Session = DB):
-    actor, root = context(request, session, write=True)
+    actor, root = context(request, session, write=True, settlement=True)
     if not booked_no.startswith("BO"):
         raise Problem(404, "RESERVATION_NOT_FOUND")
     r = booking(request, session, root, booked_no)
@@ -515,7 +516,7 @@ def recover_receipt(booked_no: str, body: ReceiptRecovery, request: Request, bac
 
 @router.post("/nadreego/vehicle/return")
 def return_vehicle(body: Qr, request: Request, session: Session = DB):
-    actor, root = context(request, session, write=True)
+    actor, root = context(request, session, write=True, settlement=True)
     qr = verify_qr(request, session, root, body.qrCode.get_secret_value(), lock=True)
     db = request.app.state.db
     vehicle_state = db.table("MSP_VEHICLE_STATUS")

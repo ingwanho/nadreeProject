@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
@@ -16,6 +16,54 @@ class AdminAccountDeletion(Status):
     deletedSpotCount: int = Field(ge=0)
 
 
+class DeletionOutstandingWork(BaseModel):
+    pendingReservations: int = 0
+    activeRentals: int = 0
+    pendingReturns: int = 0
+    pendingRecovery: int = 0
+    pendingRefunds: int = 0
+    pendingExternalSettlements: int = 0
+
+
+class AccountDeletionContext(Status):
+    scope: Literal["SELF", "SUBTREE"]
+    directShopName: str
+    affectedAdminCount: int
+    affectedShopCount: int
+    confirmationToken: str
+    confirmationExpiresAt: datetime
+    outstandingWork: DeletionOutstandingWork
+    canSubmitRequest: bool = True
+    canExecuteWithdrawal: bool
+    activeRequestId: str | None = None
+
+
+class AccountDeletionRequestResult(Status):
+    requestId: str
+    requestAccepted: bool = True
+    requestState: Literal["WAITING_VERIFICATION", "WAITING_OBLIGATIONS", "WAITING_RECONFIRMATION",
+                          "PROCESSING", "RETRYING", "ACTION_REQUIRED", "COMPLETED", "COMPLETED_WITH_RETENTION"]
+    scope: Literal["SELF", "SUBTREE"]
+    receivedAt: datetime
+    identityVerifiedAt: datetime
+    eligibleAt: datetime | None = None
+    processingDueAt: datetime | None = None
+    completedAt: datetime | None = None
+    accessState: Literal["ACTIVE", "PENDING", "LIMITED_TO_SETTLEMENT", "REVOKED"]
+    personalDataState: Literal["NOT_STARTED", "IN_PROGRESS", "COMPLETED"]
+    outstandingWork: DeletionOutstandingWork
+    affectedAdminCount: int
+    affectedShopCount: int
+    nextAction: Literal["NONE", "SETTLE_OUTSTANDING_WORK", "RELOAD_AND_RECONFIRM",
+                        "REVIEW_DATA_AND_RETENTION", "CONTACT_OPERATOR"]
+    notificationChannel: str = "REGISTERED_EMAIL"
+    completionScope: str | None = None
+    retainedData: list[dict[str, Any]] = Field(default_factory=list)
+    residualCopies: list[dict[str, Any]] = Field(default_factory=list)
+    receiptExpiresAt: datetime | None = None
+    message: str
+
+
 class Error(BaseModel):
     status: Literal["fail"] = "fail"
     errorCode: str
@@ -25,6 +73,8 @@ class Error(BaseModel):
     requestFinal: bool | None = None
     retrySameRequest: bool | None = None
     canStartNewRequest: bool | None = None
+    requestAccepted: bool | None = None
+    nextAction: str | None = None
 
 
 class ShopPayPalMerchantResult(Status):

@@ -32,6 +32,8 @@ from app.readmodels import router as readmodels_router
 from app.rentals import router as rentals_router
 from app.vehicles import router as vehicles_router
 from app.responses import Error
+from app.account_deletions import router as account_deletions_router
+from app.account_deletion_store import DeletionStore
 from app.schema_check import check_schema
 from app.security import RateLimiter, sign_access
 
@@ -42,7 +44,7 @@ OPENAPI_TAGS = [
     {"name": "W03 Vehicles and QR", "description": "차량·QR·센서 관리"},
     {"name": "W04 Pricing", "description": "차량 가격과 렌탈 티어"},
     {"name": "W05 Delivery", "description": "배송 지역과 배송비"},
-    {"name": "W06 Reservations and rentals", "description": "예약·렌트·인계·반납·활성 렌탈의 비식별 여권 이미지. 테스트 시드 예약은 `NRTEST-RES-*`, 차량은 `NRTEST-VEHICLE-*`입니다."},
+    {"name": "W06 Reservations and rentals", "description": "예약·렌트·인계·반납. 여권 API는 사용 보류로 등록하지 않습니다. 테스트 시드 예약은 `NRTEST-RES-*`, 차량은 `NRTEST-VEHICLE-*`입니다."},
     {"name": "W07 Dashboard and calendar", "description": "운영 현황과 캘린더 조회"},
     {"name": "W08 PayPal webhook", "description": "PayPal 결제·환불·웹훅"},
     {"name": "Nadree customer users", "description": "나드리 고객 UID 로그인·프로필·토큰. 로그인에는 Firebase ID Token과 body의 UID가 모두 필요합니다."},
@@ -77,7 +79,7 @@ OPENAPI_DESCRIPTION = """
 
 
 def create_app(settings=None, db=None, limiter=None, mailer=None, fcm=None, locations=None, customer_auth=None,
-               passport_storage=None):
+               passport_storage=None, deletion_store=None):
     settings = settings or Settings()
     if settings.env == "production" and (len(settings.jwt_secret.get_secret_value().encode()) < 32
                                          or not settings.database_url.get_secret_value()
@@ -119,8 +121,9 @@ def create_app(settings=None, db=None, limiter=None, mailer=None, fcm=None, loca
             allow_origins=cors_origins,
             allow_credentials=False,
             allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-            allow_headers=["Authorization", "Content-Type", "X-Refresh-Token", "X-FCM-Token"],
-            expose_headers=["Cache-Control", "Content-Disposition"],
+            allow_headers=["Authorization", "Content-Type", "X-Refresh-Token", "X-FCM-Token",
+                           "Idempotency-Key", "Deletion-Receipt-Token"],
+            expose_headers=["Cache-Control", "Content-Disposition", "Retry-After"],
         )
     application.state.settings = settings
     application.state.db = db or Database(settings.database_url.get_secret_value())
@@ -129,6 +132,7 @@ def create_app(settings=None, db=None, limiter=None, mailer=None, fcm=None, loca
     application.state.fcm = fcm or FcmSender(settings)
     application.state.customer_auth = customer_auth or CustomerFirebaseAuth(settings)
     application.state.chat = FirebaseChat(settings)
+    application.state.deletions = deletion_store or DeletionStore(settings)
     application.state.chat_push_identity = GooglePushIdentity(settings)
     application.state.locations = locations or VehicleLocations(settings)
     application.state.passport_storage = passport_storage or PassportStorage(settings.passport_storage_root)
@@ -168,6 +172,7 @@ def create_app(settings=None, db=None, limiter=None, mailer=None, fcm=None, loca
         return {"status": "ok", "limitations": limitations}
 
     application.include_router(auth_router)
+    application.include_router(account_deletions_router)
     application.include_router(admin_signup_router)
     application.include_router(chat_router)
     application.include_router(chat_push_router)

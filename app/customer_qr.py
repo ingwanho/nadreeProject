@@ -156,6 +156,8 @@ def quote(body: Quote, request: Request, session=DB):
     require_schema(request.app.state.db)
     limited(request, user.uid_token)
     spot, item = resolve(request, session, body.qrCode.get_secret_value())
+    from app.account_deletion_scope import new_work_allowed
+    new_work_allowed(request.app.state.db, session, spot["spot_master_id"])
     _, price = plan(request, session, spot, item, body.returnDate)
     at = now().replace(tzinfo=timezone.utc)
     claims = {"sub": user.uid_token, "aud": "nadree-onsite-quote", "iat": int(at.timestamp()),
@@ -269,6 +271,8 @@ def _submit_onsite(body, request, session, uid):
         raise Problem(409, "ONSITE_QUOTE_MISMATCH")
     lock_key(session, "nadri-model", spot["spot_master_id"] + ":" + item["rental"]["model_id"])
     spot, item = resolve(request, session, body.qrCode.get_secret_value(), lock=True)
+    from app.account_deletion_scope import new_work_allowed
+    new_work_allowed(db, session, spot["spot_master_id"], lock=True)
     _, price = plan(request, session, spot, item, body.returnDate)
     if price["totalFrom"] != claims["totalPrice"] or price["currency"] != claims["currency"]:
         raise Problem(409, "ONSITE_QUOTE_CHANGED")

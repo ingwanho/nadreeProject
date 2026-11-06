@@ -118,6 +118,8 @@ def signup(body: AdminSignup, request: Request, session: Session = DB):
     target, _representative = _target_spot(request, session, body)
     check_contract(session, db, target, request.app.state.settings)
 
+    from app.account_deletion_scope import new_work_allowed
+    new_work_allowed(db, session, target["spot_master_id"], lock=True)
     admins = db.table("MSP_ADMIN")
     if body.inviteCode:
         mapping = db.table("MSP_ADMIN_ROLE")
@@ -146,6 +148,8 @@ def signup(body: AdminSignup, request: Request, session: Session = DB):
         raise Problem(409, "ACCOUNT_ALREADY_EXISTS")
 
     if existing:
+        from app.account_deletion_scope import account_change_allowed
+        account_change_allowed(request, existing["admin_id"])
         admin_id = existing["admin_id"]
     else:
         admin_id = str(uuid.uuid4())

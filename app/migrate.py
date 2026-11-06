@@ -36,7 +36,7 @@ def migration_plan(db):
     tables = set(inspector.get_table_names())
     planned_tables = {"MSP_SPOT_RENT": "001_spot_rent.sql", "MSP_RENTAL_ADMIN_REQUEST": "002_rental_admin_request.sql"}
     spot_profile = {"introduction": 500, "contact_email": 200, "address_detail": 200, "directions": 500,
-                    "paypal_merchant_id": 13, "paypal_environment": 10}
+                    "paypal_merchant_id": 13, "paypal_environment": 10, "deletion_request_id": 80}
     missing_tables = set(REQUIRED) - set(planned_tables) - tables
     if missing_tables:
         raise ValueError("Existing service tables missing: " + ", ".join(sorted(missing_tables)))

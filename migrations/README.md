@@ -1,5 +1,9 @@
 # Nadree DB 변경 안내
 
+## 2026-11-06 관리자 개인정보 요청 — 1컬럼, 서버 미적용
+
+신규 SQL 테이블 없이 `MSP_SPOT_RENT.deletion_request_id VARCHAR(80) NULL`만 추가한다. 대표 삭제 대기 중 신규 예약/가입 유입을 같은 지점 잠금 아래 차단하는 포인터이며 작업은 기존 FCM Firestore에 보관한다. `app.migrate`로 계획/적용/재계획한다. [012_account_deletion_gate.sql](012_account_deletion_gate.sql)은 같은 ALTER의 검토용이라 중복 실행하지 않는다. 컬럼 적용 후 API 재시작·배치 설치가 필요하며 [전체 적용서](../docs/admin-privacy-server-apply-2026-11-06.md)를 따른다. 완료 최소 기록은 30일, 미완료는 보존한다. 여권 라우트 등록 중단은 스키마 변경·이미지 삭제를 포함하지 않는다.
+
 ## 2026-11-03 추가 계약 — 요청 결과 1테이블, 서버 미적용
 
 사용자 승인으로 `MSP_RENTAL_ONSITE_REQUEST`만 추가한다. 신규 코드의 `app.migrate`가 생성/호환성을 검사하며, [011_onsite_request.sql](011_onsite_request.sql)은 같은 CREATE TABLE의 별도 확인용이다. 둘을 중복 적용하지 않는다. 기존 예약 3컬럼·인덱스·CHECK는 이전 서버에 적용됐고 이번에 다시 변환하지 않는다. 고객 인수 OFF 설정이 제거되므로 [서버 적용 실행서](../docs/qr-onsite-final-server-apply-2026-11-03.md)에 따라 양 앱 전환 준비 후 배포한다. QR 시험 데이터는 [등록 요청 파일](../deployment/onsite-qr-test-requests.json)을 사용하며 실제 등록은 별도 승인된 테스트 환경에서 수행한다.

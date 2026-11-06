@@ -84,6 +84,15 @@ def test_schema_requires_active_rental_roles(setup):
     assert error.value.code == "RENTAL_ROLE_NOT_CONFIGURED"
 
 
+def test_privacy_migration_adds_only_nullable_pointer_to_existing_spot_table(setup):
+    with setup["engine"].begin() as conn:
+        conn.execute(text("ALTER TABLE MSP_SPOT_RENT DROP COLUMN deletion_request_id"))
+    plan = migration_plan(setup["db"])
+    ddl = next(sql for label, sql, _ in plan if label == "add MSP_SPOT_RENT.deletion_request_id")
+    assert ddl == "ALTER TABLE MSP_SPOT_RENT ADD COLUMN deletion_request_id VARCHAR(80) DEFAULT NULL"
+    assert "deletion_request_id" not in {col["name"] for col in inspect(setup["engine"]).get_columns("MSP_SPOT_RENT")}
+
+
 def test_migration_plan_is_read_only_and_idempotent_after_expected_changes(setup):
     from app.rental_schema import metadata
     assert "MSP_RENTAL_REQUEST_RESULT" not in metadata.tables

@@ -14,14 +14,25 @@ class PasswordMailer:
             raise Problem(503, "MAIL_NOT_CONFIGURED")
 
     def send(self, recipient, password):
+        self.send_message(recipient, "Nadree temporary password",
+            "Your temporary Nadree password is:\n\n" + password + "\n\nSign in and change your password.\n")
+
+    def send_deletion_notice(self, recipient, request_id, completed=False):
+        stage = "completed in company active systems" if completed else "received"
+        self.send_message(recipient, "NadreeGo account deletion request",
+            f"The NadreeGo account deletion request affecting your rental access was {stage}.\n"
+            f"Request reference: {request_id}\n"
+            "Shared information required by another active service follows that service's policy.\n"
+            "Contact support using this reference if you need assistance.\n")
+
+    def send_message(self, recipient, subject, body):
         self.check_configuration()
         settings = self.settings
         message = EmailMessage()
         message["From"] = settings.smtp_from
         message["To"] = recipient
-        message["Subject"] = "Nadree temporary password"
-        message.set_content("Your temporary Nadree password is:\n\n" + password +
-                            "\n\nSign in and change your password.\n")
+        message["Subject"] = subject
+        message.set_content(body)
         try:
             context = ssl.create_default_context()
             if settings.smtp_tls == "ssl":

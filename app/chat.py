@@ -50,6 +50,19 @@ class FirebaseChat:
         from chat.functions.chat_core import ChatStore
         return ChatStore(firestore.client(app=self.identity._firebase_app()))
 
+    def delete_admin_identity(self, admin_id):
+        """Delete only the Nadree chat UID; report an actual provider deletion."""
+        if not self.identity.configured:
+            raise Problem(503, "CUSTOMER_FIREBASE_AUTH_NOT_CONFIGURED")
+        from firebase_admin import auth
+        app = self.identity._firebase_app()
+        try:
+            auth.get_user(admin_uid(admin_id), app=app)
+        except auth.UserNotFoundError:
+            return False
+        auth.delete_user(admin_uid(admin_id), app=app)
+        return True
+
     def revoke(self, uid):
         if not self.settings.fcm_chat_enabled:
             return

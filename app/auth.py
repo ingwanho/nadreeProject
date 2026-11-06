@@ -162,6 +162,10 @@ def spot_check(body: SpotCode, request: Request, session: Session = DB):
 def profile(body: Profile, request: Request, session: Session = DB):
     actor = principal(request, session)
     actor.admin = dict(lock_account(request, session, actor.admin["admin_id"], actor.session_id))
+    from app.account_deletion_scope import account_change_allowed, new_work_allowed
+    account_change_allowed(request, actor.admin["admin_id"])
+    if actor.admin.get("primary_spot_master_id"):
+        new_work_allowed(request.app.state.db, session, actor.admin["primary_spot_master_id"])
     if not body.model_fields_set or any(getattr(body, key) is None for key in body.model_fields_set):
         raise Problem(422, "EMPTY_OR_NULL_UPDATE")
     settings, db = request.app.state.settings, request.app.state.db

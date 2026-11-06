@@ -66,7 +66,8 @@ def schema(engine):
           Column("delivery_service_type", String(30), default="NONE"), Column("created_at", DateTime), Column("updated_at", DateTime),
           Column("introduction", String(500)), Column("contact_email", String(200)),
           Column("address_detail", String(200)), Column("directions", String(500)),
-          Column("paypal_merchant_id", String(13)), Column("paypal_environment", String(10)))
+          Column("paypal_merchant_id", String(13)), Column("paypal_environment", String(10)),
+          Column("deletion_request_id", String(80)))
     Table("MSP_ADMIN_SPOT_SCOPE", metadata, Column("id", Integer, primary_key=True),
           Column("admin_id", String(36), nullable=False), Column("spot_master_id", String(36)),
           Column("spot_id", String(36)), Column("unit_code", String(60)), Column("access_type", String(20), default="manage"),

@@ -12,7 +12,7 @@ REQUIRED = {
     "MSP_CONTRACT": "contract_id status start_date end_date",
     "MSP_ADMIN_SPOT_SCOPE": "admin_id spot_master_id unit_code access_type granted_at granted_by",
     "MSP_SPOT_MASTER": "spot_master_id contract_id org_id region_id local_id spot_id org_name region_name local_name unit_code spot_name hierarchy_level address zip_code biz_reg_num phone lat lng contract_start contract_end is_active",
-    "MSP_SPOT_RENT": "spot_master_id legacy_spot_code delivery_service_type invite_code created_at updated_at introduction contact_email",
+    "MSP_SPOT_RENT": "spot_master_id legacy_spot_code delivery_service_type invite_code created_at updated_at introduction contact_email deletion_request_id",
     "MSP_RENTAL_ADMIN_REQUEST": "request_id spot_master_id admin_id email status requested_at reviewed_at reviewed_by_admin_id",
     "MSP_ORG": "org_id contract_id org_name unit_code address phone",
     "MSP_REGION": "region_id contract_id org_id region_name unit_code address phone",

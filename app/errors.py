@@ -13,9 +13,9 @@ class Problem(Exception):
 
 
 def install_handlers(app: FastAPI):
-    def response(status, code):
+    def response(status, code, *, retry_after=None):
         return JSONResponse({"status": "fail", "errorCode": code}, status_code=status,
-                            headers={"Cache-Control": "no-store"})
+                            headers={"Cache-Control": "no-store", **({"Retry-After": str(retry_after)} if retry_after else {})})
 
     @app.exception_handler(Problem)
     async def problem_handler(request: Request, error: Problem):
@@ -25,7 +25,8 @@ def install_handlers(app: FastAPI):
         if error.payment_id is not None:
             return JSONResponse({"status": "fail", "errorCode": error.code, "paymentId": error.payment_id},
                                 status_code=error.status, headers={"Cache-Control": "no-store"})
-        return response(error.status, error.code)
+        retry_after = 60 if error.status == 429 and request.url.path.startswith("/nadreego/admin/account-deletion") else None
+        return response(error.status, error.code, retry_after=retry_after)
 
     @app.exception_handler(RequestValidationError)
     async def invalid_input(request: Request, error: RequestValidationError):
@@ -38,4 +39,6 @@ def install_handlers(app: FastAPI):
 
     @app.exception_handler(SQLAlchemyError)
     async def database_error(request: Request, error: SQLAlchemyError):
+        if getattr(request.state, "deletion_saved", False):
+            return response(503, "DELETION_OUTCOME_UNKNOWN")
         return response(503, "DATABASE_UNAVAILABLE")

@@ -47,9 +47,9 @@ def iso(request, value):
     return value.replace(tzinfo=timezone.utc).astimezone(timezone_for(request)).isoformat() if value else None
 
 
-def context(request, session, *, write=False, representative=False):
+def context(request, session, *, write=False, representative=False, settlement=False):
     actor = principal(request, session)
-    root = active_spot(request, session, actor, representative=representative, lock=write)
+    root = active_spot(request, session, actor, representative=representative, lock=write, settlement=settlement)
     return actor, root
 
 

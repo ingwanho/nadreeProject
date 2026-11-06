@@ -104,6 +104,8 @@ def _active_spots(request, session):
             continue
         rent = session.execute(select(db.table("MSP_SPOT_RENT")).where(
             db.table("MSP_SPOT_RENT").c.spot_master_id == row["spot_master_id"])).mappings().first()
+        if rent and rent.get("deletion_request_id"):
+            continue
         row["rent"] = dict(rent) if rent else {}
         result.append(row)
     return result
@@ -717,6 +719,8 @@ def nadree_request(body: NadriRentalRequest, request: Request, session: Session 
     # Different users must share the same resource lock. A user-specific lock
     # cannot prevent two customers from claiming the last model at a spot.
     lock_key(session, "nadri-model", body.spotMasterId + ":" + body.modelId)
+    from app.account_deletion_scope import new_work_allowed
+    new_work_allowed(db, session, body.spotMasterId, lock=True)
     start, end = _local_period(request, body.startDate, body.returnDate)
     table = db.table("MSP_RESERVATION")
     if start <= now():

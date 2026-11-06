@@ -789,3 +789,47 @@ OPENAPI_STATUS_EXAMPLES = {
     ("POST", "/nadreego/booking/{booked_no}/receipt-recovery"): {409: {code: {"status": "fail", "errorCode": code} for code in
         ("NOT_AWAITING_RECOVERY", "RESERVATION_VEHICLE_MISMATCH", "RECEIPT_HOLD_INCONSISTENT")}},
 }
+
+# Administrator privacy acceptance is distinct from the legacy immediate DELETE.
+_DELETION = {
+    "status": "success", "requestId": "adr_" + "0" * 64, "requestAccepted": True,
+    "requestState": "PROCESSING", "scope": "SELF", "receivedAt": "2026-11-06T06:00:00Z",
+    "identityVerifiedAt": "2026-11-06T06:00:00Z", "eligibleAt": "2026-11-06T06:00:00Z",
+    "processingDueAt": "2026-11-13T06:00:00Z", "completedAt": None,
+    "accessState": "PENDING", "personalDataState": "NOT_STARTED", "affectedAdminCount": 1,
+    "affectedShopCount": 0, "outstandingWork": {name: 0 for name in (
+        "pendingReservations", "activeRentals", "pendingReturns", "pendingRecovery", "pendingRefunds", "pendingExternalSettlements")},
+    "nextAction": "NONE", "notificationChannel": "REGISTERED_EMAIL", "completionScope": None,
+    "retainedData": [], "residualCopies": [], "receiptExpiresAt": None,
+    "message": "Your account and personal-data deletion request has been received.",
+}
+_DELETION_WAITING = dict(_DELETION, scope="SUBTREE", affectedAdminCount=4, affectedShopCount=2,
+    requestState="WAITING_OBLIGATIONS", accessState="LIMITED_TO_SETTLEMENT", eligibleAt=None, processingDueAt=None,
+    nextAction="SETTLE_OUTSTANDING_WORK", outstandingWork=dict(_DELETION["outstandingWork"], pendingReservations=1))
+OPENAPI_EXAMPLES.update({
+    "DeletionConfirmation": {"confirmationToken": "<server-confirmation-token>", "confirmed": True},
+    "AccountDeletionContext": {"status": "success", "scope": "SUBTREE", "directShopName": "Example Shop",
+        "affectedAdminCount": 4, "affectedShopCount": 2, "confirmationToken": "<server-confirmation-token>",
+        "confirmationExpiresAt": "2026-11-06T06:10:00Z", "outstandingWork": _DELETION_WAITING["outstandingWork"],
+        "canSubmitRequest": True, "canExecuteWithdrawal": False, "activeRequestId": None},
+    "AccountDeletionRequestResult": _DELETION,
+})
+OPENAPI_STATUS_EXAMPLES.update({
+    ("GET", "/nadreego/admin/account-deletion-context"): {200: {"subtree": OPENAPI_EXAMPLES["AccountDeletionContext"]}},
+    ("POST", "/nadreego/admin/account-deletion-requests"): {
+        202: {"selfAccepted": _DELETION, "waitingForObligations": _DELETION_WAITING},
+        409: {"scopeChanged": {"status": "fail", "errorCode": "DELETION_SCOPE_CHANGED", "requestAccepted": False,
+                               "nextAction": "RELOAD_AND_RECONFIRM"}},
+        503: {"checkSameReceipt": {"status": "fail", "errorCode": "DELETION_OUTCOME_UNKNOWN"}},
+    },
+    ("GET", "/nadreego/admin/account-deletion-requests/status"): {
+        200: {"pending": _DELETION, "waiting": _DELETION_WAITING,
+            "completed": dict(_DELETION, requestState="COMPLETED", accessState="REVOKED", personalDataState="COMPLETED",
+                completedAt="2026-11-07T06:00:00Z", completionScope="COMPANY_ACTIVE_SYSTEMS",
+                receiptExpiresAt="2026-12-07T06:00:00Z"),
+            "operatorReview": dict(_DELETION, requestState="ACTION_REQUIRED", accessState="REVOKED",
+                personalDataState="IN_PROGRESS", nextAction="REVIEW_DATA_AND_RETENTION")},
+        404: {"notFinalEvidenceOfNonAcceptance": {"status": "fail", "errorCode": "DELETION_REQUEST_UNAVAILABLE"}},
+    },
+    ("POST", "/nadreego/admin/account-deletion-requests/{deletion_id}/reconfirm"): {202: {"sameRequest": _DELETION_WAITING}},
+})

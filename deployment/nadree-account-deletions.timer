@@ -1,0 +1,10 @@
+[Unit]
+Description=Reevaluate administrator privacy requests every five minutes
+
+[Timer]
+OnBootSec=1min
+OnUnitInactiveSec=5min
+Unit=nadree-account-deletions.service
+
+[Install]
+WantedBy=timers.target

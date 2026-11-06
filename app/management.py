@@ -48,6 +48,9 @@ def set_role(session, db, admin_id, value):
 @router.post("/nadreego/admin/roleChange", response_model=PrimaryResult)
 def change_role(body: AdminId, request: Request, session: Session = DB):
     actor, root = representative(request, session)
+    from app.account_deletion_scope import account_change_allowed
+    account_change_allowed(request, actor.admin["admin_id"])
+    account_change_allowed(request, body.adminId)
     db = request.app.state.db
     target = member(session, db, body.adminId, root)
     if body.adminId == actor.admin["admin_id"]:
@@ -91,6 +94,8 @@ def list_admins(request: Request, session: Session = DB):
 @router.post("/nadreego/shop/adminDelete", response_model=Status)
 def delete_admin(body: AdminId, request: Request, session: Session = DB):
     actor, root = representative(request, session)
+    from app.account_deletion_scope import account_change_allowed
+    account_change_allowed(request, body.adminId)
     db = request.app.state.db
     target = member(session, db, body.adminId, root)
     if roles(session, db, target["admin_id"]) & {PRIMARY, GENERAL} != {GENERAL}:
@@ -114,6 +119,8 @@ def delete_admin(body: AdminId, request: Request, session: Session = DB):
                description="본문 없음. 현재 일반관리자는 본인만 탈퇴합니다. 대표관리자는 본인과 본인 지점·모든 하위 지점의 렌탈 관리자 전원을 탈퇴시키고 해당 지점들을 논리 삭제(is_active=0)합니다. 같은 계약·회사·계층 경계로 제한하며 상위·형제·다른 회사 지점은 제외합니다. 렌탈 역할·본 서비스 세션·FCM 토큰과 채팅 접근을 회수합니다. 공유 관리자 식별 행·다른 서비스 역할·지점/예약/차량/결제 이력은 보존하며 예약 취소·환불은 실행하지 않습니다. 기존 활성 지점·계약·직접 manage 권한을 검증하고 성공 후 앱은 저장한 인증 정보를 폐기합니다.")
 def delete_own_admin_account(request: Request, session: Session = DB):
     actor = principal(request, session)
+    from app.account_deletion_scope import account_change_allowed
+    account_change_allowed(request, actor.admin["admin_id"])
     root = active_spot(request, session, actor, lock=True)
     db = request.app.state.db
     admins, mapping = db.table("MSP_ADMIN"), db.table("MSP_ADMIN_ROLE")
@@ -456,6 +463,9 @@ def admin_request_action(body: RequestAction, request: Request, session: Session
     current = now()
     if body.action == "APPROVE":
         # The account lock also serializes approvals for the same applicant at different spots.
+        from app.account_deletion_scope import account_change_allowed, new_work_allowed
+        new_work_allowed(db, session, row["spot_master_id"], lock=True)
+        account_change_allowed(request, row["admin_id"])
         admins = db.table("MSP_ADMIN")
         target = session.execute(select(admins).where(admins.c.admin_id == row["admin_id"])
                                  .with_for_update()).mappings().first()
