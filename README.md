@@ -6,7 +6,7 @@
 
 ## 현재 상태
 
-2026-11-06 반납 완료 90일 채팅 정리 **로컬 구현·서버 미적용**: SQL의 RETURNED 계약/예약·actual_end_time으로 대상을 재검사하고 예약방·메시지·읽음·연결 이벤트만 삭제한다. 내용 없는 기존 예약 매핑의 삭제 표시로 동기화 재생성을 막으며 렌트/결제 기록과 다른 문의·예약은 보존한다. 기본 명령은 SQL 대상 확인, 실제 삭제는 --apply이며 발리 04:15 일일 타이머 템플릿을 추가했다. 추가 검사 18개·전체 회귀 **622 passed/16 skipped**, 별도 Firestore 에뮬레이터 5개 통과. 스키마/env 변경 없음. **네 채팅 callable 업데이트·새 코드 전환 후 배치를 활성화**한다. [정책·명령·서버 적용 순서](docs/chat-retention-90-days-2026-11-06.md).
+2026-11-06 반납 완료 90일 채팅 정리 **04:08 UTC 서버 적용 완료**: `167f25b`의 네 채팅 callable을 bail-472405/asia-southeast2에 업데이트하고 원격 소스 해시 12/12 일치·보존 함수 3개 설정 유지를 확인했다. API·chat_sync를 새 코드로 전환하고 발리 **04:15** 일일 자동삭제 타이머를 활성화했다. 최초 --apply는 **대상 0·삭제 0·실패 0**, 로컬/공개 헬스·준비·Swagger/OpenAPI 200·76개 경로다. SQL RETURNED 계약/예약·actual_end_time으로 재검사하며 예약방·메시지·읽음·연결 이벤트만 정리하고 삭제 표시로 재생성을 막는다. 전체 격리 회귀 **622 passed/16 skipped**, 별도 Firestore 5개 통과; 남은 MySQL 검사 11개·실제 만료 채팅 삭제·앱/App Check 종단은 미검증이다. 스키마/env/Rules/인덱스 변경 없음. [정책·명령](docs/chat-retention-90-days-2026-11-06.md), [실제 적용 결과](docs/chat-retention-server-result-2026-11-06.md), [앱 전달](docs/frontend-chat-retention-handoff-2026-11-06.md).
 
 관리자 탈퇴 프론트 전달용: [권한별 삭제 범위·호출·화면 처리·공동 시험](docs/frontend-admin-account-deletion-handoff-2026-11-05.md).
 

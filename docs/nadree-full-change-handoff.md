@@ -1,8 +1,10 @@
 # Nadree 전체 변경사항 및 인수 문서
 
-## 2026-11-06 반납 완료 90일 채팅 삭제 — 로컬 구현·서버 미적용
+## 2026-11-06 반납 완료 90일 채팅 삭제 — 04:08 UTC 서버 적용 완료
 
-실제 반납 완료 actual_end_time에서 90일 경과한 RETURNED 계약/예약만 SQL에서 선택해 연결된 예약 채팅방·messages·reads·chatPushEvents를 매일 정리한다. 진행/연체·취소/거절/만료·일반 문의는 제외하고 SQL 업무 이력은 보존한다. 기존 bookingChatAccess에 내용 없는 삭제 표시를 남겨 chat_sync의 재생성과 새 문의 소비를 차단한다. 실패 시 남은 하위 문서를 다음 실행에 이어 정리한다. 기본 명령은 읽기 전용 계획이며 새 일일 배치 활성화에는 **네 채팅 callable 업데이트와 API/chat_sync 새 코드 전환**이 먼저 필요하다. 새 SQL/컬렉션/env/Rules/인덱스는 추가하지 않는다. [정책·검증·서버 실행서](chat-retention-90-days-2026-11-06.md). 아래 자동 정리 제외 결정 중 이 범위만 사용자 요청으로 변경한다.
+실제 반납 완료 actual_end_time에서 90일 경과한 RETURNED 계약/예약만 SQL에서 선택해 연결된 예약 채팅방·messages·reads·chatPushEvents를 매일 정리한다. 진행/연체·취소/거절/만료·일반 문의는 제외하고 SQL 업무 이력은 보존한다. 기존 bookingChatAccess에 내용 없는 삭제 표시를 남겨 chat_sync의 재생성과 새 문의 소비를 차단한다. 실패 시 남은 하위 문서를 다음 실행에 이어 정리한다. 기본 명령은 읽기 전용 계획이며 새 SQL/컬렉션/env/Rules/인덱스는 추가하지 않는다. [정책·검증·서버 실행서](chat-retention-90-days-2026-11-06.md). 아래 자동 정리 제외 결정 중 이 범위만 사용자 요청으로 변경한다.
+
+사용자 승인 후 `167f25b` 기준 **bail-472405/asia-southeast2의 ensureBookingChat·sendChatMessage·markChatRead·getChatUnreadSummary 4개** 업데이트·원격 소스 12/12 해시 일치와 보존 함수 3개 설정 유지를 확인했다. **04:08:33 UTC API 재시작**·구 chat_sync 종료/새 일정 재개 후 발리 **04:15** 일일 retention 타이머를 활성화했다. 최초 --apply는 **대상 0·삭제 0·실패 0**, 다음 일정은 11월 7일 발리 04:15다. 로컬/공개 헬스·준비·Swagger/OpenAPI 200·76개 경로와 기존 작업/env 보존을 확인했다. 격리 전체 **622 passed/16 skipped**, 별도 Firestore **5 passed**; 남은 MySQL 11개·실제 만료 방 삭제·앱/App Check 종단은 미검증이다. [실제 적용·검증 결과](chat-retention-server-result-2026-11-06.md), [앱 담당자 전달](frontend-chat-retention-handoff-2026-11-06.md).
 
 관리자 탈퇴 프론트 전달용: [신규 DELETE 연결·권한별 범위·성공/오류·앱/웹 시험](frontend-admin-account-deletion-handoff-2026-11-05.md).
 
