@@ -11,6 +11,12 @@ from test_pending_reservation_approval import pending_bookings
 PATH = "/nadreego/admin/account"
 
 
+@pytest.fixture(autouse=True)
+def rental_tables(setup):
+    from app.rental_schema import metadata
+    metadata.create_all(setup["engine"])
+
+
 def snapshot(setup):
     with setup["engine"].connect() as conn:
         return {name: conn.execute(select(setup["db"].table(name))).mappings().all()
@@ -158,25 +164,23 @@ def test_subtree_requires_same_company_contract_and_segment_boundary(client, sig
             "root": 0, "child": 0, "sibling": 1, "foreign": 1}
 
 
-def test_closing_spots_preserves_bookings_and_blocks_new_requests(client, signin, setup, pending_bookings):
+def test_primary_cannot_close_spots_with_unfinished_bookings(client, signin, setup, pending_bookings):
     _, request_booking = pending_bookings
     existing = request_booking(0)["reservationId"]
     names = ("MSP_RESERVATION", "MSP_RESERVATION_HISTORY", "MSP_RENTAL_CONTRACT", "MSP_RENTAL_PAYMENT",
              "MSP_VEHICLE", "MSP_VEHICLE_STATUS", "MSP_VEHICLE_QR", "MSP_VEHICLE_SPOT_HISTORY")
     with setup["engine"].connect() as conn:
         before = {name: conn.execute(select(setup["db"].table(name))).mappings().all() for name in names}
-    response = client.delete(PATH, headers=signin())
-    assert response.status_code == 200
+    headers = signin()
+    response = client.delete(PATH, headers=headers)
+    assert response.status_code == 409 and response.json()["errorCode"] == "DELETION_OBLIGATIONS_REMAIN"
     with setup["engine"].connect() as conn:
         assert {name: conn.execute(select(setup["db"].table(name))).mappings().all() for name in names} == before
-    failed = request_booking(1, expected=409)
-    assert failed["errorCode"] == "SPOT_UNAVAILABLE"
+    assert request_booking(1)["reservationStatus"] == "REQUESTED"
     from app.security import sign_user_access
     own = {"Authorization": "Bearer " + sign_user_access(setup["settings"], "pending-user-0")}
     assert client.get("/api/v1/nadree/rental/reservations/" + existing, headers=own).status_code == 200
-    signup = client.post("/nadreego/admin/signup", json={"loginId": "closed-shop", "name": "Closed shop",
-        "email": "closed-shop@example.com", "password": "Test-password-123!", "inviteCode": "invite-child"})
-    assert signup.status_code == 404 and signup.json()["errorCode"] == "INVITE_CODE_NOT_FOUND"
+    assert client.get("/nadreego/shop/admin", headers=headers).status_code == 200
 
 
 def test_late_database_failure_rolls_back_members_and_all_spot_tables(client, signin, setup):

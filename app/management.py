@@ -91,7 +91,8 @@ def list_admins(request: Request, session: Session = DB):
     return {"status": "success", "admin": items}
 
 
-@router.post("/nadreego/shop/adminDelete", response_model=Status)
+@router.post("/nadreego/shop/adminDelete", response_model=Status,
+             description="대표가 일반관리자를 제거합니다. 대상이 승인한 미완료 건은 같은 지점 대표에게 인계하고 예약·렌트·결제·차량 상태를 유지합니다. 유효 대표를 하나로 확인할 수 없으면 409 PRIMARY_ADMIN_REQUIRED_FOR_HANDOVER입니다.")
 def delete_admin(body: AdminId, request: Request, session: Session = DB):
     actor, root = representative(request, session)
     from app.account_deletion_scope import account_change_allowed
@@ -100,6 +101,8 @@ def delete_admin(body: AdminId, request: Request, session: Session = DB):
     target = member(session, db, body.adminId, root)
     if roles(session, db, target["admin_id"]) & {PRIMARY, GENERAL} != {GENERAL}:
         raise Problem(409, "PRIMARY_ADMIN_CANNOT_BE_REMOVED")
+    from app.admin_rental_exit import transfer_approved_work
+    transfer_approved_work(db, session, root["spot_master_id"], body.adminId)
     from app.chat import revoke_admin_chat
     revoke_admin_chat(request, body.adminId)
     # Remove rental membership, not a shared account or its unrelated web roles.
@@ -116,7 +119,7 @@ def delete_admin(body: AdminId, request: Request, session: Session = DB):
 
 @router.delete("/nadreego/admin/account", response_model=AdminAccountDeletion,
                summary="관리자 본인 요청 회원탈퇴",
-               description="본문 없음. 현재 일반관리자는 본인만 탈퇴합니다. 대표관리자는 본인과 본인 지점·모든 하위 지점의 렌탈 관리자 전원을 탈퇴시키고 해당 지점들을 논리 삭제(is_active=0)합니다. 같은 계약·회사·계층 경계로 제한하며 상위·형제·다른 회사 지점은 제외합니다. 렌탈 역할·본 서비스 세션·FCM 토큰과 채팅 접근을 회수합니다. 공유 관리자 식별 행·다른 서비스 역할·지점/예약/차량/결제 이력은 보존하며 예약 취소·환불은 실행하지 않습니다. 기존 활성 지점·계약·직접 manage 권한을 검증하고 성공 후 앱은 저장한 인증 정보를 폐기합니다.")
+               description="본문 없음. 일반관리자는 본인이 승인한 미완료 건을 같은 지점 대표에게 인계한 뒤 본인만 탈퇴합니다. 예약·렌트·차량·결제는 취소/삭제하지 않습니다. 대표는 본인 지점과 모든 하위 지점의 예약·렌트·회수·환불·정산이 완료되어야 본인 포함 관리자 전원 탈퇴 및 지점 논리 삭제가 가능합니다. 미완료면 409 DELETION_OBLIGATIONS_REMAIN으로 역할·세션·업무 상태를 보존합니다. 같은 계약·회사·계층 경계이며 상위/형제/타회사 제외. 기존 인증·활성 지점·계약·manage 권한을 검증합니다.")
 def delete_own_admin_account(request: Request, session: Session = DB):
     actor = principal(request, session)
     from app.account_deletion_scope import account_change_allowed
@@ -164,6 +167,14 @@ def delete_own_admin_account(request: Request, session: Session = DB):
         new_work_allowed(db, session, spot["spot_master_id"], lock=True)
     from app.security import lock_account
     lock_account(request, session, actor.admin["admin_id"], actor.session_id)
+    if delete_subtree:
+        from app.account_deletion_scope import outstanding
+        work = outstanding(db, session, {"scope": "SUBTREE", "spots": [{"id": spot["spot_master_id"]} for spot in spots]})
+        if any(work.values()):
+            raise Problem(409, "DELETION_OBLIGATIONS_REMAIN", request_outcome={"nextAction": "SETTLE_OUTSTANDING_WORK"})
+    else:
+        from app.admin_rental_exit import transfer_approved_work
+        transfer_approved_work(db, session, root["spot_master_id"], actor.admin["admin_id"])
     from app.chat import revoke_admin_chat
     for admin_id in admin_ids:
         revoke_admin_chat(request, admin_id)

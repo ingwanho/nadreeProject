@@ -95,6 +95,9 @@ def withdraw(db, store, chat, row, at):
                 outstandingWork=work)
             session.execute(select(admins.c.admin_id).where(admins.c.admin_id.in_(ids))
                             .order_by(admins.c.admin_id).with_for_update()).all()
+            if snapshot["scope"] == "SELF":
+                from app.admin_rental_exit import transfer_approved_work
+                transfer_approved_work(db, session, snapshot["rootId"], row["ownerId"])
         for ident in ids:
             chat.revoke(admin_uid(ident))
         session.execute(delete(mapping).where(mapping.c.admin_id.in_(ids), mapping.c.role_code.in_([PRIMARY, GENERAL])))

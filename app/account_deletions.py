@@ -109,7 +109,7 @@ def make_record(request, actor, snapshot, members, work, ident, secret, fingerpr
 
 @router.post("/account-deletion-requests", response_model=AccountDeletionRequestResult, status_code=202, dependencies=[bearer],
              summary="관리자 탈퇴·개인정보 삭제 요청 접수",
-             description="현재 인증과 확인 토큰으로 접수합니다. 요청 상태는 FCM 프로젝트의 서버 전용 Firestore에 보관합니다. Idempotency-Key와 256비트 이상 무작위 Deletion-Receipt-Token을 전송 전에 보관합니다. 접수 성공은 개인정보 처리 완료를 뜻하지 않습니다.")
+             description="현재 인증과 확인 토큰으로 접수합니다. 대표는 모든 하위 지점의 미완료 업무가 있으면 WAITING_OBLIGATIONS로 대기하며 실제 삭제하지 않습니다. 일반은 본인이 승인한 미완료 업무를 같은 지점 대표에게 인계하며 업무 데이터는 취소/삭제하지 않습니다. FCM Firestore에 상태를 저장합니다. Idempotency-Key와 256비트 이상 무작위 Deletion-Receipt-Token을 전송 전에 보관합니다. 접수는 개인정보 삭제 완료가 아닙니다.")
 def submit_deletion(body: DeletionConfirmation, request: Request,
                     idempotency_key: str = Header(alias="Idempotency-Key", max_length=64),
                     receipt_token: SecretStr = Header(alias="Deletion-Receipt-Token", max_length=128)):

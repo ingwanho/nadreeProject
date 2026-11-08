@@ -6,6 +6,12 @@ from sqlalchemy import Table, delete, func, select, update
 from app.security import GENERAL, PRIMARY, now
 
 
+@pytest.fixture(autouse=True)
+def rental_tables(setup):
+    from app.rental_schema import metadata
+    metadata.create_all(setup["engine"])
+
+
 def count(setup, name):
     with setup["engine"].connect() as conn:
         return conn.scalar(select(func.count()).select_from(setup["db"].table(name)))

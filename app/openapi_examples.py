@@ -730,6 +730,9 @@ OPENAPI_STATUS_EXAMPLES = {
         },
         401: {"invalidSession": {"status": "fail", "errorCode": "AUTH_REQUIRED"}},
         403: {"missingDirectScope": {"status": "fail", "errorCode": "SPOT_ACCESS_DENIED"}},
+        409: {"unfinishedWorkInSubtree": {"status": "fail", "errorCode": "DELETION_OBLIGATIONS_REMAIN",
+                "nextAction": "SETTLE_OUTSTANDING_WORK"},
+            "primaryNeededForTransfer": {"status": "fail", "errorCode": "PRIMARY_ADMIN_REQUIRED_FOR_HANDOVER"}},
         503: {"chatRevocationFailed": {"status": "fail", "errorCode": "CHAT_SYNC_FAILED"}},
     },
     ("POST", _CUSTOMER_BASE + "/onsite/requests"): {

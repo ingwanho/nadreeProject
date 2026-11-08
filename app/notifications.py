@@ -63,7 +63,8 @@ def record_notification(db, session, shop_id, event, target_type, target_id, eve
 
 def view(request, row):
     return {"notificationId": row["notification_id"], "shopId": row["spot_master_id"],
-            "eventType": row["event_type"], "message": "새 업무 알림이 있습니다.",
+            "eventType": row["event_type"], "message": "담당 관리자의 탈퇴로 대표관리자에게 업무가 인계되었습니다."
+                if row["event_type"] == "RESERVATION_MANAGER_TRANSFERRED" else "새 업무 알림이 있습니다.",
             "targetType": row["target_type"], "targetId": row["target_id"],
             "createdAt": iso(request, row["created_at"]), "isRead": row["read_at"] is not None,
             "readAt": iso(request, row["read_at"])}
