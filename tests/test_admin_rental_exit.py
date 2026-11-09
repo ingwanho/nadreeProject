@@ -85,6 +85,53 @@ def test_general_transfers_own_approved_bookings_and_live_rentals_without_cancel
         assert process(ctx)["processed"] == 0
 
 
+@pytest.mark.parametrize("flow", ["legacy", "privacy", "staff-removal"])
+@pytest.mark.parametrize("status,has_end,transferred", [
+    ("RETURNED", False, True),
+    ("ON_RENT", True, True),
+    ("RETURNED", True, False),
+])
+def test_general_transfers_until_contract_status_and_actual_return_both_confirm_completion(
+        privacy, pending_bookings, signin, flow, status, has_end, transferred):
+    ctx = privacy
+    _, book = pending_bookings
+    general, primary = signin("general"), signin()
+    ident = book(0)["reservationId"]
+    approve(ctx, general, ident)
+    live_rental(ctx, ident)
+    contracts = ctx["db"].table("MSP_RENTAL_CONTRACT")
+    with ctx["engine"].begin() as conn:
+        # Keep the reservation snapshot unchanged: neither contract field alone
+        # proves completion, while an actually returned contract needs no transfer.
+        conn.execute(update(contracts).where(contracts.c.reservation_id == ident).values(
+            contract_status=status, actual_end_time=now() - timedelta(minutes=30) if has_end else None))
+    before = snapshot(ctx)
+
+    if flow == "privacy":
+        accepted, _, _, _ = submit(ctx, general)
+        assert accepted.status_code == 202
+        assert process(ctx)["completed"] == 1
+    elif flow == "legacy":
+        result = ctx["client"].delete("/nadreego/admin/account", headers=general)
+        assert result.status_code == 200, result.text
+    else:
+        result = ctx["client"].post("/nadreego/shop/adminDelete", headers=primary, json={"adminId": "general"})
+        assert result.status_code == 200, result.text
+
+    assert snapshot(ctx) == before
+    with ctx["engine"].connect() as conn:
+        for name in ("MSP_RESERVATION_HISTORY", "MSP_RENTAL_CONTRACT_HISTORY"):
+            history = ctx["db"].table(name)
+            moved = list(conn.execute(select(history).where(history.c.event_type == "MANAGER_TRANSFERRED")).mappings())
+            assert len(moved) == int(transferred)
+            assert {row["changed_by"] for row in moved} == ({"primary"} if transferred else set())
+        notices = ctx["db"].table("MSP_RENTAL_NOTIFICATION")
+        assert conn.scalar(select(func.count()).select_from(notices).where(
+            notices.c.event_type == "RESERVATION_MANAGER_TRANSFERRED", notices.c.target_id == ident)) == int(transferred)
+    assert ctx["client"].get("/nadreego/shop/admin", headers=general).status_code == 401
+    assert ctx["client"].get("/nadreego/shop/admin", headers=primary).status_code == 200
+
+
 def test_missing_primary_keeps_account_and_work_unchanged(privacy, pending_bookings, signin):
     ctx = privacy
     _, book = pending_bookings

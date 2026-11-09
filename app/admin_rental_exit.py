@@ -21,7 +21,7 @@ def transfer_approved_work(db, session, spot_id, admin_id):
               b["reservation_status"] == "EXPIRED" and b.get("handed_over_at") and b.get("assigned_vehicle_id"))]
     rentals = session.execute(select(contracts).where(contracts.c.reservation_id.in_([b["reservation_id"] for b in owned]))
         .order_by(contracts.c.rental_contract_id).with_for_update()).mappings().all()
-    finished = {r["reservation_id"] for r in rentals if r.get("actual_end_time") is not None or r["contract_status"] == "RETURNED"}
+    finished = {r["reservation_id"] for r in rentals if r.get("actual_end_time") is not None and r["contract_status"] == "RETURNED"}
     owned = [b for b in owned if b["reservation_id"] not in finished]
     if not owned:
         return 0
