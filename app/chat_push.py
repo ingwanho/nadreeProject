@@ -182,7 +182,7 @@ def process_event(db, store, notifier, snapshot, counters, settings):
     if not sending:
         return
     result = notifier.deliver_chat_once(db, {"event": "CHAT_MESSAGE", "table": table, "key_column": key,
-        "recipients": sending, "title": "새 채팅 알림", "body": "새 메시지가 도착했습니다.",
+        "recipients": sending, "title": "New chat message", "body": "You have received a new message.",
         "data": {"eventId": "chat:" + snapshot.id, "shopId": event["shopId"], "roomId": event["roomId"]}})
     accepted = {item["id"] for item in result["accepted"]}
     failed = {item["id"] for item in result["failed"] + result["invalid"]}

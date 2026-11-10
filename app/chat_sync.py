@@ -15,6 +15,7 @@ from app.config import Settings
 from app.db import Database
 from app.errors import Problem
 from app.fcm import FcmSender
+from app.spot_hierarchy import unit_name
 from app.security import PRIMARY, GENERAL, SESSION_MARKER, check_contract, now, roles
 
 
@@ -69,7 +70,7 @@ def sync_catalogue(db, chat):
             except Problem:
                 active = False
             shop_id = spot["spot_master_id"]
-            store.ref("chatShops/" + shop_id).set({"active": active, "displayName": spot["spot_name"]}, merge=True)
+            store.ref("chatShops/" + shop_id).set({"active": active, "displayName": unit_name(spot)}, merge=True)
             query = (select(models.c.model_id, models.c.model_name).join(rental, rental.c.model_id == models.c.model_id)
                 .join(vehicles, vehicles.c.vehicle_id == rental.c.vehicle_id)
                 .join(location, location.c.vehicle_id == vehicles.c.vehicle_id)

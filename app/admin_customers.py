@@ -118,8 +118,8 @@ def customer_row(request, session, customer_id, spots):
     return row
 
 
-@router.get("", response_model=CustomerList, summary="권한 범위 내 고객 목록",
-            description="ACTIVE는 진행 요청/승인/인계 예약 또는 대여 중 고객, INACTIVE는 해당 이력이 없는 거래 고객입니다. 계정 탈퇴 상태와 다릅니다.")
+@router.get("", response_model=CustomerList, summary="List customers within the administrator's scope",
+            description="ACTIVE identifies customers with an ongoing requested, approved, or handover reservation, or an active rental. INACTIVE identifies past customers without such ongoing activity. This usage status is separate from account withdrawal status.")
 def customers(request: Request, spotMasterId: str | None = Query(None, max_length=36),
               search: str = Query("", max_length=100), status: str | None = Query(None, pattern="^(ACTIVE|INACTIVE)$"),
               page: int = Query(1, ge=1), pageSize: int = Query(20, ge=1, le=100), session: Session = DB):
@@ -140,16 +140,16 @@ def customers(request: Request, spotMasterId: str | None = Query(None, max_lengt
             "page": page, "pageSize": pageSize, "totalCount": total, "hasNext": page * pageSize < total}
 
 
-@router.get("/{customer_id}", response_model=CustomerDetailResult, summary="관리자 고객 상세",
-            description="연락처는 현재 렌탈 고객 DB에 없으므로 null입니다. 여권·FCM 토큰·세션 정보는 제공하지 않습니다. 제공되지 않은 프로필도 null입니다.")
+@router.get("/{customer_id}", response_model=CustomerDetailResult, summary="View customer details as an administrator",
+            description="Contact information is null because it is not stored in the current rental customer database. Passport data, FCM tokens, and session information are excluded. Missing profile fields are also null.")
 def detail(customer_id: str, request: Request, spotMasterId: str | None = Query(None, max_length=36), session: Session = DB):
     row = customer_row(request, session, customer_id, customer_scope(request, session, spotMasterId))
     return {"status": "success", "customer": {"customerId": row["uid_token"], "name": row["name"],
             "contact": None, "nationality": row["nationality"], "gender": row["gender"], "age": row["age"]}}
 
 
-@router.get("/{customer_id}/history", response_model=CustomerHistory, summary="관리자 고객 예약 및 렌탈 이력",
-            description="허용 지점의 예약과 예약 없는 렌탈을 조회합니다. 결제는 현재 PayPal 환경에서 paid_at이 있는 결제만 포함하며 미결제 금액은 0입니다.")
+@router.get("/{customer_id}/history", response_model=CustomerHistory, summary="View a customer's reservation and rental history as an administrator",
+            description="Returns reservations and walk-in rentals in authorized shops. Payment amounts include only payments with paid_at in the current PayPal environment; unpaid amounts are 0.")
 def history(customer_id: str, request: Request, spotMasterId: str | None = Query(None, max_length=36),
             page: int = Query(1, ge=1), pageSize: int = Query(20, ge=1, le=100), session: Session = DB):
     db = request.app.state.db

@@ -63,8 +63,9 @@ def record_notification(db, session, shop_id, event, target_type, target_id, eve
 
 def view(request, row):
     return {"notificationId": row["notification_id"], "shopId": row["spot_master_id"],
-            "eventType": row["event_type"], "message": "담당 관리자의 탈퇴로 대표관리자에게 업무가 인계되었습니다."
-                if row["event_type"] == "RESERVATION_MANAGER_TRANSFERRED" else "새 업무 알림이 있습니다.",
+            "eventType": row["event_type"], "message":
+                "Tasks have been transferred to the primary administrator after the assigned administrator's account was deleted."
+                if row["event_type"] == "RESERVATION_MANAGER_TRANSFERRED" else "You have a new work notification.",
             "targetType": row["target_type"], "targetId": row["target_id"],
             "createdAt": iso(request, row["created_at"]), "isRead": row["read_at"] is not None,
             "readAt": iso(request, row["read_at"])}
@@ -81,7 +82,7 @@ def payment_notification(db, session, payment, event, key):
         record_notification(db, session, shop, event, "PAYMENT", payment["payment_id"], key)
 
 
-@router.get("", response_model=NotificationList, summary="지점 공통 알림 목록", description="개인정보 없는 업무 알림을 보관 기간 자동 삭제 없이 조회합니다. 상세 대상은 해당 업무 API에서 다시 권한 검증합니다.")
+@router.get("", response_model=NotificationList, summary="List shared shop notifications", description="Lists business notifications without personal information. Notifications are not automatically deleted by a retention period. The relevant business API revalidates permissions when the target details are opened.")
 def notifications(request: Request, shopId: str = Query(..., min_length=1, max_length=36),
                   page: int = Query(1, ge=1), pageSize: int = Query(20, ge=1, le=100),
                   isRead: bool | None = None, eventType: str | None = Query(None, max_length=50), session: Session = DB):
@@ -99,7 +100,7 @@ def notifications(request: Request, shopId: str = Query(..., min_length=1, max_l
             "pageSize": pageSize, "totalCount": total, "hasNext": page * pageSize < total}
 
 
-@router.get("/unread-count", response_model=UnreadCount, summary="지점 공통 미읽음 알림 수")
+@router.get("/unread-count", response_model=UnreadCount, summary="Get the shared shop unread notification count")
 def unread(request: Request, shopId: str = Query(..., min_length=1, max_length=36), session: Session = DB):
     spots = customer_scope(request, session, shopId)
     table = request.app.state.db.table("MSP_RENTAL_NOTIFICATION")
@@ -108,7 +109,7 @@ def unread(request: Request, shopId: str = Query(..., min_length=1, max_length=3
     return {"status": "success", "shopId": shopId, "unreadCount": count}
 
 
-@router.post("/{notification_id}/read", response_model=NotificationRead, summary="알림을 지점 직원 공통 읽음으로 처리")
+@router.post("/{notification_id}/read", response_model=NotificationRead, summary="Mark a notification as read for all shop staff")
 def mark_read(notification_id: int, request: Request, session: Session = DB):
     spots = customer_scope(request, session)
     table = request.app.state.db.table("MSP_RENTAL_NOTIFICATION")

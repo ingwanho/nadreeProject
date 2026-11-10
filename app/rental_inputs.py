@@ -246,14 +246,14 @@ class ReceiptRecovery(Qr):
 class PassportUpload(Body):
     bookedNo: Annotated[str, Field(
         min_length=3, max_length=52, pattern=r"^(BO|RT)\S+$",
-        description="예약번호 BO... 또는 렌탈계약번호 RT...",
+        description="Reservation number BO... or rental contract number RT...",
     )]
     contentType: Literal["image/jpeg", "image/png"]
     imageBase64: Annotated[str, Field(
         min_length=4, max_length=7000000,
-        description="data URL 접두사 없이 전송하는 비식별 이미지의 base64 문자열",
+        description="Base64-encoded redacted image without a data URL prefix",
     )]
-    masked: StrictBool = Field(description="이미지에 여권번호·개인정보가 보이지 않으면 true")
+    masked: StrictBool = Field(description="True when the passport number and personal information are hidden in the image")
 
 
 class TierRange(Body):

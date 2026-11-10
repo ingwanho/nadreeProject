@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from app.availability import compute_assignment, reservation_history
 from app.db import payment_transaction, require_columns, transaction
 from app.errors import Problem
+from app.spot_hierarchy import unit_name
 from app.fcm import queue_reservation_request
 from app.headers import fcm_header, refresh_header
 from app.paypal import execute_refund, identifier
@@ -38,9 +39,9 @@ DB = Depends(transaction, scope="function")
 PAYMENT_DB = Depends(payment_transaction, scope="function")
 USER_REFRESH_PREFIX = "nadri.rt."
 firebase_id_token = HTTPBearer(auto_error=False, scheme_name="FirebaseIDToken",
-                               description="고객 로그인에 사용하는 Firebase ID Token")
+                               description="Firebase ID token used for customer sign-in")
 customer_access_token = HTTPBearer(auto_error=False, scheme_name="NadreeUserAccessToken",
-                                   description="로그인 후 Nadree가 발급한 고객 access token")
+                                   description="Customer access token issued by Nadree after sign-in")
 
 
 def _db(request):
@@ -146,7 +147,7 @@ def _model(request, session, model_id):
 def _spot_view(spot):
     return {"shopId": spot["spot_master_id"], "spotMasterId": spot["spot_master_id"],
             "spotCode": spot.get("unit_code"), "unitCode": spot.get("unit_code"),
-            "spotName": spot.get("spot_name"), "phone": spot.get("phone"),
+            "spotName": unit_name(spot), "phone": spot.get("phone"),
             "location": {"address": spot.get("address"), "zipCode": spot.get("zip_code"),
                          "latitude": float(spot["lat"]) if spot.get("lat") is not None else None,
                          "longitude": float(spot["lng"]) if spot.get("lng") is not None else None}}
@@ -521,8 +522,8 @@ def _user_view(request, session, user):
 
 
 @user_router.post("/login", response_model=CustomerLogin,
-                  summary="나드리 고객 Firebase UID 로그인·회원 생성",
-                  description="Firebase ID Token의 UID·폐기 여부·계정 상태를 검증합니다. 탈퇴·로그아웃 시각 이하의 auth_time은 401 FIREBASE_REAUTHENTICATION_REQUIRED입니다. 토큰 갱신만이 아닌 Firebase 재인증이 필요합니다. 정상 신규 UID는 새 회원으로 생성합니다.")
+                  summary="Sign in or create a Nadree customer account using Firebase authentication",
+                  description="Validates the Firebase ID token's UID, revocation status, and account status. An auth_time at or before account deletion or logout returns 401 FIREBASE_REAUTHENTICATION_REQUIRED. Firebase reauthentication is required; refreshing the token alone is insufficient. A valid new UID creates a customer account.")
 def nadree_login(body: NadriLogin, request: Request, session: Session = DB,
                  credentials: HTTPAuthorizationCredentials | None = Depends(firebase_id_token)):
     id_token = credentials.credentials if credentials is not None else None
@@ -589,7 +590,7 @@ def nadree_refresh(request: Request, session: Session = DB):
 
 
 @user_router.patch("/profile", response_model=CustomerProfileResult,
-                   summary="나드리 고객 프로필 수정",
+                   summary="Update the Nadree customer profile",
                    dependencies=[Depends(customer_access_token)])
 def nadree_profile(body: NadriProfile, request: Request, session: Session = DB):
     user = user_principal(request, session)
@@ -619,7 +620,7 @@ def nadree_profile(body: NadriProfile, request: Request, session: Session = DB):
 
 
 @user_router.get("/profile", response_model=CustomerProfileResult,
-                 summary="나드리 고객 최신 프로필 조회",
+                 summary="Get the current Nadree customer profile",
                  dependencies=[Depends(customer_access_token)])
 def nadree_profile_view(request: Request, session: Session = DB):
     user = user_principal(request, session)
@@ -633,8 +634,8 @@ def nadree_profile_view(request: Request, session: Session = DB):
 
 
 @user_router.delete("/account", response_model=CustomerAccountDeletion,
-                    summary="나드리 고객 회원 탈퇴",
-                    description="진행 중 예약·결제 여부와 관계없이 탈퇴합니다. 렌탈 이력은 보존하고 고객 개인정보·FCM 토큰·세션을 폐기합니다.",
+                    summary="Delete the Nadree customer account",
+                    description="Deletes the account regardless of ongoing reservations or payments. Rental history is preserved while customer profile information, FCM tokens, and sessions are removed or revoked.",
                     dependencies=[Depends(customer_access_token)])
 def nadree_delete_account(request: Request, session: Session = DB):
     user = user_principal(request, session)
@@ -694,8 +695,8 @@ def nadree_logout(request: Request, session: Session = DB,
 
 
 @router.post("/availability", response_model=CustomerAvailability,
-             summary="지점·차량 모델·USD 가격·배송비 조회",
-             description="테스트 시 spotMasterId/shopId는 00000000-0000-4000-8000-000000000101을 사용합니다. 웹 시나리오는 NRTEST-WEB-MODEL-125(BASIC/PREMIUM)와 NRTEST-WEB-MODEL-ND(배송 미지원)를 기준으로 확인합니다.")
+             summary="List shops, vehicle models, USD prices, and delivery fees",
+             description="For testing, use 00000000-0000-4000-8000-000000000101 as spotMasterId/shopId. Web scenarios use NRTEST-WEB-MODEL-125 for BASIC/PREMIUM pricing and NRTEST-WEB-MODEL-ND for a model without delivery support.")
 def nadree_availability(body: NadriAvailability, request: Request, session: Session = DB):
     items = _availability_for(request, session, body)
     settings = request.app.state.settings
@@ -708,8 +709,8 @@ def nadree_availability(body: NadriAvailability, request: Request, session: Sess
 
 
 @router.post("/request", response_model=CustomerRequest,
-             summary="렌탈 예약 요청",
-             description="생성 시 서버의 결제 방식(EXTERNAL/PAYPAL)을 예약에 저장합니다. 기본 EXTERNAL은 관리자 승인으로 확정하며 현장·외부 수납은 지점에서 관리합니다. 고객은 결제 방식을 지정하지 않습니다. 동일 고객·지점·모델·기간의 60초 이내 활성 예약 중복을 검사합니다. 배송지역은 요금표 선택이며 실제 주소 구역 검증은 제공하지 않습니다.",
+             summary="Request a rental reservation",
+             description="Stores the server's payment method (EXTERNAL/PAYPAL) when creating the reservation. The default EXTERNAL reservation is confirmed by administrator approval; the shop manages payments in person or externally. Customers cannot select the payment method. Duplicate active reservations for the same customer, shop, model, and period are checked within 60 seconds. The delivery region selects a pricing table; geographic validation of the supplied address is not provided.",
              dependencies=[Depends(customer_access_token)])
 def nadree_request(body: NadriRentalRequest, request: Request, session: Session = DB):
     user = user_principal(request, session)
@@ -894,25 +895,25 @@ def _payment_result(payment, approval_url=None, payment_window=None, *, provider
 
 
 @router.get("/payment/return", response_class=HTMLResponse,
-            summary="PayPal 승인·취소 후 복귀 안내",
-            description="공개 정적 안내 페이지입니다. 복귀 쿼리로 결제 성공을 확정하거나 캡처하지 않습니다. 앱은 이 URL을 감지한 뒤 인증된 결제 상태 조회와 명시적 capture API를 사용합니다.")
+            summary="Show return instructions after PayPal approval or cancellation",
+            description="Public static instructions only. Return query parameters do not confirm payment success or trigger capture. After detecting this URL, the app must use authenticated payment status queries and an explicit capture API call.")
 def nadree_payment_return():
     # Keep this fixed path before /payment/{paymentId}. The callback is only
     # navigation: untrusted query values must never settle or capture a payment.
     return HTMLResponse("""<!doctype html>
-<html lang="ko">
+<html lang="en">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>결제 상태 확인</title></head>
-<body><h1>앱에서 결제 상태를 확인해 주세요</h1>
-<p>PayPal 결제 화면에서 돌아왔습니다. 앱으로 돌아가 결제 상태를 확인해 주세요.</p></body>
+<title>Check payment status</title></head>
+<body><h1>Check your payment status in the app</h1>
+<p>You have returned from PayPal checkout. Return to the app to check your payment status.</p></body>
 </html>""", headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer",
                        "Content-Security-Policy": "default-src 'none'; base-uri 'none'; frame-ancestors 'none'",
                        "X-Content-Type-Options": "nosniff"})
 
 
 @router.post("/payment/order", response_model=CustomerPayment,
-             summary="승인 예약의 지점 판매자 PayPal 주문 생성",
-             description="온라인 결제 중단 시 409 ONLINE_PAYMENT_DISABLED, EXTERNAL 예약은 409 ONLINE_PAYMENT_NOT_REQUIRED로 외부 호출·결제 행 생성 전에 차단합니다. 온라인 기능이 활성화된 PAYPAL 예약만 기존 중복 청구 방지·판매자·기한 검사를 통과해 주문을 생성합니다. 복귀 자체는 결제 완료가 아닙니다.",
+             summary="Create a PayPal order for an approved reservation using the shop's seller account",
+             description="When online payments are disabled, returns 409 ONLINE_PAYMENT_DISABLED. EXTERNAL reservations return 409 ONLINE_PAYMENT_NOT_REQUIRED. Both checks occur before external calls or payment record creation. Only PAYPAL reservations with online payments enabled can create orders after duplicate-charge, seller, and deadline checks. Returning from PayPal does not mean payment is complete.",
              dependencies=[Depends(customer_access_token)])
 def nadree_payment_order(body: NadriPaymentOrder, request: Request, session: Session = PAYMENT_DB):
     user = user_principal(request, session)
@@ -997,8 +998,8 @@ def nadree_payment_order(body: NadriPaymentOrder, request: Request, session: Ses
 
 
 @router.post("/payment/capture", response_model=CustomerPayment,
-             summary="PayPal 결제 캡처",
-             description="온라인 결제 중단 시 기존 결제의 capture 재시도도 409 ONLINE_PAYMENT_DISABLED로 차단합니다. EXTERNAL 예약은 ONLINE_PAYMENT_NOT_REQUIRED입니다. 활성화된 온라인 예약만 기존 소유권·판매자·중복·기한 검사 후 같은 요청 식별자로 캡처합니다.",
+             summary="Capture a PayPal payment",
+             description="When online payments are disabled, capture retries for existing payments also return 409 ONLINE_PAYMENT_DISABLED. EXTERNAL reservations return ONLINE_PAYMENT_NOT_REQUIRED. Only enabled online reservations can be captured, using the same request identifier after ownership, seller, duplicate, and deadline checks.",
              dependencies=[Depends(customer_access_token)])
 def nadree_payment_capture(body: NadriPaymentCapture, request: Request, session: Session = PAYMENT_DB):
     user = user_principal(request, session)
@@ -1103,11 +1104,11 @@ def _owned_customer_payment(request, session, user, payment_id):
 
 
 @router.get("/payment/{paymentId}", response_model=CustomerPayment,
-            summary="기존 온라인 결제 상태 조회",
-            description="온라인 중단 중에는 DB 기록만 반환하며 PayPal 조회도 하지 않습니다. paymentStateSource=DATABASE, providerStateChecked=false와 저장 갱신 시각을 제공합니다. 이미 요청한 캡처의 WAIT는 웹훅/정산 반영 대기이며 새 capture 허용이 아닙니다.",
+            summary="Get the status of an existing online payment",
+            description="While online payments are disabled, returns stored database records without querying PayPal. Includes paymentStateSource=DATABASE, providerStateChecked=false, and the stored update timestamp. WAIT after a capture request means waiting for webhook or settlement processing; it does not authorize another capture.",
             dependencies=[Depends(customer_access_token)])
 def nadree_payment_status(paymentId: int, request: Request, session: Session = DB):
-    """결제 요청 응답이 유실된 경우 현재 저장된 결제·웹훅 상태를 다시 조회한다."""
+    """Read stored payment and webhook state after a payment response is lost."""
     user = user_principal(request, session)
     payment = _owned_customer_payment(request, session, user, paymentId)
     reservation = payment.pop("_reservation", None)
@@ -1133,7 +1134,7 @@ def nadree_payment_status(paymentId: int, request: Request, session: Session = D
 
 
 @router.get("/ongoing", response_model=CustomerPage,
-            summary="진행 중 예약·렌트 목록",
+            summary="List ongoing reservations and rentals",
             dependencies=[Depends(customer_access_token)])
 def nadree_ongoing(request: Request, page: int = Query(1, ge=1), pageSize: int = Query(20, ge=1, le=100), session: Session = DB):
     user = user_principal(request, session)
@@ -1143,7 +1144,7 @@ def nadree_ongoing(request: Request, page: int = Query(1, ge=1), pageSize: int =
 
 
 @router.get("/completed", response_model=CustomerPage,
-            summary="종료 내역: 반납·취소·거절·만료",
+            summary="List completed history: returns, cancellations, rejections, and expiry",
             dependencies=[Depends(customer_access_token)])
 def nadree_completed(request: Request, page: int = Query(1, ge=1), pageSize: int = Query(20, ge=1, le=100), session: Session = DB):
     user = user_principal(request, session)
@@ -1153,7 +1154,7 @@ def nadree_completed(request: Request, page: int = Query(1, ge=1), pageSize: int
 
 
 @router.get("/reservations/{reservation_id}", response_model=CustomerReservationDetail, dependencies=[Depends(customer_access_token)],
-            summary="고객 본인 예약 ID 직접 조회 (종료 상태 포함)")
+            summary="Get the customer's own reservation by ID, including completed reservations")
 def nadree_reservation_detail(reservation_id: str, request: Request, session: Session = DB):
     user = user_principal(request, session)
     db = _db(request)
@@ -1174,8 +1175,8 @@ def nadree_reservation_detail(reservation_id: str, request: Request, session: Se
 
 
 @router.post("/request/cancel", response_model=CustomerCancellation,
-             summary="고객 예약 취소·시작일 전 90% 당일부터 0% 환불",
-             description="본인의 인계 전 REQUESTED/APPROVED 예약을 취소합니다. EXTERNAL은 PG 환불 없이 취소하며 현장·외부 수납 환불은 지점에서 관리합니다. 기존 PAYPAL은 시작일 전 90%, 시작일 00:00부터 0% 정책을 유지하고 캡처 처리 중에는 PAYMENT_IN_PROGRESS입니다.",
+             summary="Cancel a customer reservation: 90% refund before the start date, 0% from the start date",
+             description="Cancels the customer's own REQUESTED/APPROVED reservation before handover. EXTERNAL reservations are canceled without a payment-provider refund; the shop manages refunds for payments collected in person or externally. Existing PAYPAL reservations retain the 90% refund policy before the start date and 0% from midnight on the start date. Captures in progress return PAYMENT_IN_PROGRESS.",
              dependencies=[Depends(customer_access_token)])
 def cancel_request(body: ReservationCancel, request: Request, background_tasks: BackgroundTasks, session: Session = DB):
     user = user_principal(request, session)

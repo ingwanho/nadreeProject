@@ -57,7 +57,7 @@ def schema(engine):
           Column("region_id", String(36)), Column("local_id", String(36)), Column("spot_id", String(36), unique=True),
           Column("org_name", String(100)), Column("region_name", String(100)), Column("local_name", String(100)),
           Column("unit_code", String(60), unique=True, nullable=False), Column("unit_name", String(100)),
-          Column("spot_name", String(100), nullable=False), Column("hierarchy_level", String(10)),
+          Column("spot_name", String(100)), Column("hierarchy_level", String(10)),
           Column("address", String(300)), Column("zip_code", String(20)), Column("biz_reg_num", String(20)),
           Column("phone", String(20)), Column("lat", Numeric(9, 6)), Column("lng", Numeric(9, 6)),
           Column("contract_start", Date), Column("contract_end", Date), Column("is_active", Integer, default=1))

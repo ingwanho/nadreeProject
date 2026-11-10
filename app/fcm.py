@@ -267,8 +267,8 @@ def _manager_recipients(db, session, spot_master_id):
 def queue_reservation_request(db, session, reservation_id, spot_master_id):
     _queue(session, table="MSP_ADMIN", key_column="admin_id",
            recipients=_manager_recipients(db, session, spot_master_id),
-           event="RESERVATION_REQUESTED", title="새 예약 요청",
-           body="새 렌트 예약 요청이 도착했습니다.",
+           event="RESERVATION_REQUESTED", title="New reservation request",
+           body="You have a new rental reservation request.",
            data={"type": "RESERVATION_REQUESTED", "reservationId": reservation_id,
                  "bookedNo": "BO" + reservation_id, "reservationStatus": "REQUESTED"})
 
@@ -281,19 +281,20 @@ def queue_reservation_decision(db, session, uid_token, reservation_id, status, *
         return
     approved = status == "APPROVED"
     if payment_method == "EXTERNAL":
-        approved_body = "렌트 예약이 확정되었습니다. 결제는 지점 안내에 따라 현장 또는 외부에서 진행해 주세요."
+        approved_body = "Your rental reservation is confirmed. Please follow the shop's instructions for payment in person or through an external payment method."
     elif not online_enabled:
-        approved_body = "렌트 예약이 승인되었습니다. 온라인 결제가 중단되어 지점에 진행 방법을 문의해 주세요."
+        approved_body = "Your rental reservation has been approved. Online payments are currently unavailable. Please contact the shop for payment instructions."
     else:
-        approved_body = ("렌트 예약이 승인되었습니다. 3일 이내에 결제를 진행해 주세요. "
-                         "렌트 시작 전까지 결제해 주세요. 시작일 전 고객 취소 시 10%가 공제되며, 렌트 당일부터는 취소해도 환불되지 않습니다.")
+        approved_body = ("Your rental reservation has been approved. Please pay within 3 days and before your rental starts. "
+                         "Cancellations before the start date incur a 10% deduction. "
+                         "No refund is available for cancellations on or after the start date.")
     _queue(session, table="MSP_RENTAL_USER", key_column="uid_token",
            recipients=[{"id": row["uid_token"], "token": row.get("fcm_token"),
                         "updated_at": row.get("fcm_token_updated_at")}],
            event="RESERVATION_APPROVED" if approved else "RESERVATION_REJECTED",
-           title="예약 승인 완료" if approved else "예약 거절 안내",
+           title="Reservation approved" if approved else "Reservation declined",
            body=approved_body if approved
-           else "요청하신 렌트 예약이 거절되었습니다.",
+           else "Your rental reservation request has been declined.",
            data={"type": "RESERVATION_APPROVED" if approved else "RESERVATION_REJECTED",
                  "reservationId": reservation_id, "bookedNo": "BO" + reservation_id,
                  "reservationStatus": status, "paymentMethod": payment_method})
@@ -305,8 +306,8 @@ def queue_receipt_required(db, session, uid_token, reservation_id, deadline_at):
     if row:
         _queue(session, table="MSP_RENTAL_USER", key_column="uid_token",
                recipients=[{"id": uid_token, "token": row.get("fcm_token"), "updated_at": row.get("fcm_token_updated_at")}],
-               event="CUSTOMER_RECEIPT_REQUIRED", title="차량 인수 확인 안내",
-               body="관리자의 인계 처리가 완료되었습니다. 발리 현지 기준 오늘이 끝나기 전에 차량을 확인하고 앱에서 인수를 확정해 주세요.",
+               event="CUSTOMER_RECEIPT_REQUIRED", title="Confirm vehicle receipt",
+               body="The shop has completed the vehicle handover. Please check the vehicle and confirm receipt in the app before midnight today, Bali time.",
                data={"type": "CUSTOMER_RECEIPT_REQUIRED", "eventId": "receipt:" + reservation_id,
                      "reservationId": reservation_id, "bookedNo": "BO" + reservation_id,
                      "reservationStatus": "HANDOVER_PENDING", "receiptDeadline": deadline_at.isoformat() + "Z"})
@@ -322,9 +323,10 @@ def queue_payment_deadline_reminder(db, session, uid_token, reservation_id, days
     _queue(session, table="MSP_RENTAL_USER", key_column="uid_token",
            recipients=[{"id": row["uid_token"], "token": row.get("fcm_token"),
                         "updated_at": row.get("fcm_token_updated_at")}],
-           event=event, title="결제 기한 안내",
-           body=(f"예약 결제까지 {days_remaining}일 이내에 결제해 주세요. "
-                 "렌트 시작 전까지 결제해 주세요. 시작일 전 고객 취소 시 10%가 공제되며, 렌트 당일부터는 취소해도 환불되지 않습니다."),
+           event=event, title="Payment deadline reminder",
+           body=(f"Please pay for your reservation within {days_remaining} {'day' if days_remaining == 1 else 'days'} and before your rental starts. "
+                 "Cancellations before the start date incur a 10% deduction. "
+                 "No refund is available for cancellations on or after the start date."),
            data={"type": event, "reservationId": reservation_id, "bookedNo": "BO" + reservation_id,
                  "reservationStatus": "APPROVED", "daysRemaining": days_remaining,
                  "paymentDeadlineAt": deadline_at.isoformat()})
@@ -340,8 +342,8 @@ def queue_payment_deadline_expired(db, session, uid_token, reservation_id):
     _queue(session, table="MSP_RENTAL_USER", key_column="uid_token",
            recipients=[{"id": row["uid_token"], "token": row.get("fcm_token"),
                         "updated_at": row.get("fcm_token_updated_at")}],
-           event=event, title="예약 취소 안내",
-           body="결제 기한이 지나 예약이 취소되었습니다.",
+           event=event, title="Reservation canceled",
+           body="Your reservation has been canceled because the payment deadline has passed.",
            data={"type": event, "reservationId": reservation_id, "bookedNo": "BO" + reservation_id,
                  "reservationStatus": "EXPIRED", "reason": "PAYMENT_DEADLINE_EXCEEDED"})
 
@@ -349,8 +351,8 @@ def queue_payment_deadline_expired(db, session, uid_token, reservation_id):
 def queue_payment_complete(db, session, uid_token, reservation_id, spot_master_id, payment_id):
     _queue(session, table="MSP_ADMIN", key_column="admin_id",
            recipients=_manager_recipients(db, session, spot_master_id),
-           event="PAYMENT_COMPLETED", title="결제 완료",
-           body="관광객의 렌트 결제가 완료되었습니다.",
+           event="PAYMENT_COMPLETED", title="Payment complete",
+           body="The customer's rental payment is complete.",
            data={"type": "PAYMENT_COMPLETED", "reservationId": reservation_id,
                  "paymentId": payment_id, "paymentStatus": "PAID"})
     users = db.table("MSP_RENTAL_USER")
@@ -360,7 +362,7 @@ def queue_payment_complete(db, session, uid_token, reservation_id, spot_master_i
         _queue(session, table="MSP_RENTAL_USER", key_column="uid_token",
                recipients=[{"id": row["uid_token"], "token": row.get("fcm_token"),
                             "updated_at": row.get("fcm_token_updated_at")}],
-               event="PAYMENT_COMPLETED", title="결제 완료",
-               body="렌트 결제가 완료되었습니다.",
+               event="PAYMENT_COMPLETED", title="Payment complete",
+               body="Your rental payment is complete.",
                data={"type": "PAYMENT_COMPLETED", "reservationId": reservation_id,
                      "paymentId": payment_id, "paymentStatus": "PAID"})

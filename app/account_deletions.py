@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from app.account_deletion_scope import capture, gate, outstanding, pending_scope_allowed, request_execution, scope_hash
 from app.account_deletion_security import confirmation, email_hash, seal, validate_keys, verify_confirmation
 from app.account_deletion_store import body_digest, digest, receipt_matches, request_id, utc
+from app.spot_hierarchy import unit_name
 from app.errors import Problem
 from app.headers import bearer
 from app.responses import AccountDeletionContext, AccountDeletionRequestResult
@@ -19,7 +20,7 @@ from app.security import principal
 
 router = APIRouter(prefix="/nadreego/admin", tags=["W01 Accounts"])
 receipt_auth = APIKeyHeader(name="Authorization", scheme_name="DeletionReceipt", auto_error=False,
-                           description="DeletionReceipt <전송 전 보관한 조회 비밀값>")
+                           description="DeletionReceipt <receipt secret saved before submission>")
 logger = logging.getLogger(__name__)
 PUBLIC_FIELDS = {"requestId", "requestState", "scope", "receivedAt", "identityVerifiedAt", "eligibleAt",
     "processingDueAt", "completedAt", "accessState", "personalDataState", "outstandingWork",
@@ -75,7 +76,7 @@ def context_data(request, session, actor):
     confirmed = bool(active and active.get("externalSettlementConfirmedHash") == scope_hash(snapshot))
     work = outstanding(request.app.state.db, session, snapshot, external_confirmed=confirmed)
     token, expires = confirmation(request.app.state.settings, actor.admin["admin_id"], scope_hash(snapshot))
-    return {"status": "success", "scope": snapshot["scope"], "directShopName": root["spot_name"],
+    return {"status": "success", "scope": snapshot["scope"], "directShopName": unit_name(root),
         "affectedAdminCount": len(members), "affectedShopCount": len(snapshot["spots"]) if snapshot["scope"] == "SUBTREE" else 0,
         "confirmationToken": token, "confirmationExpiresAt": expires, "outstandingWork": work,
         "canSubmitRequest": True, "canExecuteWithdrawal": not any(work.values()),
@@ -83,8 +84,8 @@ def context_data(request, session, actor):
 
 
 @router.get("/account-deletion-context", response_model=AccountDeletionContext, dependencies=[bearer],
-            summary="관리자 개인정보 삭제 범위 확인",
-            description="현재 역할·소속·전체 하위 계층과 미완료 업무를 확인하고 10분 유효 확인 토큰을 발급합니다. 입력으로 삭제 대상을 선택하지 않습니다.")
+            summary="Review the administrator personal-data deletion scope",
+            description="Checks the current role, shop affiliation, full descendant hierarchy, and unfinished work, then issues a confirmation token valid for 10 minutes. Deletion targets cannot be selected through request input.")
 def deletion_context(request: Request):
     store, db = request.app.state.deletions, request.app.state.db
     if not store.configured:
@@ -118,8 +119,8 @@ def make_record(request, actor, snapshot, members, work, ident, secret, fingerpr
 
 
 @router.post("/account-deletion-requests", response_model=AccountDeletionRequestResult, status_code=202, dependencies=[bearer],
-             summary="관리자 탈퇴·개인정보 삭제 요청 접수",
-             description="현재 인증과 확인 토큰으로 접수합니다. 일반관리자는 첫 접수에서 본인 승인 미완료 업무를 같은 지점 대표에게 인계하고 역할·세션·채팅·FCM 회수를 완료한 뒤 accessState=REVOKED를 반환합니다. 개인정보 정리는 재요청 없이 배치가 이어갑니다. 대표는 기존 배치 방식이며 모든 하위 지점에 미완료 업무가 있으면 WAITING_OBLIGATIONS로 대기합니다. 업무 데이터는 취소/삭제하지 않습니다. FCM Firestore에 상태를 저장합니다. Idempotency-Key와 256비트 이상 무작위 Deletion-Receipt-Token을 전송 전에 보관합니다. 동일 키·영수증·본문의 재전송은 조회만 수행합니다. 접수는 개인정보 삭제 완료가 아닙니다.")
+             summary="Submit administrator withdrawal and personal-data deletion",
+             description="Accepts the request using the current authentication and confirmation token. On first acceptance, a general administrator's approved unfinished work is transferred to the primary administrator of the same shop, and roles, sessions, and chat access are revoked and FCM tokens are cleared before accessState=REVOKED is returned. The background job continues personal-data cleanup without another submission. Primary administrators retain the existing background workflow and wait in WAITING_OBLIGATIONS while unfinished work remains in their shop or any descendant shop. Business records are neither canceled nor deleted. State is stored in FCM Firestore. Save Idempotency-Key and a random Deletion-Receipt-Token of at least 256 bits before submission. Repeating the same key, receipt, and body only reads the existing result. Acceptance does not mean personal-data deletion is complete.")
 def submit_deletion(body: DeletionConfirmation, request: Request,
                     idempotency_key: str = Header(alias="Idempotency-Key", max_length=64),
                     receipt_token: SecretStr = Header(alias="Deletion-Receipt-Token", max_length=128)):
@@ -186,8 +187,8 @@ def submit_deletion(body: DeletionConfirmation, request: Request,
 
 
 @router.get("/account-deletion-requests/status", response_model=AccountDeletionRequestResult,
-            summary="탈퇴 후 삭제 요청 진행 조회",
-            description="Authorization: DeletionReceipt <전송 전 보관한 비밀값>와 원래 Idempotency-Key로 조회합니다. 일반 API 접근 권한이 없는 요청 한정 영수증이며 삭제 대상/비밀값은 응답·URL에 넣지 않습니다. 404는 존재/영수증 유효성을 공개하지 않습니다.")
+            summary="Get deletion-request progress after withdrawal",
+            description="Use Authorization: DeletionReceipt <secret saved before submission> and the original Idempotency-Key. This receipt grants access only to its request, not to regular APIs. Deletion targets and secrets are not included in responses or URLs. A 404 response does not disclose whether a request exists or a receipt is valid.")
 def deletion_status(request: Request, authorization: str | None = Security(receipt_auth),
                     idempotency_key: str = Header(alias="Idempotency-Key", max_length=64)):
     raw = authorization or ""
@@ -203,7 +204,7 @@ def deletion_status(request: Request, authorization: str | None = Security(recei
 
 
 @router.post("/account-deletion-requests/{deletion_id}/reconfirm", response_model=AccountDeletionRequestResult,
-             status_code=202, dependencies=[bearer], summary="변경된 삭제 범위 재확인")
+             status_code=202, dependencies=[bearer], summary="Reconfirm a changed deletion scope")
 def reconfirm_deletion(deletion_id: str, body: DeletionConfirmation, request: Request,
                        receipt_token: SecretStr = Header(alias="Deletion-Receipt-Token", max_length=128)):
     store, db = request.app.state.deletions, request.app.state.db

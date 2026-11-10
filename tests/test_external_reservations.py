@@ -131,7 +131,8 @@ def test_request_approval_qr_handover_return_without_paypal(external, signin, mo
     approved = approve(ctx, ident)
     assert approved["required_criteria_json"]["paymentMethod"] == EXTERNAL
     push = next(n for n in ctx["fcm"].notifications if n["event"] == "RESERVATION_APPROVED")
-    assert "현장 또는 외부" in push["body"] and "3일" not in push["body"] and "10%" not in push["body"]
+    assert "payment in person or through an external payment method" in push["body"]
+    assert "within 3 days" not in push["body"] and "10%" not in push["body"]
     assert push["data"]["paymentMethod"] == EXTERNAL
     assert operation(ctx, ident)["canHandOver"] is False
     assert handover(ctx, ident).json()["errorCode"] == "OUTSIDE_RESERVATION_PERIOD"

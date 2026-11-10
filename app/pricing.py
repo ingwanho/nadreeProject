@@ -71,7 +71,7 @@ def change_price(body: PriceChange, request: Request, session: Session = DB):
     return {"status": "success"}
 
 
-@router.post("/nadreego/shop/tierCreate", description="BASIC 단건 또는 1~100개 배열. 배열은 동일 지점만 허용하며 전체 성공 또는 전체 롤백됩니다. 동일 cc 구간은 수정, 새 구간은 추가하고 생략한 기존 티어는 유지합니다. 부분 겹침은 409 TIER_RANGE_OVERLAP입니다.")
+@router.post("/nadreego/shop/tierCreate", description="Accepts one BASIC tier or an array of 1 to 100 tiers. All items in an array must target the same shop; the entire batch either succeeds or rolls back. An identical engine-capacity range updates its existing tier, a new range adds a tier, and omitted tiers are preserved. Partial overlaps return 409 TIER_RANGE_OVERLAP.")
 def create_tier(body: TierCreate | Annotated[list[TierCreate], Field(min_length=1, max_length=100)], request: Request, session: Session = DB):
     actor, root = context(request, session, write=True)
     entries = body if isinstance(body, list) else [body]
@@ -120,7 +120,7 @@ def effective_tiers(tiers, code):
     return result
 
 
-@router.get("/nadreego/shop/tierCreate", response_model=TierList, description="spotCode 생략/null은 공통 BASE만, 지정하면 해당 지점 BASE+BASIC 설정을 tiers에 반환합니다. effectiveTiers는 BASIC이 있는 구간만 대체한 실제 적용 구간이며 빈 구간은 BASE입니다. 다른 지점 BASIC은 상속하지 않습니다. PREMIUM 차량 고정 단가는 별도입니다.")
+@router.get("/nadreego/shop/tierCreate", response_model=TierList, description="If spotCode is omitted or null, returns only the shared BASE tiers. Otherwise, tiers contains the BASE and BASIC settings for that shop. effectiveTiers shows the applied ranges: BASIC overrides only its configured ranges, and BASE covers the remaining ranges. BASIC tiers from other shops are not inherited. Fixed daily prices for PREMIUM vehicles are separate.")
 def list_tiers(request: Request, spotCode: str | None = Query(None, min_length=1, max_length=60), session: Session = DB):
     _, root = context(request, session)
     spot = resolve_spot(request, session, root, spotCode) if spotCode else None

@@ -1,5 +1,6 @@
 import re
 import secrets
+import string
 import uuid
 
 from fastapi import APIRouter, Depends, Query, Request
@@ -12,18 +13,30 @@ from app.reservation_payments import checkout_enabled
 from app.headers import bearer
 from app.responses import AdminAccountDeletion, Admins, Applicants, CreatedSpot, Hierarchy, PrimaryResult, ShopProfile, ShopResult, Status, ShopPayPalMerchantResult
 from app.schemas import AdminId, RequestAction, Shop, ShopPayPalMerchant, SpotCreate
-from app.rental_common import context, editable_spot, resolve_spot
+from app.rental_common import context, editable_spot, lock_key, resolve_spot
+from app.spot_hierarchy import unit_name
 from app.security import (GENERAL, PRIMARY, SESSION_MARKER, active_spot, check_contract, in_subtree,
                           now, principal, roles)
 
 router = APIRouter(tags=["W02 Organizations and admins"], dependencies=[bearer])
 DB = Depends(transaction, scope="function")
+CHILD_LEVELS = {"org": "region", "region": "local", "local": "spot"}
 
 
 def representative(request, session):
     actor = principal(request, session)
     root = active_spot(request, session, actor, representative=True, lock=True)
     return actor, root
+
+
+def new_invite_code(session, rent):
+    alphabet = string.ascii_uppercase + string.digits
+    for _ in range(10):
+        candidate = "".join(secrets.choice(alphabet) for _ in range(8))
+        lock_key(session, "invite-code", candidate)
+        if not session.scalar(select(rent.c.spot_master_id).where(rent.c.invite_code == candidate)):
+            return candidate
+    raise Problem(503, "INVITE_CODE_GENERATION_FAILED")
 
 
 def member(session, db, admin_id, root):
@@ -92,7 +105,7 @@ def list_admins(request: Request, session: Session = DB):
 
 
 @router.post("/nadreego/shop/adminDelete", response_model=Status,
-             description="대표가 일반관리자를 제거합니다. 대상이 승인한 미완료 건은 같은 지점 대표에게 인계하고 예약·렌트·결제·차량 상태를 유지합니다. 유효 대표를 하나로 확인할 수 없으면 409 PRIMARY_ADMIN_REQUIRED_FOR_HANDOVER입니다.")
+             description="A primary administrator removes a general administrator. Unfinished work approved by that administrator is transferred to the primary administrator of the same shop. Reservation, rental, payment, and vehicle states are preserved. If exactly one eligible primary administrator cannot be identified, returns 409 PRIMARY_ADMIN_REQUIRED_FOR_HANDOVER.")
 def delete_admin(body: AdminId, request: Request, session: Session = DB):
     actor, root = representative(request, session)
     from app.account_deletion_scope import account_change_allowed
@@ -118,8 +131,8 @@ def delete_admin(body: AdminId, request: Request, session: Session = DB):
 
 
 @router.delete("/nadreego/admin/account", response_model=AdminAccountDeletion,
-               summary="관리자 본인 요청 회원탈퇴",
-               description="본문 없음. 일반관리자는 본인이 승인한 미완료 건을 같은 지점 대표에게 인계한 뒤 본인만 탈퇴합니다. 예약·렌트·차량·결제는 취소/삭제하지 않습니다. 대표는 본인 지점과 모든 하위 지점의 예약·렌트·회수·환불·정산이 완료되어야 본인 포함 관리자 전원 탈퇴 및 지점 논리 삭제가 가능합니다. 미완료면 409 DELETION_OBLIGATIONS_REMAIN으로 역할·세션·업무 상태를 보존합니다. 같은 계약·회사·계층 경계이며 상위/형제/타회사 제외. 기존 인증·활성 지점·계약·manage 권한을 검증합니다.")
+               summary="Withdraw the authenticated administrator account",
+               description="No request body. General administrators transfer their approved unfinished work to the primary administrator of the same shop, then withdraw only their own account. Reservations, rentals, vehicles, and payments are neither canceled nor deleted. Primary administrators can withdraw all administrators, including themselves, and deactivate their shop and all descendant shops only after reservations, rentals, vehicle recovery, refunds, and settlement are complete throughout that subtree. Otherwise, returns 409 DELETION_OBLIGATIONS_REMAIN and preserves roles, sessions, and business state. The scope is limited to the same contract, company, and subtree; ancestors, siblings, and other companies are excluded. Existing authentication, active-shop, contract, and manage-permission checks apply.")
 def delete_own_admin_account(request: Request, session: Session = DB):
     actor = principal(request, session)
     from app.account_deletion_scope import account_change_allowed
@@ -199,7 +212,7 @@ def delete_own_admin_account(request: Request, session: Session = DB):
             "deletedSpotCount": len(spots) if delete_subtree else 0}
 
 
-@router.get("/nadreego/shop/profile", response_model=ShopProfile, summary="매장 전체 프로필 조회")
+@router.get("/nadreego/shop/profile", response_model=ShopProfile, summary="Get the complete shop profile")
 def shop_profile(request: Request, spotMasterId: str | None = Query(None, max_length=36), session: Session = DB):
     _, root = context(request, session)
     root = resolve_spot(request, session, root, spotMasterId)
@@ -208,15 +221,15 @@ def shop_profile(request: Request, spotMasterId: str | None = Query(None, max_le
     if not row:
         raise Problem(404, "RENTAL_SPOT_NOT_CONFIGURED")
     return {"status": "success", "spotMasterId": root["spot_master_id"], "spotCode": root["unit_code"],
-        "shopName": root["spot_name"], "companyId": root["org_id"], "contact": root["phone"],
+        "shopName": unit_name(root), "companyId": root["org_id"], "contact": root["phone"],
         "email": row.get("contact_email"), "address": root["address"], "location": root["address"],
         "lat": root["lat"], "lng": root["lng"], "addressDetail": row.get("address_detail"),
         "zipCode": root["zip_code"], "directions": row.get("directions"),
         "introduction": row.get("introduction"), "deliveryServiceType": row["delivery_service_type"]}
 
 
-@router.put("/nadreego/shop/paypal-merchant", response_model=ShopPayPalMerchantResult, summary="지점 PayPal 연결 해제",
-            description="직접 지점 대표의 연결 해제만 지원합니다(merchantId=null). ID 직접 입력은 409 PAYPAL_ONBOARDING_REQUIRED. 연결은 paypal-onboarding/start → verify를 사용합니다.")
+@router.put("/nadreego/shop/paypal-merchant", response_model=ShopPayPalMerchantResult, summary="Disconnect the shop PayPal account",
+            description="Only the primary administrator directly assigned to the shop can disconnect its account (merchantId=null). Direct merchant ID input returns 409 PAYPAL_ONBOARDING_REQUIRED. To connect an account, use paypal-onboarding/start followed by verify.")
 def update_paypal_merchant(body: ShopPayPalMerchant, request: Request, session: Session = DB):
     actor, root = context(request, session, write=True, representative=True)
     target = editable_spot(request, session, actor, root, body.spotMasterId)
@@ -239,7 +252,7 @@ def update_paypal_merchant(body: ShopPayPalMerchant, request: Request, session: 
             "newReservationPaymentMethod": request.app.state.settings.reservation_payment_method}
 
 
-@router.get("/nadreego/shop/paypal-merchant", response_model=ShopPayPalMerchantResult, summary="지점 PayPal 판매자 설정 조회")
+@router.get("/nadreego/shop/paypal-merchant", response_model=ShopPayPalMerchantResult, summary="Get shop PayPal merchant settings")
 def get_paypal_merchant(request: Request, spotMasterId: str = Query(..., min_length=1, max_length=36),
                         session: Session = DB):
     actor, root = context(request, session)
@@ -256,7 +269,7 @@ def get_paypal_merchant(request: Request, spotMasterId: str = Query(..., min_len
 
 
 @router.post("/nadreego/shop/update", response_model=ShopResult,
-             description="spotMasterId 생략 시 현재 지점. 대표는 자기 지점과 하위 지점 프로필 수정, 일반관리자는 직접 소속 지점 deliveryServiceType만 수정합니다. 필수 정보 null/빈 값 삭제 불가, 선택 정보 빈 문자열은 유지하고 null은 삭제합니다. lat/lng는 함께 전달합니다.")
+             description="If spotMasterId is omitted, uses the current shop. Primary administrators can update profiles for their own shop and descendant shops. General administrators can update only deliveryServiceType for their directly assigned shop. Required fields cannot be cleared with null or empty values. For optional fields, empty strings are preserved and null clears the value. Send lat and lng together.")
 def update_shop(body: Shop, request: Request, session: Session = DB):
     actor, root = context(request, session, write=True)
     fields = body.model_fields_set - {"spotMasterId"}
@@ -276,11 +289,15 @@ def update_shop(body: Shop, request: Request, session: Session = DB):
     db = request.app.state.db
     master, rent = db.table("MSP_SPOT_MASTER"), db.table("MSP_SPOT_RENT")
     values = {column: getattr(body, name) for name, column in
-              [("shopName", "spot_name"), ("location", "address"), ("contact", "phone"),
+              [("location", "address"), ("contact", "phone"),
                ("lat", "lat"), ("lng", "lng"), ("zipCode", "zip_code")]
               if name in fields}
-    if body.shopName is not None and "unit_name" in master.c:
+    level = root["hierarchy_level"]
+    if "shopName" in fields:
         values["unit_name"] = body.shopName
+        values["spot_name"] = body.shopName if level == "spot" else None
+        if level in ("org", "region", "local"):
+            values[level + "_name"] = body.shopName
     extra = {column: getattr(body, name) for name, column in
              [("introduction", "introduction"), ("email", "contact_email"), ("deliveryServiceType", "delivery_service_type"),
               ("addressDetail", "address_detail"), ("directions", "directions")]
@@ -293,18 +310,21 @@ def update_shop(body: Shop, request: Request, session: Session = DB):
     if values:
         session.execute(update(master).where(master.c.spot_master_id == root["spot_master_id"]).values(**values))
         # Keep normalized hierarchy names/contact data consistent with the master.
-        level = root["hierarchy_level"]
         if level in ["org", "region", "local", "spot"]:
             normalized = db.table("MSP_" + level.upper())
-            normalized_values = {(level + "_name" if k == "spot_name" else k): v for k, v in values.items() if k != "unit_name"}
+            normalized_values = {key: value for key, value in values.items()
+                if key not in ("unit_name", "spot_name", "org_name", "region_name", "local_name")}
+            if "shopName" in fields:
+                normalized_values[level + "_name"] = body.shopName
             require_columns(normalized, normalized_values)
             result = session.execute(update(normalized).where(normalized.c[level + "_id"] == root[level + "_id"])
                                      .values(**normalized_values))
             if result.rowcount != 1:
                 raise Problem(409, "ORGANIZATION_MAPPING_INCONSISTENT")
-            if body.shopName is not None and level in ["org", "region", "local"]:
+            if "shopName" in fields and level in ["org", "region", "local"]:
                 session.execute(update(master).where(master.c[level + "_id"] == root[level + "_id"],
-                    master.c.contract_id == root["contract_id"]).values(**{level + "_name": body.shopName}))
+                    master.c.org_id == root["org_id"], master.c.contract_id == root["contract_id"])
+                    .values(**{level + "_name": body.shopName}))
     if extra:
         session.execute(update(rent).where(rent.c.spot_master_id == root["spot_master_id"]).values(**extra))
     return {"status": "success", "spotMasterId": root["spot_master_id"],
@@ -322,24 +342,25 @@ def hierarchy(request: Request, offset: int = Query(0, ge=0), limit: int = Query
     table = db.table("MSP_SPOT_MASTER")
     admins, mapping, role = db.table("MSP_ADMIN"), db.table("MSP_ADMIN_ROLE"), db.table("MSP_ROLE")
     scope = db.table("MSP_ADMIN_SPOT_SCOPE")
-    managers = (select(admins.c.primary_spot_master_id.label("spot_id"), func.min(admins.c.admin_name).label("manager_name"))
+    managers = (select(admins.c.primary_spot_master_id.label("spot_master_id"), func.min(admins.c.admin_name).label("manager_name"))
         .join(mapping, admins.c.admin_id == mapping.c.admin_id).join(role, role.c.role_code == mapping.c.role_code)
         .join(scope, (scope.c.admin_id == admins.c.admin_id) & (scope.c.spot_master_id == admins.c.primary_spot_master_id))
         .where(admins.c.is_active == 1, mapping.c.role_code == PRIMARY, role.c.is_active == 1, scope.c.access_type == "manage",
                or_(mapping.c.expires_at.is_(None), mapping.c.expires_at > now()))
         .group_by(admins.c.primary_spot_master_id).subquery())
-    source = table.outerjoin(managers, table.c.spot_master_id == managers.c.spot_id)
+    source = table.outerjoin(managers, table.c.spot_master_id == managers.c.spot_master_id)
     # A segment delimiter prevents ORG01 from matching ORG010.
     condition = (table.c.contract_id == root["contract_id"]) & (table.c.org_id == root["org_id"]) & table.c.unit_code.startswith(root["unit_code"] + "-", autoescape=True)
     if search:
-        condition &= or_(table.c.spot_name.contains(search, autoescape=True), table.c.unit_code.contains(search, autoescape=True),
+        own_name = table.c.unit_name if "unit_name" in table.c else table.c.spot_name
+        condition &= or_(own_name.contains(search, autoescape=True), table.c.unit_code.contains(search, autoescape=True),
                          managers.c.manager_name.contains(search, autoescape=True))
     if unit_type:
         condition &= table.c.hierarchy_level == unit_type
     if is_active != -1:
         condition &= table.c.is_active == is_active
     if has_manager != -1:
-        condition &= managers.c.spot_id.is_not(None) if has_manager else managers.c.spot_id.is_(None)
+        condition &= managers.c.spot_master_id.is_not(None) if has_manager else managers.c.spot_master_id.is_(None)
     total = session.scalar(select(func.count()).select_from(source).where(condition))
     rows = session.execute(select(table, managers.c.manager_name).select_from(source).where(condition).order_by(table.c.unit_code, table.c.spot_master_id)
                            .offset(offset).limit(limit)).mappings().all()
@@ -348,32 +369,42 @@ def hierarchy(request: Request, offset: int = Query(0, ge=0), limit: int = Query
     company = session.execute(select(table.c.spot_master_id, table.c.unit_code).where(
         table.c.org_id == root["org_id"], table.c.contract_id == root["contract_id"])).all()
     parents = {item.unit_code: item.spot_master_id for item in company}
-    return {"items": [{**{k: row.get(k) for k in keys}, "is_active": bool(row["is_active"]),
+    return {"items": [{**{k: row.get(k) for k in keys}, "spot_name": unit_name(row), "is_active": bool(row["is_active"]),
                        "manager_name": row["manager_name"], "companyId": row["org_id"],
                        "parentSpotMasterId": parents.get(row["unit_code"].rsplit("-", 1)[0]),
                        "canEditProfile": primary and bool(row["is_active"]),
                        "canEditPricing": bool(row["is_active"]) and (primary or row["spot_master_id"] == root["spot_master_id"]),
                        "canEditDelivery": bool(row["is_active"]) and (primary or row["spot_master_id"] == root["spot_master_id"]),
-                       "canCreateChild": primary and bool(row["is_active"]) and row["hierarchy_level"] in ("org", "spot")} for row in rows],
+                       "canCreateChild": primary and bool(row["is_active"]) and row["hierarchy_level"] in CHILD_LEVELS} for row in rows],
             "total": total, "currentSpotMasterId": root["spot_master_id"], "companyId": root["org_id"],
             "isCompanyPrimary": primary and root["hierarchy_level"] == "org"}
 
 
-@router.post("/api/v1/organizations/spots", response_model=CreatedSpot)
+@router.post("/api/v1/organizations/spots", response_model=CreatedSpot,
+             description="Creates a child of the locked parent master node at the next level: org to region, region to local, or local to spot. The legacy unit_type field remains accepted as a hint, but cannot skip levels; org is still forbidden. Spot, team, and agency parents cannot create children. Every child receives a master row, a matching normalized hierarchy row, and rental settings.")
 def create_spot(body: SpotCreate, request: Request, session: Session = DB):
     actor, root = representative(request, session)
     if body.unit_type == "org":
         raise Problem(403, "TOP_LEVEL_ORG_FORBIDDEN")
     db = request.app.state.db
     table = db.table("MSP_SPOT_MASTER")
-    parent = session.execute(select(table).where(table.c.spot_master_id == body.parent_spot_id,
+    # The existing request field carries the master key for every level.
+    parent_master_id = body.parent_spot_id
+    parent = session.execute(select(table).where(table.c.spot_master_id == parent_master_id,
         table.c.is_active == 1).with_for_update()).mappings().first()
     if not parent or not in_subtree(root, parent):
         raise Problem(404, "PARENT_SPOT_NOT_FOUND")
     from app.account_deletion_scope import new_work_allowed
     new_work_allowed(db, session, parent["spot_master_id"], lock=True)
     check_contract(session, db, parent, request.app.state.settings)
-    if body.unit_type == "spot":
+    child_level = CHILD_LEVELS.get(parent["hierarchy_level"])
+    if child_level is None:
+        raise Problem(422, "CHILD_HIERARCHY_NOT_SUPPORTED")
+    required_ancestors = {"region": ("org_id",), "local": ("org_id", "region_id"),
+                          "spot": ("org_id", "region_id", "local_id")}[child_level]
+    if any(not parent.get(ancestor) for ancestor in required_ancestors):
+        raise Problem(422, "PARENT_HIERARCHY_INCOMPLETE")
+    if child_level == "spot":
         if not body.address or not body.address.strip() or body.email is None or body.lat is None or body.lng is None:
             raise Problem(422, "REQUIRED_SHOP_PROFILE_MISSING")
     end = body.contract_end or parent["contract_end"]
@@ -381,12 +412,13 @@ def create_spot(body: SpotCreate, request: Request, session: Session = DB):
     if ((start and end and start > end) or (parent["contract_end"] and end and end > parent["contract_end"])
             or (parent["contract_start"] and start and start < parent["contract_start"])):
         raise Problem(422, "CONTRACT_DATES_INVALID")
-    prefix = {"region": "R", "local": "L", "spot": "SP", "team": "T", "agency": "A"}[body.unit_type]
+    prefix = {"region": "R", "local": "L", "spot": "SP"}[child_level]
     stem = parent["unit_code"] + "-" + prefix
     codes = session.scalars(select(table.c.unit_code).where(table.c.unit_code.startswith(stem, autoescape=True))).all()
     pattern = re.compile(re.escape(stem) + r"(\d+)$")
+    own_name = table.c.unit_name if "unit_name" in table.c else table.c.spot_name
     same_name = session.execute(select(table.c.unit_code).where(table.c.contract_id == parent["contract_id"],
-        table.c.org_id == parent["org_id"], table.c.spot_name == body.spot_name)).scalars().all()
+        table.c.org_id == parent["org_id"], own_name == body.spot_name)).scalars().all()
     if any(pattern.fullmatch(code) for code in same_name):
         raise Problem(409, "DUPLICATE_SPOT_NAME")
     sequence = max([int(m[1]) for code in codes if (m := pattern.fullmatch(code))] + [0]) + 1
@@ -395,51 +427,47 @@ def create_spot(body: SpotCreate, request: Request, session: Session = DB):
     values = {"spot_master_id": ident, "contract_id": parent["contract_id"], "org_id": parent["org_id"],
               "org_name": parent.get("org_name"), "region_id": parent.get("region_id"), "local_id": parent.get("local_id"),
               "region_name": parent.get("region_name"), "local_name": parent.get("local_name"),
-              "unit_code": unit_code, "spot_name": body.spot_name,
-              "hierarchy_level": body.unit_type, "phone": body.phone, "biz_reg_num": body.biz_reg_num,
+              "unit_code": unit_code, "unit_name": body.spot_name,
+              "spot_name": body.spot_name if child_level == "spot" else None,
+              "hierarchy_level": child_level, "phone": body.phone, "biz_reg_num": body.biz_reg_num,
               "address": body.address,
               "zip_code": body.zip_code, "lat": body.lat, "lng": body.lng,
               "contract_start": start, "contract_end": end, "is_active": 1}
     # spot_id is a legacy normalized-key bridge. Newer shared schemas use only
     # spot_master_id for rental scope, so write it only when the column exists.
     if "spot_id" in table.c:
-        values["spot_id"] = ident if body.unit_type == "spot" else None
-    if "unit_name" in table.c:
-        values["unit_name"] = body.spot_name
-    if body.unit_type in ["region", "local", "spot"]:
-        values[body.unit_type + "_id"] = ident
-    if body.unit_type == "region":
+        values["spot_id"] = ident if child_level == "spot" else None
+    values[child_level + "_id"] = ident
+    if child_level == "region":
         values.update(region_name=body.spot_name, local_id=None, local_name=None)
-    if body.unit_type == "local":
+    if child_level == "local":
         values.update(local_name=body.spot_name)
     require_columns(table, values)
-    if body.unit_type in ["region", "local", "spot"]:
-        normal = db.table("MSP_" + body.unit_type.upper())
-        normalized = {k: v for k, v in values.items() if k in normal.c}
-        normalized[body.unit_type + "_name"] = body.spot_name
-        # RiderLog's normalized hierarchy keeps ancestor keys non-null. A
-        # caller cannot create an L4 spot directly below an org when the
-        # shared schema requires an intermediate region/local row.
-        for ancestor in ("org_id", "region_id", "local_id"):
-            column = normal.c.get(ancestor)
-            if column is not None and not column.nullable and normalized.get(ancestor) is None:
-                raise Problem(422, "PARENT_HIERARCHY_INCOMPLETE")
-        require_columns(normal, normalized)
-        session.execute(normal.insert().values(**normalized))
+    normal = db.table("MSP_" + child_level.upper())
+    normalized = {k: v for k, v in values.items() if k in normal.c}
+    normalized[child_level + "_name"] = body.spot_name
+    # Preserve shared-schema constraints in addition to the required ancestry
+    # check above, even if the test schema permits nullable ancestor keys.
+    for ancestor in ("org_id", "region_id", "local_id"):
+        column = normal.c.get(ancestor)
+        if column is not None and not column.nullable and normalized.get(ancestor) is None:
+            raise Problem(422, "PARENT_HIERARCHY_INCOMPLETE")
+    require_columns(normal, normalized)
+    session.execute(normal.insert().values(**normalized))
     session.execute(table.insert().values(**values))
     rent = db.table("MSP_SPOT_RENT")
-    invite_code = secrets.token_urlsafe(48)[:64] if "invite_code" in rent.c else None
+    invite_code = new_invite_code(session, rent) if "invite_code" in rent.c else None
     rent_values = {"spot_master_id": ident, "delivery_service_type": "NONE",
                    "contact_email": str(body.email) if body.email else None, "address_detail": body.address_detail}
     if invite_code is not None:
         rent_values["invite_code"] = invite_code
     require_columns(rent, rent_values)
     session.execute(rent.insert().values(**rent_values))
-    return {"spot_id": ident, "unit_code": unit_code, "spot_name": body.spot_name,
-            "hierarchy_level": body.unit_type, "phone": body.phone, "biz_reg_num": body.biz_reg_num,
+    return {"spot_id": ident, "unit_code": unit_code, "spot_name": unit_name(values),
+            "hierarchy_level": child_level, "phone": body.phone, "biz_reg_num": body.biz_reg_num,
             "address": values["address"], "zip_code": body.zip_code, "lat": body.lat, "lng": body.lng,
             "contract_start": start, "contract_end": end, "is_active": True, "inviteCode": invite_code,
-            "email": body.email, "parentSpotMasterId": body.parent_spot_id}
+            "email": body.email, "parentSpotMasterId": parent_master_id}
 
 
 @router.get("/nadreego/shop/adminRequest", response_model=Applicants)

@@ -199,7 +199,7 @@ def test_nadri_reservation_payment_checkout_and_return(setup, signin, monkeypatc
                            json={"bookedNo": "BO" + reservation_id, "action": "APPROVE"})
     assert approved.status_code == 200, approved.text
     assert any(item["event"] == "RESERVATION_APPROVED" and item["recipients"][0]["token"] == "customer-device"
-               and "3일 이내" in item["body"]
+               and "within 3 days" in item["body"]
                for item in fcm.notifications)
 
     order = client.post("/api/v1/nadree/rental/payment/order", headers=customer_headers,

@@ -1,5 +1,203 @@
 # Nadree 전체 변경사항 및 인수 문서
 
+## 2026-11-10 지점 계층·Master ID·UNIT_NAME — 기존 데이터 정리 완료
+
+사용자 확정 정책에 따라 신규 생성과 기존 데이터 정리를 실제 서버에 적용했다. 기준 커밋은 `e811aa124078eff832be3451e214a5c5505ffb9d` + 보존된 서버 로컬 변경이며 이번 작업에서 pull/reset/commit/stash 삭제는 하지 않았다. 부모 명세 `../rental-project-master.md`, `../rental-api-review-decisions.md`는 서버에 없어 읽지 못했다. 실제 공유 DB의 기존 정상 계층·컬럼·외래 키 및 사용자 확정 지시를 기준으로 확인했다.
+
+확정 저장 규칙:
+
+- 모든 계층의 지점 식별·부모 선택·관리자 소속·권한·업무 연결은 `MSP_SPOT_MASTER.spot_master_id`다. 정규 `MSP_ORG/REGION/LOCAL/SPOT`의 ID와 master ID가 달라도 동작한다. `MSP_SPOT_MASTER.spot_id`는 최하위 spot 연결 값이다.
+- 생성할 계층은 잠근 부모의 `hierarchy_level`로 **org → region → local → spot** 순서로 결정한다. org 아래 요청에 기존 `unit_type=spot`을 보내도 region이 생성된다. 기존 필드와 enum은 유지하며 `unit_type=org`의 기존 403도 유지한다. spot/team/agency 부모의 신규 하위 생성은 422 `CHILD_HIERARCHY_NOT_SUPPORTED`다. 조회의 `canCreateChild`도 org/region/local에서만 true다.
+- 신규 지점은 해당 정규 계층 행·`MSP_SPOT_MASTER` 행·`MSP_SPOT_RENT` 행을 한 트랜잭션으로 생성한다. 부모의 contract/org/region/local 연결을 상속하며 필수 조상 키가 없으면 422 `PARENT_HIERARCHY_INCOMPLETE`로 전체 생성이 취소된다. leaf의 주소/이메일/좌표 필수 검사와 계약·역할·삭제 중 신규 업무 차단은 유지한다.
+- `unit_name`은 그 행 본인의 지점 이름이다. `org_name`, `region_name`, `local_name`, `spot_name`은 각각 연결된 계층의 이름이다. 비말단에서는 `spot_id`·`spot_name`을 NULL로 둔다. 예를 들어 PrmBali 아래 PUTU'S PLANET은 `org_name=PrmBali`, `region_name=unit_name=PUTU'S PLANET`인 region이다. 그 아래 local은 위 이름을 상속하고 본인 이름을 `local_name`·`unit_name`에 넣는다.
+- 코드는 부모의 전체 `unit_code`에 `-RNN`, `-LNN`, `-SPNN`을 붙인다. 기존 정상 데이터의 `…-ORG01-R01-L01-SP01` 구조를 확인했다. 조회/권한/부모 연결은 동일 contract/org와 하이픈 구간 경계를 사용한다. 기존 공유 데이터의 RG/LO 등 유효한 과거 코드 형식은 바꾸지 않고 상위·하위 전체 접두사 관계를 보존했다.
+- 지점명 변경은 `unit_name`, 해당 정규 계층 이름, 해당 계층의 하위 이름 캐시를 함께 갱신한다. 다른 지점의 본인 이름은 바꾸지 않는다. 조회·검색·동일 부모 이름 중복 판정·프로필·메인·고객 조회·탈퇴 범위·채팅 표시 이름은 `unit_name`을 읽는다.
+
+프론트 계약:
+
+| 기존 필드 | 의미와 처리 |
+| --- | --- |
+| 생성 요청 `parent_spot_id` | 선택한 부모의 **master ID**. leaf의 정규 spot ID가 아님 |
+| 생성 요청 `spot_name` | 새 지점 본인 이름. DB에는 unit_name과 자기 계층의 정규 이름으로 저장 |
+| 생성 응답 `spot_id` | 기존 이름을 유지하는 **새 master ID 별칭**. region/local에서도 반환 |
+| 생성/계층 응답 `spot_name`, 프로필 `shopName` 등 | 기존 키를 유지하고 unit_name을 표시 |
+| 관리자 로그인 `admin.spotMasterId` | 기존부터 primary_spot_master_id를 반환했으며 유지. 별도 정규 spot ID로 바꾸지 않음 |
+| `hierarchy_level`, `unit_code`, `canCreateChild` | 실제 생성 계층·코드·가능 여부에 맞는 값 반환 |
+
+앱은 새 필드로 바꿀 필요가 없다. 지점 선택 ID를 master ID로 보관하고, 기존에 캐시한 SP01 코드는 계층/프로필을 재조회해 갱신한다. 거래 당시 예약·계약 스냅샷의 코드/주소/이력은 현재 지점 코드로 일괄 치환하지 않는다.
+
+실제 데이터 적용:
+
+- 대상은 **RIDERLOG_V2_DATA_TEST**, 2026-11-10 **10:36:53 UTC** 비공개 백업 후 단일 DML 트랜잭션으로 적용했다. 스키마 마이그레이션은 없다. 읽기 전용 계획 **33개 작업/구조 오류 0개**, 실제 결과 **INSERT 5행·UPDATE 28행**, SQL 커밋 성공이다.
+- org 바로 아래 생성됐던 spot 2개를 region으로 전환했다. `spot_master_id`, org/contract, 관리자 소속/권한, 차량·예약·계약 연결은 유지했다. 각 부모에 기존 R01이 없어 R01을 사용했고, 이후 같은 부모의 다음 region은 R02다.
+
+| 기존 코드 | 적용 코드 | 적용 상태 |
+| --- | --- | --- |
+| `NR_TEST_20260921-ORG01-SP01` | `NR_TEST_20260921-ORG01-R01` | region, 기존 삭제된 지점의 is_active=0 유지 |
+| `PRMBALI_20261109-ORG01-SP01` | `PRMBALI_20261109-ORG01-R01` | region, PUTU'S PLANET 활성 유지 |
+
+- 위 두 지점의 `MSP_REGION` 2행을 추가하고, 이전 정규 `MSP_SPOT` 2행은 삭제하지 않았다. 이미 비활성이던 행은 유지하고 활성 과거 행 1개만 비활성으로 보존했다. 과거 참조/업무 이력을 지우지 않았다.
+- 실제 정규 계층에는 있으나 master가 없던 기존 org/region/local 상위 3행을 추가했다. 새 master ID는 정규 ID와 구분되는 결정적 UUID이며 기존 leaf master ID는 유지했다. 이 보완에는 렌탈 설정·초대 코드·관리자·권한을 새로 만들지 않았다.
+- 27개 기존 master의 계층 이름 캐시와 비말단 spot_name을 정리하고 기존 leaf의 누락 hierarchy_level을 보완했다. 최종 master **30개**, 재조회에서 빈 unit_name/비말단 spot_name/leaf 이름 불일치/누락 계층 각각 **0건**이다.
+- 정확한 master ID와 이전 코드가 함께 일치하는 scope만 코드 정리 대상으로 삼았다. 실제 scope 변경은 0행이며 NULL 코드·과거 scope·권한은 보존했다.
+- 관리자 소속/역할·렌탈 설정·차량/상태·센서·예약/배정·계약·결제/환불·QR·가격·배송 및 관련 이력/현장 요청 등 **17개 테이블의 검증 대상 컬럼 지문이 적용 전후 동일**했다. 예약 취소·환불·회원 삭제·시험 알림 발송은 하지 않았다.
+- 실행 중 개인정보 요청은 0건이었다. 남은 SQL 삭제 포인터 1건은 COMPLETED인 비활성 지점의 과거 요청으로 보존했다. 공유 DB의 unit_code 외래 키는 0개이며 외래 키 검사를 끄지 않았다.
+
+백업·복구:
+
+- `build/test-runtime/spot-hierarchy-repair-2026-11-10/20261110T103653526138Z/`에 대상 6테이블 원본 `before.json`, 변경 전 행을 포함한 `operations.json`, 업무 참조 지문, 검증 결과를 저장했다. 디렉터리 **700**, 파일 **600**, ec2-user 소유다. 연락처 등이 포함될 수 있어 원문을 공개하지 않는다. env·비밀번호·토큰은 이 파일에 복사하지 않았다.
+- 도구는 `migrations/repair_spot_hierarchy_2026_11_10.py`이며 인수 없이 실행하면 읽기 전용 계획이다. `--apply`는 승인된 위 테스트 DB에만 허용하고, 백업 실패·개인정보 진행 중 요청·중간 변경·구조 오류·업무 참조 변화 시 커밋하지 않는다.
+- 격리 실제 SQL 실행으로 백업 실패 전 무변경과 후반 검증 실패 시 6테이블 전체 롤백을 검증했다. 커밋 후 수동 복구가 필요하면 API/개인정보 배치를 조율하고 새 참조 여부를 확인한 후 백업의 변경 목록을 역순으로 검토·복구한다. 신규 master/region에 새 업무가 붙었다면 바로 삭제하지 않는다. 이번에는 복구가 필요하지 않았다.
+
+검증 — 격리 환경:
+
+- ec2-user·`env -i`·기존 venv·실제 DB/Firebase 자격정보 없는 disposable SQLite/메모리 외부 연동을 사용했다. 업데이트와 직접 연결된 부분만 검사했으며 전체 API 회귀를 재실행하지 않았다.
+- 고유 **153개 검사 통과**, 최종 미해결 실패/건너뜀 0개. 지점 master 조회·자동 단계·R01 뒤 R02·필수 조상·권한/형제 차단·정규/master ID 분리·이름 수정·프론트 필드·가입/초대 소진·관리자 탈퇴 범위·개인정보 신규 업무 차단·명세·현재 schema·로그인·다섯 표시 경로·데이터 정리/롤백을 포함한다.
+- 최종 묶음은 150개 중 148 passed/2 failed였다. 실패 2건은 신규 격리 fixture가 실제 DB의 `delivery_service_type=NONE` 기본값을 누락한 원인이었고 서버 코드를 우회하지 않았다. fixture를 바로잡은 후 해당 이름 수정 파라미터 4개 모두 통과했다(2개는 재검사 중복). 별도 적용 안전성 3개도 통과했으므로 고유 검사 수는 **148+2+3=153**이다. 기존 TestClient 관련 사용 중단 예정 경고 2종은 남는다.
+- 실행 파일: `test_spot_master_lookup.py`, `test_spot_hierarchy_repair.py`, `test_spot_unit_names.py`, `test_management.py`, `test_admin_signup.py`, `test_invite_codes.py`, `test_admin_account_deletion.py`, `test_privacy_admission_guards.py`, `test_spot_hierarchy_repair_apply.py` 및 foundation 경로·schema 현재 계약·accounts 로그인 지정 검사. 테스트 성공을 실제 앱 종단 성공으로 간주하지 않는다.
+
+검증 — 실제 서버:
+
+- 개인정보 타이머를 잠시 중지하고 실행 중 배치 없음 확인 후 API에 정상 종료를 요청했다. 구 API의 shutdown complete를 확인했고 DB 적용 후 **10:37:05 UTC / 발리 18:37:05** 새 API를 시작했다. PID **2807015**, active/running이다. 개인정보 타이머를 복구했고 기존 chat-sync/receipts/chat-retention 작업도 active다. 결제 작업 설정은 바꾸지 않았다.
+- **10:38:42 UTC** 로컬/공개 health/live·health/ready·Swagger·OpenAPI **8개 모두 200**. health 제외 **79경로**, 기존 생성 필드 보존, master ID/자동 계층 설명, 공개 명세 한글 0개를 확인했다.
+- 적용 후 다시 읽기 전용 계획을 실행해 **남은 작업 0개·구조 오류 0개**, master 30개와 17개 참조 테이블 검증 가능 상태를 확인했다. 별도 읽기 조회에서도 전환 코드·활성 상태·자기 region 이름과 unit_name 일치를 확인했다.
+- 전환 이후 API·chat-sync·개인정보 서비스 로그의 ERROR/Traceback/HTTP 5xx **0건**이다. `.env` 내용/소유권/600 권한 보존, Firebase 함수/Rules/인덱스/인증 설정 배포 없음.
+
+남은 확인:
+
+- 실제 관리자 로그인·새 지점 생성·이름 변경·차량/예약 업무의 앱 왕복은 실행하지 않았다. 기존 앱 세션을 회수하거나 실제 업무를 추가하지 않기 위한 범위 구분이다. 위 쓰기 흐름의 동작은 격리 검증이다. 양 앱은 master ID/계층 재조회·이름 표시·말단 하위 생성 버튼을 확인한다.
+- 실제 MySQL 동시 생성 경합과 RiderLog 실행 중 서버의 종단 호환은 별도 미검증이다. 서비스 소스가 서버에 없으므로 기존 정상 DB 구조와 실제 외래 키 검사를 근거로 삼았다.
+- master가 존재하지 않는 공유 관리자 scope **2건**은 별도로 발견했다. 두 계정 모두 렌탈 역할이 없으며 하나는 비활성이다. 원래 귀속 지점의 정규 행도 현재 계층에 없어 임의 master 생성·권한 재배정·scope 삭제는 하지 않았다. 나드리 신규 생성/계층 정리의 미적용 건으로 섞지 않으며, 공유 계정 관리 담당자가 귀속을 확정해야 한다.
+
+## 2026-11-10 회원가입 10회 제한·공개 영어 표기 — 서버 반영 완료
+
+최종 사용자 요청에 따라 POST /nadreego/admin/signup의 횟수 제한을 유지한다. **가입 이메일별 첫 시도부터 1시간에 10회**, **접속 IP별 5분에 10회**이며 각 제한의 11번째부터 429 RATE_LIMITED다. 이메일 기준만 기존 5회에서 10회로 늘렸고 IP 기준은 기존 10회 그대로다. 가입 처리에 도달한 실패 요청도 누적된다. 기존 Redis 키/기간/누적 기록은 유지하며 전체 초기화하지 않았다. 로그인·갱신·비밀번호 재설정·채팅·개인정보 요청 등 다른 제한과 중복 계정/초대 코드/권한/계약 검사는 변경하지 않았다.
+
+서버가 전달하는 고정 표시 문구를 영어로 정리했다. 기존 영어 알림·이메일은 유지하고, 남아 있던 PayPal 복귀 HTML의 lang/title/제목/본문, 공개 API summary/description, Swagger 태그/보안 헤더/응답 설명, 스키마 설명 및 고정 예시의 이름/주소/사유 등을 영어로 전환했다. 실제 DB의 이름·지점명·자유 입력·채팅 내용은 수정하지 않는다. 한국어 개발자 주석과 이 운영 문서는 사용자 화면용 문자열이 아니므로 유지한다. API 경로·필드·상태 코드·enum·79경로와 업무 처리 조건은 그대로다.
+
+검증·적용:
+
+- ec2-user·env -i·기존 venv·폐기용 SQLite/모의 외부 연동에서 최종 관련 **31 passed / 0 failed / 0 skipped**, 10.16초. IP/이메일 각각 10번째 업무 검증·11번째 차단, 중복 가입 보존, 대표/일반 가입·일회성 초대 소진, 기존 로그인 보호, 명세, 공개 복귀 페이지의 결제/DB 쓰기 없음과 알림 읽음을 확인했다. 기존 TestClient 사용 중단 예정 경고 2종은 남는다.
+- 실행 대상: test_signup_attempt_policy.py, test_admin_signup.py, test_invite_codes.py, test_foundation.py, test_payment_return_url.py, test_accounts.py::test_login_response_and_hash_storage, test_admin_customer_inbox.py::test_notification_read_is_shared_idempotent_and_scoped. 전체 회귀는 재실행하지 않았다.
+- 실제 자격정보 없는 별도 설정으로 생성한 OpenAPI의 한글 문자열 **0개**, app Python AST의 한글 문자열 상수 **0개**. 담당 변경의 비문구 AST 구조와 실제 diff를 검토해 기능 조건 보존을 확인했다.
+- **09:54:09 UTC / 발리 17:54:09** API 재시작 완료(PID 2770400), active/running. **09:54:45 UTC** 로컬/공개 health/live·health/ready·Swagger·OpenAPI·정적 결제 복귀 10개 요청 모두 200이었다. 실제 공개/로컬 OpenAPI도 한글 0개·10회 정책 설명·79경로를 확인했고 복귀 HTML은 lang=en·영어 안내였다.
+- 시작 완료·이후 ERROR/Traceback/HTTP 5xx 0건, 기존 채팅 동기화·개인정보·인수·채팅 보관 타이머 active 확인. .env 수정 없음·600 유지, DB/스키마·Firebase·결제/기타 배치 설정 변경 없음.
+- 실제 신규 가입·의도적인 실서버 제한 소진·계정/예약 변경·결제/환불·메일/푸시 발송은 하지 않았다. 10회 경계는 격리 API에서 검증했고 실제 서버는 상태·명세·공개 정적 페이지를 확인했다. 앱 자체 번역/캐시와 실제 입력 데이터의 표시는 별도다.
+
+## 2026-11-10 etc 50cc·125cc 모델 2개 추가 완료
+
+사용자의 최종 요청대로 브랜드와 모델명을 모두 etc로 하여 **08:45:01 UTC** 공용 카탈로그에 두 행을 추가했다.
+
+| modelId | brand | modelName | cc |
+|---|---|---|---|
+| ETC-50 | etc | etc | 50 |
+| ETC-125 | etc | etc | 125 |
+
+기존 카탈로그 백업·중복 확인 후 한 트랜잭션으로 2행만 추가했으며 기존 모델은 보존했다. 커밋 후 실제 DB 재조회로 etc 모델이 정확히 50cc/125cc 두 개·활성 상태, 전체 활성 모델 9개, 두 모델의 실차 참조 0건임을 확인했다. 차량·QR·가격·기존 Honda 모델·서버 설정은 변경하지 않았고 재시작도 필요 없다.
+
+두 모델은 SCOOTER, 이미지 null, 배송 지원 기본값 0이다. 브랜드 API 새 조회부터 나타나며 이름이 같으므로 프론트는 modelId를 선택 키로 사용하고 cc를 함께 표시한다. 백업/계획/실제 결과는 build/test-runtime/etc-model-catalog-2026-11-10/20261110T084501433017Z 아래 700/600 권한으로 보관했다.
+
+## 2026-11-10 Honda 모델 3개 데이터 추가 완료
+
+사용자가 확정한 PCX 125cc, Scoopy 110cc, BeAT 110cc를 **08:37:24 UTC** RIDERLOG_V2_DATA_TEST의 공용 MSP_VEHICLE_MODEL에 추가했다. 브랜드는 기존 Honda를 사용한다.
+
+| modelId | brand | modelName | cc |
+|---|---|---|---|
+| HONDA-PCX-125 | Honda | PCX | 125 |
+| HONDA-SCOOPY-110 | Honda | Scoopy | 110 |
+| HONDA-BEAT-110 | Honda | BeAT | 110 |
+
+세 모델은 SCOOTER·is_active=1, 이미지 미설정(null)·배송 지원 기본값 0이다. 기존 모델 전체를 접근 제한 백업 후 한 트랜잭션으로 정확히 3행 추가했고 기존 4행 불변을 확인했다. 커밋 후 읽기 전용 재조회에서 활성 모델 7개·브랜드 Honda/SYM/Yamaha·신규 모델 차량 참조 0건을 확인했다. 차량·QR·가격·재고·예약은 생성/변경하지 않았다.
+
+브랜드 API는 활성 모델을 매 요청 조회하므로 재시작 없이 새 조회부터 모델을 선택할 수 있다. 등록 시 brand/vehicleName은 위 표의 brand/modelName을 그대로 사용한다. 실제 인증된 HTTP 왕복이나 차량 등록 시험으로 새 차량을 만들지는 않았다. 백업/계획/결과는 build/test-runtime/honda-model-catalog-2026-11-10/20261110T083724743997Z 아래 700/600 권한으로 보관했다.
+
+## 2026-11-10 브랜드 API — 공용 활성 모델 카탈로그
+
+차량 등록 시 자신의 지점에 차량이 없어도 브랜드·모델을 고를 수 있도록 POST /nadreego/brand를 변경한다. 새 브랜드 테이블이나 데이터를 만들지 않고 기존 공용 MSP_VEHICLE_MODEL을 사용한다.
+
+요청 경로/본문/응답 필드는 유지한다.
+
+```json
+{"page":1,"pageSize":20}
+```
+
+- brand: 전체 활성 모델의 브랜드를 중복 제거해 반환한다. 현재 지점 차량 수·요청 페이지와 무관하다. 빈 페이지에서도 전체 브랜드 목록은 유지한다.
+- vehicle: 전체 활성 모델을 brand/modelId 순으로 정렬한 페이지다. 미보유 모델도 포함하며 비활성 모델은 제외한다.
+- vehicleCount: 해당 모델의 **현재 직접 소속 지점 차량 수**다. 상위/하위/다른 지점 수를 합산하지 않는다. 미보유 모델은 0이다.
+- price: 기존 BASIC 기준인 공통 BASE+현재 직접 지점 BASIC으로 계산한다. 상위 BASIC은 상속하지 않고 다른 지점 가격도 읽지 않는다. 미설정이면 null이다. PREMIUM 차량 고정 단가나 예약 확정 가격이 아니다.
+- totalCount/hasNext: 전체 활성 모델 수와 현재 페이지 기준이다. tier/price/page/pageSize의 기존 형태도 유지한다.
+
+프론트는 vehicleCount가 0이라는 이유로 등록용 모델을 숨기지 않는다. 전체 모델이 필요하면 hasNext에 따라 페이지를 추가 조회한다. 실제 보유 차량 목록은 /nadreego/vehicle/select, 고객 예약 가능 재고·견적은 기존 availability API를 사용한다. 카탈로그 표시만으로 차량 재고나 예약 가능 여부를 판단하지 않는다.
+
+관리자 인증·역할·직접 지점·계약·탈퇴 처리 중 읽기 정책은 유지한다. DB 스키마/데이터·env·Firebase 변경은 없다. 이전의 차량 보유 기준 설명은 이 경로에 한해 이 절로 대체한다.
+
+**서버 적용 완료:** 2026-11-10 **08:24:53 UTC / 발리 16:24:53** nadree-api.service 재시작(PID 2700911) 후 active/running을 확인했다. 08:25:42 UTC 로컬/공개 health/live·health/ready·Swagger·OpenAPI가 모두 200이고 카탈로그 설명·Bearer 요구·79경로 유지, 시작 완료·ERROR/Traceback/HTTP 5xx 0건을 확인했다. 로컬/공개 무인증 브랜드 요청은 각각 401 AUTH_REQUIRED였다.
+
+관련 검사만 ec2-user·env -i·폐기용 SQLite/모의 외부 연동으로 실행하여 **21 passed / 0 failed / 0 skipped**다. 신규 test_brand_catalog.py 12개(4.86초)는 빈 지점/모든 페이지·미보유/비활성 모델·직접 수량/가격 격리·인증/권한·미설정 가격을 검증했다. 기존 OpenAPI, 선택한 QR 차량 등록 2종, 예약/결제 흐름 2종, 지점 이동 4종의 9개(5.84초)도 통과했다. 기존 TestClient 사용 중단 예정 경고 2종은 남는다. 전체 회귀는 재실행하지 않았다.
+
+실행 대상:
+
+```text
+tests/test_brand_catalog.py
+tests/test_foundation.py::test_openapi_has_exact_work_group_routes
+tests/test_vehicle_qr.py::test_qr_identifies_vehicle_with_optional_sensor
+tests/test_nadri_flow.py::test_nadri_reservation_payment_checkout_and_return
+tests/test_vehicle_transfer.py
+```
+
+현재 실제 DB를 읽기 전용 대조한 공용 브랜드는 Honda/SYM/Yamaha, 활성 모델은 4개다. PUTU'S PLANET의 NRTEST-WEB-MODEL-125 직접 보유수는 조회 시점 2대, 나머지 모델은 0대이고 BASIC 기준 가격은 125cc 25/155cc 35 USD였다. 이번 API 수정 과정에서 차량·브랜드·모델·가격 데이터를 추가/수정하지 않았다.
+
+성공 응답의 업무 계약은 격리 API에서 검증했다. 배포 서버는 헬스/명세/인증 차단 및 원본 카탈로그·직접 수량/가격을 읽기 전용으로 확인했으며, 기존 앱 세션을 보존하기 위해 새 관리자 로그인으로 인증된 실서버 응답 본문을 조회하지 않았다. 앱의 실제 선택 화면과 캐시 갱신은 미검증이다. 프론트가 vehicleCount>0으로 모델을 거르면 그 필터도 제거해야 한다.
+
+## 2026-11-10 신규 초대 코드 8자리·지정 하위 지점 가입 — 서버 적용 완료
+
+신규 지점의 inviteCode 생성은 8자리 대문자 영문/숫자([A-Z0-9]{8})의 암호학적 난수로 변경했다. 후보별 기존 named lock과 실제 DB 비교로 중복을 검사하며 최대 10회 재생성한다. 모두 충돌하면 503 INVITE_CODE_GENERATION_FAILED로 전체 지점 생성 트랜잭션을 롤백한다. 현재 invite_code UNIQUE 인덱스와 utf8mb4_unicode_ci 비교 설정은 유지한다.
+
+변경: management.new_invite_code와 지점 생성 호출, 요청/응답의 영어 필드 설명, 공개 예시(A1B2C3D4), 관련 충돌/소진 회귀 3개. 가입 입력의 기존 1~64자리 계약은 유지하므로 다른 지점의 기존 코드는 계속 유효하다. 가입 성공 시 NULL로 소진하는 기존 원자적 처리와 대표 권한·직접 지점 manage 부여는 유지한다. DB 스키마/env/Firebase 변경이나 재발급 API 추가는 없다.
+
+검증·적용:
+
+- ec2-user·env -i·폐기용 SQLite/모의 외부 연동으로 관련 **19 passed / 0 failed / 0 skipped**, 8.46초. 생성 충돌 재시도, 10회 충돌의 전체 롤백, 8자리 코드의 대표 가입·소진·재사용 거절, 기존 가입/지점 계층·명세 검사를 통과했다. 실제 MySQL 동시 접속 경합은 별도 미검증이다.
+- 실행: tests/test_invite_codes.py, tests/test_admin_signup.py, test_management의 nested_spot_creation_requires_profile_and_rejects_duplicate/create_child_persists_normalized_rows_and_rental_sidecar/invalid_child_creation_is_atomic, test_foundation의 openapi_has_exact_work_group_routes.
+- RIDERLOG_V2_DATA_TEST의 사용자 지정 PUTU'S PLANET 미사용 코드 1개를 잠금·접근 제한 백업 후 **07:48:01 UTC** 8자리로 교체했다. 다른 지점 코드와 프로필은 변경하지 않았다.
+- **07:48:14 UTC** API 재시작 완료(PID 2674508). **07:54:53 UTC** 로컬/공개 health/live·health/ready·OpenAPI 모두 200, 새 8자리 설명·79경로 유지, 시작 완료·ERROR/Traceback/HTTP 5xx 0건 확인.
+- 후속 사용자 지시에 따라 지정 하위 지점은 초대 대기에서 실제 대표 가입 완료 상태로 변경했다. 첫 가입 API는 해당 이메일의 기존 누적 시도 7회로 429를 반환해 계정을 생성하거나 코드를 소진하지 않았다. 별도 사용자 승인 후 **해당 이메일의 Redis 가입 횟수 키 1개만** 백업/제거했다. 전역 제한 정책·IP 키·다른 계정 기록은 유지했다.
+- **07:54:06 UTC** 정상 POST /nadreego/admin/signup 재시도가 **201 ACTIVE**로 성공했다. 해당 지점 관리자 1명·rental_primary_admin·직접 manage 1개·가입 승인 대기 0건·invite_code=NULL을 실제 재조회했다. 제공된 비밀번호와 저장 해시 일치도 확인했으며 비밀번호는 터미널 비공개 입력으로만 전달했다. 계정 식별 정보·비밀번호·초대 코드 원문은 공개 문서에 남기지 않는다.
+- 실제 로그인, 시험 메일/푸시·Firebase 배포·결제/환불은 실행하지 않았다. 부모 PrmBali 계정과 기존 세션/역할은 변경하지 않았다. 보호 백업과 적용 기록은 build/test-runtime/putus-planet-child-2026-11-10 아래 디렉터리 700·파일 600에 보관한다.
+
+프론트는 신규 코드를 8자리로 표시/입력하되 생성 응답의 원문을 전달한다. PUTU'S PLANET은 요청된 계정으로 바로 로그인하는 상태이며, 이전에 전달한 긴 코드와 임시 교체 코드는 가입 성공으로 모두 사용할 수 없다.
+
+## 2026-11-10 알림·이메일 영어 통일 — 서버 반영 완료
+
+사용자 요청으로 백엔드가 생성하는 앱 알림함·FCM의 고정 제목/본문을 영어로 통일했다. 기준은 e811aa124078eff832be3451e214a5c5505ffb9d + 아래 문구 수정이며, 발송 대상·조건·이벤트 코드·data·중복/재시도·읽음 계약은 유지한다. 사용자 채팅·이름·지점명은 번역하지 않는다.
+
+| 전달 경로 | 내용 |
+|---|---|
+| 예약 요청 푸시 | New reservation request / You have a new rental reservation request. |
+| 예약 승인·거절 | Reservation approved / Reservation declined. 현장·외부 결제, 온라인 중단, 기존 온라인 결제 안내의 기존 정책별 분기를 영어로 유지 |
+| 차량 인수 확인 | Confirm vehicle receipt. 발리 현지 오늘 자정 전 차량 확인·앱 인수 확정 안내 |
+| 결제 기한·만료 | Payment deadline reminder / Reservation canceled. 기존 3일·취소 10% 공제/당일부터 환불 없음 안내 유지 |
+| 결제 완료 | Payment complete. 고객·관리자 대상별 본문 유지 |
+| 채팅 푸시 | New chat message / You have received a new message. 메시지 내용·개인정보 미포함 유지 |
+| 기본 알림함 | You have a new work notification. |
+| 업무 인계 알림함 | Tasks have been transferred to the primary administrator after the assigned administrator's account was deleted. |
+| 임시 비밀번호 이메일 | 기존 Nadree temporary password 제목·본문이 이미 영어여서 변경 없음 |
+| 개인정보 삭제 이메일 | 기존 NadreeGo account deletion request 접수·완료 제목·본문이 이미 영어여서 변경 없음. 메일 성공/실패와 무관한 후속 처리 정책 유지 |
+
+변경 코드는 app/fcm.py·app/chat_push.py·app/notifications.py다. 기존 두 테스트의 한국어 본문 기대치만 영어로 바꿨고 새 테스트 인프라는 추가하지 않았다.
+
+알림함 SQL에는 문구를 저장하지 않고 event_type을 저장한다. 따라서 기존 알림도 목록/읽음 응답을 다시 받으면 영어가 된다. DB 데이터/스키마·env·Firebase 배포 변경은 없다. Firebase 함수는 이벤트 ID를 백엔드로 전달하고 실제 채팅 푸시 문구는 백엔드가 생성한다. 기존 30초 chat_sync·개인정보·인수·채팅 보관 작업과 결제 작업 설정은 유지했다.
+
+### 확인한 결과
+
+- ec2-user·기존 venv·env -i·임시 SQLite/가짜 Firebase·SMTP·PayPal에서 관련 기존 검사만 **58 passed / 0 failed / 0 skipped**(19.77초). 예약/결제 알림, 외부 결제 승인 8조합, 기한 알림, 인수 알림, 채팅 최초 발송/재시도/보안 문맥, 알림 읽음/중복, 관리자 업무 인계, 메일 TLS/오류·접수/완료 선택 발송을 확인했다. 기존 TestClient 사용 중단 예정 경고 2종은 남는다.
+- 실행: test_nadri_flow의 직접 지점 수신자·예약/결제 왕복, test_external_reservations의 request_approval_qr_handover_return_without_paypal, test_jobs의 payment_deadline_reminders_and_expiry_notify_once, test_customer_receipt의 two_phase_handover_customer_receipt_and_return, test_chat_push_recovery 전체, test_admin_customer_inbox의 shared_idempotent_and_scoped/event_deduplicated, test_admin_rental_exit의 general_transfers_own_approved_bookings_and_live_rentals_without_canceling_any_data, test_mail 전체, test_deletion_notice_best_effort의 successful_notices_keep_legacy_success_lists_and_attempt_once/mail_failure_does_not_block_withdrawal_erasure_or_receipt.
+- **03:24:19 UTC / 발리 11:24:19** nadree-api.service 재시작 완료. ec2-user·/srv/nadree-api·PID 2474625, active/running.
+- **03:24:49 UTC** 로컬/공개 health/live·health/ready·Swagger·OpenAPI 8개 모두 200, health 제외 79경로 유지. 시작 완료·이후 ERROR/Traceback/HTTP 5xx 0건. 기존 네 타이머 active 확인.
+- 실제 고객 데이터 쓰기, 시험 푸시/이메일·결제·환불 발송/실행은 하지 않았다. 실기기 수신·메일함 표시는 미검증이다.
+
+앱은 기존 필드·eventType/data를 그대로 사용하고 서버가 내려주는 title/body/message를 표시한다. 앱이 자체 한국어 문구를 조합하거나 캐시한 문구를 쓰면 앱 측 영어 처리/새로고침이 필요하다. 이미 기기에 전달된 푸시나 발송 완료된 이메일은 소급 변경·재발송하지 않는다.
+
 ## 2026-11-10 차량 QR 실제 삭제·재연결
 
 QR 삭제는 현재 연결을 실제 제거하고 해제된 원문은 다른 차량에도 다시 연결한다. 감사 이력은 보존하되 과거 해시로 재사용을 차단하지 않는다. 기존 차량 등록/조회/센서 삭제 경로는 유지하며 POST /nadreego/vehicle/qr/link(vehicleNumber, qrToken)를 추가한다. 대여·인수/회수 보호·지점 권한을 유지하고 고객 견적·신청 중 재연결 경합을 재검증한다. DB 스키마/env/Firebase 변경은 없다. [프론트 호출 계약](frontend-vehicle-qr-reassignment-2026-11-10.md), [검사·실제 서버 결과](vehicle-qr-reassignment-server-result-2026-11-10.md).

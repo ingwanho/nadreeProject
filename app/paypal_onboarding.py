@@ -52,7 +52,7 @@ def target(body, request, session):
     return actor, spot
 
 
-@router.post("/start", response_model=Started, summary="미연결 지점 대표의 PayPal 연결 URL 발급")
+@router.post("/start", response_model=Started, summary="Issue a PayPal connection URL for the primary administrator of an unconnected shop")
 def start(body: Target, request: Request, session=DB):
     actor, _ = target(body, request, session)
     require_checkout(request.app.state.settings)
@@ -88,8 +88,8 @@ def spot_row(body, request, session):
     return table, row
 
 
-@router.post("/verify", response_model=Verified, summary="PayPal에서 판매자 ID 확인 후 지점 컬럼에 저장",
-             description="start의 state와 같은 관리자 로그인 세션이 필요합니다. state는 30분 유효하며 브라우저 merchantId는 받지 않습니다. 완료 후 예약 승인은 별도 재요청합니다.")
+@router.post("/verify", response_model=Verified, summary="Verify the seller ID with PayPal and save the shop's connection",
+             description="Requires the same administrator login session used to issue state in start. State is valid for 30 minutes; merchantId values from the browser are not accepted. Request reservation approval separately after the connection is verified.")
 def verify(body: Verify, request: Request, session=DB):
     actor, _ = target(body, request, session)
     require_checkout(request.app.state.settings)

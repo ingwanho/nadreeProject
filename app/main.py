@@ -38,43 +38,43 @@ from app.schema_check import check_schema
 from app.security import RateLimiter, sign_access
 
 OPENAPI_TAGS = [
-    {"name": "W00 Health", "description": "서비스 상태와 의존성 확인. 테스트 시작 시 `/health/live`와 `/health/ready`를 먼저 확인합니다."},
-    {"name": "W01 Accounts", "description": "관리자 로그인·가입 신청·토큰·프로필"},
-    {"name": "W02 Organizations and admins", "description": "지점 계층과 관리자 권한"},
-    {"name": "W03 Vehicles and QR", "description": "차량·QR·센서 관리"},
-    {"name": "W04 Pricing", "description": "차량 가격과 렌탈 티어"},
-    {"name": "W05 Delivery", "description": "배송 지역과 배송비"},
-    {"name": "W06 Reservations and rentals", "description": "예약·렌트·인계·반납. 여권 API는 사용 보류로 등록하지 않습니다. 테스트 시드 예약은 `NRTEST-RES-*`, 차량은 `NRTEST-VEHICLE-*`입니다."},
-    {"name": "W07 Dashboard and calendar", "description": "운영 현황과 캘린더 조회"},
-    {"name": "W08 PayPal webhook", "description": "PayPal 결제·환불·웹훅"},
-    {"name": "Nadree customer users", "description": "나드리 고객 UID 로그인·프로필·토큰. 로그인에는 Firebase ID Token과 body의 UID가 모두 필요합니다."},
-    {"name": "Nadree customer rentals", "description": "나드리 차량 조회·예약·결제·렌트 이력. 테스트 지점은 `00000000-0000-4000-8000-000000000101`, 웹 시나리오는 `NRTEST-WEB-MODEL-125`와 `NRTEST-WEB-MODEL-ND`입니다."},
+    {"name": "W00 Health", "description": "Service and dependency health. Check `/health/live` and `/health/ready` before testing."},
+    {"name": "W01 Accounts", "description": "Administrator sign-in, registration requests, tokens, and profiles"},
+    {"name": "W02 Organizations and admins", "description": "Branch hierarchy and administrator permissions"},
+    {"name": "W03 Vehicles and QR", "description": "Vehicle, QR, and sensor management"},
+    {"name": "W04 Pricing", "description": "Vehicle prices and rental pricing tiers"},
+    {"name": "W05 Delivery", "description": "Delivery regions and fees"},
+    {"name": "W06 Reservations and rentals", "description": "Reservations, rentals, handover, and returns. Passport routes remain disabled. Seeded reservations use `NRTEST-RES-*`; vehicles use `NRTEST-VEHICLE-*`."},
+    {"name": "W07 Dashboard and calendar", "description": "Operational dashboard and calendar views"},
+    {"name": "W08 PayPal webhook", "description": "PayPal payments, refunds, and webhooks"},
+    {"name": "Nadree customer users", "description": "Nadree customer UID sign-in, profiles, and tokens. Sign-in requires both a Firebase ID Token and the UID in the request body."},
+    {"name": "Nadree customer rentals", "description": "Nadree vehicle listings, reservations, payments, and rental history. Use test branch `00000000-0000-4000-8000-000000000101` and web test models `NRTEST-WEB-MODEL-125` and `NRTEST-WEB-MODEL-ND`."},
 ]
 
 OPENAPI_DESCRIPTION = """
-나드리·나드리고 렌탈 API입니다.
+Rental API for Nadree and NadreeGo.
 
-## 문서 사용 순서
+## Getting started
 
-1. `/health/live`로 프로세스 상태를 확인합니다.
-2. `/health/ready`가 `status=ok`인지 확인합니다.
-3. 관리자 API는 `/nadreego`, 고객 API는 `/api/v1/nadree` 경로를 사용합니다.
-4. 요청·응답 필드는 각 작업의 Schema를 기준으로 작성합니다.
+1. Check the process status at `/health/live`.
+2. Confirm that `/health/ready` returns `status=ok`.
+3. Administrator APIs use `/nadreego`; customer APIs use `/api/v1/nadree`.
+4. Follow each operation's schemas for request and response fields.
 
-## 테스트 데이터 표시 규칙
+## Test data conventions
 
-`NRTEST-` 접두사가 붙은 값은 테스트 시드 데이터입니다. 실제 운영 데이터와 섞어 사용하지 않습니다.
+Values prefixed with `NRTEST-` identify seeded test data. Keep them separate from production data.
 
-- 테스트 지점(`spotMasterId`/`shopId`): `00000000-0000-4000-8000-000000000101`
-- 테스트 모델: `NRTEST-MODEL-125`(Honda Vario 125, 125cc), `NRTEST-MODEL-155`(Yamaha NMAX 155, 155cc)
-- 테스트 차량: `NRTEST-VEHICLE-301`(대여 가능), `NRTEST-VEHICLE-302`(정비), `NRTEST-VEHICLE-303`(진행 중 렌트), `NRTEST-VEHICLE-304`(미래 승인 예약)
-- 웹 테스트 모델: `NRTEST-WEB-MODEL-125`(Honda Vario Web Test 125, 125cc, BASIC/PREMIUM), `NRTEST-WEB-MODEL-ND`(SYM Cruiser No Delivery Test, 배송 미지원)
-- 웹 테스트 차량: `NRTEST-WEB-BASIC-125`, `NRTEST-WEB-PREMIUM-125`(일일 45 USD), `NRTEST-WEB-NODELIVERY`
-- 웹 테스트 배송지역: `NRTEST-KUTA`(왕복 20 USD), `NRTEST-CANGGU`(왕복 30 USD)
-- 예약 상태 샘플: `NRTEST-RES-REQ-001`, `NRTEST-RES-APP-001`, `NRTEST-RES-PENDING-001`, `NRTEST-RES-REJECT-001`, `NRTEST-RES-CANCEL-001`, `NRTEST-RES-EXPIRED-001`, `NRTEST-RES-HAND-001`, `NRTEST-RES-RETURN-001`
-- 테스트 통화: `USD`; 기존 125cc BASIC은 일일 25 USD, 웹 125cc 모델은 BASIC 25 USD 또는 PREMIUM 45 USD입니다. Canggu 왕복 배송은 15 + 15 USD입니다.
+- Test branch (`spotMasterId`/`shopId`): `00000000-0000-4000-8000-000000000101`
+- Test models: `NRTEST-MODEL-125` (Honda Vario 125, 125cc), `NRTEST-MODEL-155` (Yamaha NMAX 155, 155cc)
+- Test vehicles: `NRTEST-VEHICLE-301` (available), `NRTEST-VEHICLE-302` (maintenance), `NRTEST-VEHICLE-303` (active rental), `NRTEST-VEHICLE-304` (future approved reservation)
+- Web test models: `NRTEST-WEB-MODEL-125` (Honda Vario Web Test 125, 125cc, BASIC/PREMIUM), `NRTEST-WEB-MODEL-ND` (SYM Cruiser No Delivery Test, delivery unavailable)
+- Web test vehicles: `NRTEST-WEB-BASIC-125`, `NRTEST-WEB-PREMIUM-125` (45 USD per day), `NRTEST-WEB-NODELIVERY`
+- Web test delivery regions: `NRTEST-KUTA` (20 USD round trip), `NRTEST-CANGGU` (30 USD round trip)
+- Reservation status examples: `NRTEST-RES-REQ-001`, `NRTEST-RES-APP-001`, `NRTEST-RES-PENDING-001`, `NRTEST-RES-REJECT-001`, `NRTEST-RES-CANCEL-001`, `NRTEST-RES-EXPIRED-001`, `NRTEST-RES-HAND-001`, `NRTEST-RES-RETURN-001`
+- Test currency: `USD`. The standard 125cc BASIC rate is 25 USD per day. The web 125cc model offers BASIC at 25 USD or PREMIUM at 45 USD per day. Canggu round-trip delivery costs 15 + 15 USD.
 
-테스트 데이터의 전체 실행 순서와 예상 결과는 저장소의 `docs/nadree-api-test-handoff-2026-10-01.md`를 참고합니다. Firebase ID Token, access token, refresh token, PayPal 자격증명과 실제 FCM 토큰은 Swagger 설명에 기록하지 않습니다.
+See `docs/nadree-api-test-handoff-2026-10-01.md` in the repository for the full test sequence and expected results. Do not include Firebase ID Tokens, access tokens, refresh tokens, PayPal credentials, or real FCM tokens in Swagger descriptions.
 """
 
 
@@ -232,7 +232,7 @@ def create_app(settings=None, db=None, limiter=None, mailer=None, fcm=None, loca
                         response.setdefault("content", {}).setdefault("application/json", {})["example"] = response_example
                 for status, examples in OPENAPI_STATUS_EXAMPLES.get(key, {}).items():
                     response = operation["responses"].setdefault(str(status), {
-                        "description": "상태별 응답", "content": {"application/json": {
+                        "description": "Response for this status", "content": {"application/json": {
                             "schema": {"$ref": "#/components/schemas/Error"}}}})
                     content = response.setdefault("content", {}).setdefault("application/json", {})
                     content.pop("example", None)

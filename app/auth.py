@@ -12,6 +12,7 @@ from app.errors import Problem
 from app.headers import bearer, fcm_header, refresh_header
 from app.responses import ProfileResult, SignedIn, SpotResult, Status, Tokens
 from app.schemas import Email, FcmToken, Login, Profile, SpotCode
+from app.spot_hierarchy import unit_name
 from app.security import (DUMMY_HASH, GENERAL, PRIMARY, SESSION_MARKER, check_contract, lock_account,
                           encrypted_phone, fingerprint, now, password_hash, principal,
                           roles, sign_access, verify_password)
@@ -154,7 +155,7 @@ def spot_check(body: SpotCode, request: Request, session: Session = DB):
         raise Problem(404, "INVITE_CODE_NOT_FOUND")
     check_contract(session, db, row, request.app.state.settings)
     # Knowledge of an invite code does not grant membership or consume it here.
-    return {"status": "success", "spotMasterId": row["spot_master_id"], "spotName": row["spot_name"],
+    return {"status": "success", "spotMasterId": row["spot_master_id"], "spotName": unit_name(row),
             "unitCode": row["unit_code"], "isDeliverySupported": row["delivery_service_type"] != "NONE"}
 
 

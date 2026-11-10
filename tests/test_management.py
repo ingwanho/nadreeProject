@@ -46,12 +46,21 @@ def test_shop_optional_clear_and_general_delivery_only(client, signin, setup):
 
 def test_nested_spot_creation_requires_profile_and_rejects_duplicate(client, signin):
     headers = signin()
-    body = {"spot_name": "Nested", "unit_type": "spot", "parent_spot_id": "child"}
-    assert client.post("/api/v1/organizations/spots", headers=headers, json=body).status_code == 422
+    parent = "root"
+    for level in ("region", "local"):
+        intermediate = client.post("/api/v1/organizations/spots", headers=headers, json={
+            "spot_name": "Parent " + level, "unit_type": "spot", "parent_spot_id": parent,
+            "email": "shop@example.com", "address": "Test entrance", "lat": -8.6, "lng": 115.2})
+        assert intermediate.status_code == 200, intermediate.text
+        assert intermediate.json()["hierarchy_level"] == level
+        parent = intermediate.json()["spot_id"]
+    body = {"spot_name": "Nested", "unit_type": "spot", "parent_spot_id": parent}
+    missing = client.post("/api/v1/organizations/spots", headers=headers, json=body)
+    assert missing.status_code == 422 and missing.json()["errorCode"] == "REQUIRED_SHOP_PROFILE_MISSING"
     body.update(email="shop@example.com", address="Test entrance", lat=-8.6, lng=115.2)
     created = client.post("/api/v1/organizations/spots", headers=headers, json=body)
     assert created.status_code == 200, created.text
-    assert created.json()["parentSpotMasterId"] == "child"
+    assert created.json()["parentSpotMasterId"] == parent and created.json()["hierarchy_level"] == "spot"
     duplicate = client.post("/api/v1/organizations/spots", headers=headers, json=body)
     assert duplicate.status_code == 409 and duplicate.json()["errorCode"] == "DUPLICATE_SPOT_NAME"
 
@@ -180,7 +189,8 @@ def test_shop_updates_normalized_master_and_delivery(client, signin, setup):
         row = conn.execute(select(master).where(master.c.spot_master_id == "root")).mappings().one()
         child_name = conn.scalar(select(master.c.org_name).where(master.c.spot_master_id == "child"))
         name = conn.scalar(select(normalized.c.org_name).where(normalized.c.org_id == "root"))
-    assert row["spot_name"] == row["unit_name"] == child_name == name == "New name"
+    assert row["spot_name"] is None
+    assert row["unit_name"] == row["org_name"] == child_name == name == "New name"
 
 
 @pytest.mark.parametrize("body", [{"introduction": "Not mapped", "shopName": "Must not change"}, {"email": "shop@example.com"}])
@@ -193,7 +203,7 @@ def test_unmapped_shop_fields_fail_without_partial_write(client, signin, setup, 
     assert response.status_code == 503 and response.json()["errorCode"] == "SCHEMA_MAPPING_REQUIRED"
     table = setup["db"].table("MSP_SPOT_MASTER")
     with setup["engine"].connect() as conn:
-        assert conn.scalar(select(table.c.spot_name).where(table.c.spot_master_id == "root")) == "root"
+        assert conn.scalar(select(table.c.unit_name).where(table.c.spot_master_id == "root")) == "root"
 
 
 def test_shop_profile_columns_store_and_preserve_other_values(client, signin, setup):
@@ -220,7 +230,7 @@ def test_shop_profile_length_limits_are_atomic(client, signin, setup, field, lim
     table, master = setup["db"].table("MSP_SPOT_RENT"), setup["db"].table("MSP_SPOT_MASTER")
     with setup["engine"].connect() as conn:
         assert conn.scalar(select(table.c["contact_email" if field == "email" else field]).where(table.c.spot_master_id == "root")) == "a" * limit
-        assert conn.scalar(select(master.c.spot_name).where(master.c.spot_master_id == "root")) == "root"
+        assert conn.scalar(select(master.c.unit_name).where(master.c.spot_master_id == "root")) == "root"
 
 
 @pytest.mark.parametrize("unit_type", ["region", "local", "spot", "team", "agency"])
@@ -230,16 +240,20 @@ def test_create_child_persists_normalized_rows_and_rental_sidecar(client, signin
               "email": "shop@example.com", "address": "Test address"})
     assert response.status_code == 200, response.text
     result = response.json()
-    assert result["unit_code"].startswith("CT1-ORG01-") and result["spot_id"]
+    assert result["unit_code"] == "CT1-ORG01-R01" and result["spot_id"]
+    assert result["hierarchy_level"] == "region"
     assert result["lat"] == -8.65 and result["lng"] == 115.2
     master, rent = setup["db"].table("MSP_SPOT_MASTER"), setup["db"].table("MSP_SPOT_RENT")
     with setup["engine"].connect() as conn:
         row = conn.execute(select(master).where(master.c.spot_master_id == result["spot_id"])).mappings().one()
         assert row["contract_id"] == "CT1"
+        assert row["org_id"] == "root" and row["region_id"] == result["spot_id"]
+        assert row["local_id"] is None and row["spot_id"] is None
+        assert row["unit_name"] == row["region_name"] == "New child" and row["spot_name"] is None
         assert conn.scalar(select(rent.c.delivery_service_type).where(rent.c.spot_master_id == result["spot_id"])) == "NONE"
-        if unit_type in ["region", "local", "spot"]:
-            normal = setup["db"].table("MSP_" + unit_type.upper())
-            assert conn.scalar(select(normal.c[unit_type + "_name"]).where(normal.c[unit_type + "_id"] == result["spot_id"])) == "New child"
+        normal = setup["db"].table("MSP_REGION")
+        normalized = conn.execute(select(normal).where(normal.c.region_id == row["region_id"])).mappings().one()
+        assert normalized["region_name"] == "New child" and normalized["org_id"] == "root"
 
 
 @pytest.mark.parametrize("body,status", [
@@ -250,12 +264,13 @@ def test_create_child_persists_normalized_rows_and_rental_sidecar(client, signin
     ({"lat": 100}, 422),
 ])
 def test_invalid_child_creation_is_atomic(client, signin, setup, body, status):
-    before = count(setup, "MSP_SPOT_MASTER")
+    names = ("MSP_SPOT_MASTER", "MSP_SPOT_RENT", "MSP_REGION", "MSP_LOCAL", "MSP_SPOT")
+    before = {name: count(setup, name) for name in names}
     result = client.post("/api/v1/organizations/spots", headers=signin(),
         json={"spot_name": "Child", "parent_spot_id": "root", "unit_type": "spot",
               "email": "shop@example.com", "address": "Test address", "lat": -8.65, "lng": 115.2, **body})
     assert result.status_code == status, result.text
-    assert count(setup, "MSP_SPOT_MASTER") == before
+    assert {name: count(setup, name) for name in names} == before
 
 
 def test_signup_request_routes_do_not_treat_disabled_accounts_as_requests(client, signin):

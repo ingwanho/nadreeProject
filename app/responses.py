@@ -93,7 +93,8 @@ class Admin(BaseModel):
 
 
 class SignedInAdmin(Admin):
-    spotMasterId: str | None
+    spotMasterId: str | None = Field(
+        description="Administrator membership key from MSP_ADMIN.primary_spot_master_id, referencing MSP_SPOT_MASTER.spot_master_id at any hierarchy level. This is not the normalized MSP_SPOT.spot_id.")
 
 
 class Tokens(Status):
@@ -427,7 +428,7 @@ class ShopProfile(ShopResult):
 class HierarchyItem(BaseModel):
     spot_master_id: str
     unit_code: str
-    spot_name: str
+    spot_name: str = Field(description="The node's own MSP_SPOT_MASTER.unit_name, retained under the existing response field name.")
     hierarchy_level: str | None
     org_name: str | None
     region_name: str | None
@@ -438,7 +439,8 @@ class HierarchyItem(BaseModel):
     canEditProfile: bool
     canEditPricing: bool
     canEditDelivery: bool
-    canCreateChild: bool
+    canCreateChild: bool = Field(
+        description="Whether the current primary administrator can create a child at the next supported level. Supported parent levels are org, region, and local.")
 
 
 class Hierarchy(BaseModel):
@@ -450,10 +452,12 @@ class Hierarchy(BaseModel):
 
 
 class CreatedSpot(BaseModel):
-    spot_id: str
+    spot_id: str = Field(
+        description="Created MSP_SPOT_MASTER.spot_master_id. This existing response field carries the master key for every hierarchy level.")
     unit_code: str
-    spot_name: str
-    hierarchy_level: str
+    spot_name: str = Field(description="The created node's own unit_name. Non-leaf nodes do not store this value in the master table's spot_name column.")
+    hierarchy_level: str = Field(
+        description="Actual level derived from the locked parent master: org creates region, region creates local, and local creates spot, regardless of the legacy unit_type hint.")
     phone: str | None
     biz_reg_num: str | None
     address: str | None
@@ -463,9 +467,11 @@ class CreatedSpot(BaseModel):
     contract_start: date | None
     contract_end: date | None
     is_active: bool
-    inviteCode: str | None = None
+    inviteCode: str | None = Field(default=None,
+        description="One-time invitation code containing 8 uppercase letters and digits for newly created shops.")
     email: str | None = None
-    parentSpotMasterId: str | None = None
+    parentSpotMasterId: str | None = Field(default=None,
+        description="MSP_SPOT_MASTER.spot_master_id of the parent used to determine the child level.")
 
 
 class Applicant(BaseModel):

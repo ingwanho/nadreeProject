@@ -27,7 +27,7 @@ def _normalized_email(value):
 def _limited(request, subject):
     ip = request.client.host if request.client else "unknown"
     request.app.state.limiter.check("admin-signup:ip:" + ip, limit=10, seconds=300)
-    request.app.state.limiter.check("admin-signup:subject:" + subject.casefold(), limit=5, seconds=3600)
+    request.app.state.limiter.check("admin-signup:subject:" + subject.casefold(), limit=10, seconds=3600)
 
 
 def _representative_for_target(session, db, target, email):
@@ -110,7 +110,7 @@ def _target_spot(request, session, body):
 
 
 @router.post("/signup", response_model=AdminSignupResult, status_code=201,
-             description="지점 생성 시 발급된 일회성 inviteCode 가입은 해당 지점 대표관리자로 즉시 활성화하며 requestId/requestStatus는 null입니다. representativeEmail만 사용하면 해당 대표 지점의 일반관리자 가입 승인 대기입니다. 둘 다 보내면 이메일의 관리 범위를 검증한 뒤 코드 가입을 적용합니다. 자동 로그인하지 않습니다.")
+             description="A one-time inviteCode activates the account as the target shop's primary administrator, with requestId/requestStatus set to null. Using only representativeEmail creates a general administrator application awaiting approval. When both are supplied, the representative's scope is checked before applying the invitation. Signup allows 10 attempts per IP in 5 minutes and 10 attempts per email in 1 hour; further attempts return 429 RATE_LIMITED. Account identity, invitation, duplicate, contract, and shop-access checks still apply. Signup does not sign the account in.")
 def signup(body: AdminSignup, request: Request, session: Session = DB):
     email = _normalized_email(body.email)
     _limited(request, email)

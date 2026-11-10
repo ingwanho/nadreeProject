@@ -19,14 +19,15 @@ class Login(Body):
 
 
 class AdminSignup(Body):
-    """RiderLog 공용 관리자 계정 생성과 렌탈 가입 신청 입력."""
+    """Shared RiderLog administrator registration and rental application input."""
     loginId: Annotated[str, Field(min_length=3, max_length=100, pattern=r"^[A-Za-z0-9_.@+-]+$")]
     email: EmailStr = Field(max_length=200)
     password: SecretStr = Field(min_length=8, max_length=200)
     name: Text100
     phone: Annotated[str, Field(min_length=1, max_length=20)] | None = None
     representativeEmail: EmailStr | None = Field(default=None, max_length=200)
-    inviteCode: Annotated[str, Field(min_length=1, max_length=64)] | None = None
+    inviteCode: Annotated[str, Field(min_length=1, max_length=64,
+        description="One-time shop invitation. Newly generated codes contain 8 uppercase letters and digits; existing codes remain valid.")] | None = None
 
     @model_validator(mode="after")
     def target(self):
@@ -87,9 +88,11 @@ class RequestAction(Email):
 
 
 class SpotCreate(Body):
-    spot_name: Text100
-    unit_type: Literal["org", "region", "local", "spot", "team", "agency"]
-    parent_spot_id: Identifier
+    spot_name: Text100 = Field(description="Name of the new hierarchy node, saved as unit_name and its own level's normalized name. The existing request field name is retained.")
+    unit_type: Literal["org", "region", "local", "spot", "team", "agency"] = Field(
+        description="Legacy client hint retained for compatibility. The parent master determines the actual child level: org to region, region to local, or local to spot. Other hints cannot skip levels. The org value remains forbidden.")
+    parent_spot_id: Identifier = Field(
+        description="Parent MSP_SPOT_MASTER.spot_master_id at any hierarchy level. The existing field name is retained; org, region, and local parents do not need a normalized spot_id.")
     email: EmailStr | None = Field(default=None, max_length=200)
     phone: Annotated[str, Field(max_length=20)] | None = None
     biz_reg_num: Annotated[str, Field(max_length=30)] | None = None

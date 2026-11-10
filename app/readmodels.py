@@ -16,6 +16,7 @@ from app.rentals import booking_handover_status
 from app.reservation_payments import payment_flags
 from app.receipt import PENDING, HOLD_PREFIX, is_onsite, view as receipt_view
 from app.security import now
+from app.spot_hierarchy import unit_name
 from app.vehicles import available_actions, vehicle_view
 
 router = APIRouter(tags=["W07 Dashboard and calendar"], dependencies=[bearer])
@@ -452,6 +453,6 @@ def dashboard(request: Request, session: Session = DB):
         s = item["state"]
         if s and s["status"] == "MAINTENANCE" and s["maintenance_until"] is not None and s["maintenance_until"] >= today:
             work.append(dict(vehicleId=ident, recordType="MAINTENANCE", maintenanceUntil=s["maintenance_until"]))
-    return dict(status="success", group=dict(spotMasterId=root["spot_master_id"], spotCode=root["unit_code"], name=root["spot_name"]),
+    return dict(status="success", group=dict(spotMasterId=root["spot_master_id"], spotCode=root["unit_code"], name=unit_name(root)),
         name=actor.admin["admin_name"], totalVehicles=len(vehicles), totalReservations=counts.get("APPROVED", 0),
         pending=counts.get("REQUESTED", 0), awaitingReceipt=counts.get(PENDING, 0), chat=0, todayWork=work)

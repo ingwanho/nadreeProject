@@ -56,7 +56,7 @@ def test_payment_return_is_public_navigation_without_payment_side_effects(paymen
     assert response.headers["content-type"].startswith("text/html")
     assert response.headers["cache-control"] == "no-store"
     assert response.headers["referrer-policy"] == "no-referrer"
-    assert "앱에서 결제 상태를 확인해 주세요" in response.text
+    assert "Check your payment status in the app" in response.text
     for value in ("private-order-do-not-echo", "private-buyer-do-not-echo", "paymentStatus", "PAID"):
         assert value not in response.text
     assert [dict(row) for row in payment_rows(payments)] == before

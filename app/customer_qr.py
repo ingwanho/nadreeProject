@@ -76,7 +76,7 @@ def limited(request, uid):
     request.app.state.limiter.check("customer-qr:" + uid, limit=30, seconds=60)
 
 
-@router.post("/qr/lookup", response_model=CustomerQrLookup, summary="공용 QR 원문으로 차량·본인 예약 조회")
+@router.post("/qr/lookup", response_model=CustomerQrLookup, summary="Look up a vehicle and your reservation using the shared QR code")
 def lookup(body: Lookup, request: Request, session=DB):
     user = user_principal(request, session)
     limited(request, user.uid_token)
@@ -152,7 +152,7 @@ def quote_key(request):
     return key
 
 
-@router.post("/onsite/quote", response_model=CustomerOnsiteQuote, summary="공용 QR 차량의 발리 당일 견적·10분 유효 토큰")
+@router.post("/onsite/quote", response_model=CustomerOnsiteQuote, summary="Quote an onsite rental starting today in Bali and issue a token valid for 10 minutes")
 def quote(body: Quote, request: Request, session=DB):
     user = user_principal(request, session)
     require_schema(request.app.state.db)
@@ -210,7 +210,7 @@ def create_walkin(request, session, spot, item, uid, return_date, admin_id):
 
 
 @router.post("/onsite/requests", response_model=CustomerOnsiteResult, responses={202: {"model": CustomerOnsiteResult}},
-             summary="멱등 요청 키·영속 결과로 차량 고정 현장 신청")
+             summary="Request an onsite rental for a specific vehicle using an idempotency key and a stored outcome")
 def onsite_request(body: OnsiteRequest, request: Request, response: Response, session=REQUEST_DB):
     user = user_principal(request, session)
     require_schema(request.app.state.db)
@@ -288,7 +288,7 @@ def _submit_onsite(body, request, session, uid):
 
 
 @router.get("/onsite/requests/{client_request_id}", response_model=CustomerOnsiteResult,
-            responses={202: {"model": CustomerOnsiteResult}}, summary="본인 신청의 접수·확정 거절·처리 중·불명 결과 조회")
+            responses={202: {"model": CustomerOnsiteResult}}, summary="Get your request outcome: accepted, rejected, processing, or unknown")
 def request_result(client_request_id: RequestKey, request: Request, response: Response, session=DB):
     user = user_principal(request, session)
     require_schema(request.app.state.db)
@@ -311,7 +311,7 @@ def _request_result(request, session, response, uid, key, table):
 
 
 @router.post("/onsite/requests/{client_request_id}/close", response_model=CustomerOnsiteResult,
-             responses={202: {"model": CustomerOnsiteResult}}, summary="미접수 신청 키를 확정 종료해 늦은 생성 차단")
+             responses={202: {"model": CustomerOnsiteResult}}, summary="Permanently close an unaccepted request key to prevent delayed reservation creation")
 def close_request(client_request_id: RequestKey, request: Request, response: Response, session=REQUEST_DB):
     user = user_principal(request, session)
     limited(request, user.uid_token)
@@ -332,7 +332,7 @@ def close_request(client_request_id: RequestKey, request: Request, response: Res
         code=record["error_code"] if record and record["request_state"] == "REJECTED" else "ONSITE_REQUEST_CLOSED")}
 
 
-@router.post("/reservations/{reservation_id}/receive", response_model=CustomerReservationDetail, summary="본인 예약·공용 QR 확인 후 명시적 인수 확정")
+@router.post("/reservations/{reservation_id}/receive", response_model=CustomerReservationDetail, summary="Confirm vehicle receipt after verifying your reservation and the shared QR code")
 def receive(reservation_id: str, body: Qr, request: Request, session=DB):
     user = user_principal(request, session)
     limited(request, user.uid_token)

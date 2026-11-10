@@ -157,8 +157,8 @@ def queue_booking_chat(request, session, ident, status):
 
 
 @router.post("/nadreego/chat/session", response_model=ChatSession, dependencies=[bearer],
-             summary="관리자 Firebase 채팅 로그인",
-             description="본문 없음. 현재 업무 세션과 직접 소속된 활성 지점만 검증하여 동기화 후 custom token 발급. 대표만 답변 가능. 401 업무 세션 만료, 403 역할/소속 거절, 503 CHAT_NOT_CONFIGURED 또는 CHAT_SYNC_FAILED. 상위 조직 권한은 채팅에 상속하지 않습니다.")
+             summary="Sign an administrator into Firebase chat",
+             description="No request body. Validates the current business session and directly assigned active shops, synchronizes chat access, and issues a custom token. Only primary administrators can reply. Returns 401 for an expired business session, 403 for denied roles or shop affiliation, or 503 with CHAT_NOT_CONFIGURED or CHAT_SYNC_FAILED. Permissions from parent organizations are not inherited by chat.")
 def admin_session(request: Request, session: Session = DB):
     actor = principal(request, session)
     account = lock_account(request, session, actor.admin["admin_id"], actor.session_id)
@@ -201,8 +201,8 @@ def admin_session(request: Request, session: Session = DB):
 
 
 @router.post("/api/v1/nadree/user/chat/session", response_model=ChatSession,
-             dependencies=[bearer, Depends(refresh_header)], summary="고객 Firebase 채팅 세션 연결",
-             description="현재 고객 access token과 X-Refresh-Token을 함께 검증합니다. 반환 custom token으로 Firebase 로그인 후 callable을 사용합니다. 이전 기기 토큰으로 새 채팅 세션을 발급할 수 없습니다.")
+             dependencies=[bearer, Depends(refresh_header)], summary="Connect a customer Firebase chat session",
+             description="Validates the current customer access token together with X-Refresh-Token. Sign into Firebase with the returned custom token, then use the callable functions. A previous device's token cannot issue a new chat session.")
 def customer_session(request: Request, session: Session = DB):
     from app.customer_rentals import _user_refresh_row
     from app.rental_common import lock_key

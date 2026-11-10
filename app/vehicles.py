@@ -77,7 +77,7 @@ def available_sensor(request, session, root, sensor_id):
     return sensor
 
 
-@router.post("/nadreego/vehicle/create", description="차량 QR 원문 qrToken은 필수이고 sensorId는 선택입니다. QR은 기존 서버 HMAC-SHA256 방식으로 MSP_VEHICLE_QR.qr_code_hash에 저장합니다. 센서 코드와 QR은 별개이며 센서 없이도 차량 등록·QR 조회가 가능합니다. 센서 지정 시 소속·연결·대여 상태를 재검증합니다.")
+@router.post("/nadreego/vehicle/create", description="The original vehicle QR value, qrToken, is required; sensorId is optional. The server stores the QR as an HMAC-SHA256 digest in MSP_VEHICLE_QR.qr_code_hash using the existing method. Sensor codes and QR values are separate. Vehicles can be registered and looked up by QR without a sensor. If a sensor is specified, its shop affiliation, link, and rental state are revalidated.")
 def create_vehicle(body: VehicleCreate, request: Request, session: Session = DB):
     actor, root = context(request, session, write=True)
     db = request.app.state.db
@@ -126,8 +126,8 @@ def create_vehicle(body: VehicleCreate, request: Request, session: Session = DB)
                 brand=model["brand"], vehicleName=model["model_name"])
 
 
-@router.post("/nadreego/vehicle/qr/link", summary="기존 차량에 비어 있는 QR 연결",
-             description="vehicleNumber와 QR 원문 qrToken을 보냅니다. 삭제된 QR은 다른 차량에도 재사용할 수 있습니다. 현재 연결된 QR은 비활성이어도 중복 등록할 수 없으며 먼저 삭제해야 합니다. 대상 차량의 기존 QR을 자동 교체하지 않습니다. 같은 활성 연결의 재요청은 동일 qrId를 반환합니다. 대여 중·고객 인수/회수 보호 중에는 변경할 수 없습니다.")
+@router.post("/nadreego/vehicle/qr/link", summary="Link a QR to an existing vehicle without a QR",
+             description="Send vehicleNumber and the original QR value as qrToken. A detached QR can be reused on another vehicle. An existing QR link, including an inactive one, must be deleted before the QR can be registered again. The target vehicle's existing QR is never replaced automatically. Retrying the same active link returns the same qrId. Changes are blocked during a rental or a customer receipt or vehicle recovery hold.")
 def link_qr(body: QrLink, request: Request, session: Session = DB):
     actor, root = context(request, session, write=True)
     item = by_number(fleet(request, session, root, lock=True), body.vehicleNumber)
@@ -151,8 +151,8 @@ def link_qr(body: QrLink, request: Request, session: Session = DB):
     return dict(status="success", vehicleId=ident, qr={"qrId": qr["qr_id"], "qrStatus": "ACTIVE"})
 
 
-@router.post("/nadreego/vehicle/qr/validate", summary="차량 QR로 차량 정보·선택 센서 조회",
-             description="프론트가 QR 원문을 qrCode로 전달합니다. 서버가 기존 키로 HMAC-SHA256을 계산하여 MSP_VEHICLE_QR.qr_code_hash와 비교합니다. sensor_code를 조회하지 않습니다. QR_ONLY/QR_WITH_SENSOR를 구분하며 QR_ONLY도 조회·변경 가능합니다. 변경은 기존 업무 API에서 권한·현재 상태를 다시 검증합니다. QR_NOT_FOUND/QR_INACTIVE/QR_EXPIRED 및 다중 활성 센서 SENSOR_STATE_INCONSISTENT를 반환할 수 있습니다.")
+@router.post("/nadreego/vehicle/qr/validate", summary="Look up vehicle details and an optional sensor by QR",
+             description="Send the original QR value as qrCode. The server computes HMAC-SHA256 with the existing key and compares it with MSP_VEHICLE_QR.qr_code_hash; it does not look up sensor_code. Responses distinguish QR_ONLY from QR_WITH_SENSOR. QR_ONLY vehicles also support lookup and changes. Business APIs revalidate permissions and current state before applying changes. Possible errors include QR_NOT_FOUND, QR_INACTIVE, QR_EXPIRED, and SENSOR_STATE_INCONSISTENT when multiple active sensors are linked.")
 def validate_qr(body: Qr, request: Request, session: Session = DB):
     actor, root = context(request, session)
     limiter = request.app.state.limiter
@@ -178,7 +178,7 @@ def validate_qr(body: Qr, request: Request, session: Session = DB):
 
 
 @router.post("/nadreego/sensor/delete", response_model=Status,
-             description="division=QR은 현재 QR 연결 행을 실제 삭제합니다. 삭제 이력은 보존하며 해제한 QR은 다른 차량에 재사용할 수 있습니다. division=SENSOR는 센서 연결만 해제하고 QR은 유지합니다. 대여 중·인수/회수 보호 중에는 삭제할 수 없습니다.")
+             description="division=QR physically deletes the current QR link row and preserves its audit history. The detached QR can be reused on another vehicle. division=SENSOR unlinks only the sensor and preserves the QR. Deletion is blocked during a rental or a customer receipt or vehicle recovery hold.")
 def detach(body: Detach, request: Request, session: Session = DB):
     actor, root = context(request, session, write=True)
     item = by_number(fleet(request, session, root, lock=True), body.vehicleNumber)
@@ -276,25 +276,27 @@ def move(body: Move, request: Request, session: Session = DB):
     return dict(status="success", spotMasterId=target["spot_master_id"])
 
 
-@router.post("/nadreego/brand")
+@router.post("/nadreego/brand", summary="List the shared brand and model catalog",
+             description="brand contains all brands with active models, independently of vehicle ownership and pagination. vehicle contains a page of active catalog models. vehicleCount counts only the current shop's vehicles; price is the current shop's BASIC rate using its BASIC tiers and the shared BASE tiers, or null when no rate is configured. This catalog does not indicate rental availability.")
 def brands(body: Page, request: Request, session: Session = DB):
     _, root = context(request, session)
     items = fleet(request, session, root)
     tiers = load_tiers(request, session, root["spot_master_id"])
-    models = {}
+    counts = {}
     for item in items.values():
-        model = item["model"]
-        if model is None:
-            continue
-        key = model["model_id"]
-        if key not in models:
-            basic = {**item, "rental": {**item["rental"], "price_type": "BASIC", "premium_daily_price": None}}
-            models[key] = dict(modelId=key, brand=model["brand"], modelName=model["model_name"], cc=model["cc"],
-                modelImageKey=model["model_image_key"], vehicleCount=0, price=daily_price(basic, tiers))
-        models[key]["vehicleCount"] += 1
-    ordered = sorted(models.values(), key=lambda r: (r["brand"], r["modelId"]))
+        key = item["rental"]["model_id"]
+        counts[key] = counts.get(key, 0) + 1
+    table = request.app.state.db.table("MSP_VEHICLE_MODEL")
+    models = session.execute(select(table).where(table.c.is_active == 1)
+        .order_by(table.c.brand, table.c.model_id)).mappings().all()
+    ordered = []
+    for model in models:
+        basic = {"rental": {"price_type": "BASIC", "premium_daily_price": None}, "model": model}
+        ordered.append(dict(modelId=model["model_id"], brand=model["brand"], modelName=model["model_name"], cc=model["cc"],
+            modelImageKey=model["model_image_key"], vehicleCount=counts.get(model["model_id"], 0),
+            price=daily_price(basic, tiers)))
     selected = ordered[(body.page - 1) * body.pageSize:body.page * body.pageSize]
-    return dict(brand=sorted({r["brand"] for r in selected}), vehicle=selected,
+    return dict(brand=sorted({r["brand"] for r in ordered}), vehicle=selected,
         tier=[tier_view(t, root["unit_code"]) for t in tiers], price=None,
         page=body.page, pageSize=body.pageSize, totalCount=len(ordered), hasNext=body.page * body.pageSize < len(ordered))
 

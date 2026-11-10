@@ -35,6 +35,8 @@ def test_child_invite_signup_is_primary_without_approval(client, setup, signin):
         "email": "shop@example.com", "address": "Test address", "lat": -8.65, "lng": 115.2})
     assert created.status_code == 200, created.text
     spot = created.json()
+    assert spot["hierarchy_level"] == "region" and spot["unit_code"] == "CT1-ORG01-R01"
+    assert spot["spot_name"] == "Child branch"
     result = client.post("/nadreego/admin/signup", json={
         "loginId": "child-manager", "email": "child-manager@example.com", "password": "Test-password-123!",
         "name": "Child manager", "inviteCode": spot["inviteCode"],
@@ -49,6 +51,9 @@ def test_child_invite_signup_is_primary_without_approval(client, setup, signin):
     rent = setup["db"].table("MSP_SPOT_RENT")
     with setup["engine"].connect() as conn:
         assert conn.scalar(select(rent.c.invite_code).where(rent.c.spot_master_id == spot["spot_id"])) is None
+        master = setup["db"].table("MSP_SPOT_MASTER")
+        branch = conn.execute(select(master).where(master.c.spot_master_id == spot["spot_id"])).mappings().one()
+        assert branch["unit_name"] == "Child branch" and branch["spot_name"] is None
         mapping = setup["db"].table("MSP_ADMIN_ROLE")
         assert conn.scalar(select(mapping.c.role_code).where(
             mapping.c.admin_id == result.json()["adminId"])) == "rental_primary_admin"
@@ -59,11 +64,23 @@ def test_child_invite_signup_is_primary_without_approval(client, setup, signin):
         "spot_name": "Nested branch", "unit_type": "spot", "parent_spot_id": spot["spot_id"],
         "email": "nested-shop@example.com", "address": "Nested address", "lat": -8.65, "lng": 115.2})
     assert nested.status_code == 200, nested.text
+    assert nested.json()["hierarchy_level"] == "local"
+    assert nested.json()["unit_code"] == spot["unit_code"] + "-L01"
     nested_signup = client.post("/nadreego/admin/signup", json={
         "loginId": "nested-manager", "email": "nested-manager@example.com", "password": "Test-password-123!",
         "name": "Nested manager", "inviteCode": nested.json()["inviteCode"]})
     assert nested_signup.status_code == 201, nested_signup.text
     assert nested_signup.json()["spotMasterId"] == nested.json()["spot_id"]
+    leaf = client.post("/api/v1/organizations/spots", headers=headers, json={
+        "spot_name": "Leaf branch", "unit_type": "spot", "parent_spot_id": nested.json()["spot_id"],
+        "email": "leaf-shop@example.com", "address": "Leaf address", "lat": -8.65, "lng": 115.2})
+    assert leaf.status_code == 200, leaf.text
+    assert leaf.json()["hierarchy_level"] == "spot"
+    assert leaf.json()["unit_code"] == nested.json()["unit_code"] + "-SP01"
+    blocked = client.post("/api/v1/organizations/spots", headers=headers, json={
+        "spot_name": "Unsupported deeper branch", "unit_type": "spot", "parent_spot_id": leaf.json()["spot_id"],
+        "email": "blocked-shop@example.com", "address": "Blocked address", "lat": -8.65, "lng": 115.2})
+    assert blocked.status_code == 422 and blocked.json()["errorCode"] == "CHILD_HIERARCHY_NOT_SUPPORTED"
     reused = client.post("/nadreego/admin/signup", json={
         "loginId": "reuse-manager", "email": "reuse-manager@example.com", "password": "Test-password-123!",
         "name": "Reuse manager", "inviteCode": spot["inviteCode"]})

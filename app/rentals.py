@@ -42,8 +42,8 @@ def require_no_contract(request, session, reservation):
         raise Problem(409, "RESERVATION_ALREADY_HANDED_OVER")
 
 
-@router.post("/nadreego/booking/location-correction", summary="인계 전 예약의 매장 위치 오류 정정",
-             description="대표관리자만 자기/하위 지점의 REQUESTED·APPROVED 예약을 정정합니다. changeType=CORRECTION은 같은 장소의 주소·핀 오류 수정에만 사용합니다. 실제 이전은 shop/update만 사용하며 기존 예약에 전파하지 않습니다. previousLocation은 현재 스냅샷과 일치해야 합니다. 배송 목적지·요금·견적은 변경하지 않습니다.")
+@router.post("/nadreego/booking/location-correction", summary="Correct a reservation's shop location before handover",
+             description="Only primary administrators may correct REQUESTED or APPROVED reservations in their own shop or its descendants. changeType=CORRECTION only fixes an address or map pin for the same location. Use shop/update for an actual relocation; it does not update existing reservations. previousLocation must match the current snapshot. Delivery destinations, fees, and quotes remain unchanged.")
 def correct_booking_location(body: BookingLocationCorrection, request: Request, session: Session = DB):
     actor, root = context(request, session, write=True, representative=True)
     root = resolve_spot(request, session, root, body.spotMasterId, lock=True)
@@ -76,7 +76,7 @@ def correct_booking_location(body: BookingLocationCorrection, request: Request, 
     return {"status": "success", "bookedNo": body.bookedNo, "changed": True, "location": after}
 
 
-@router.get("/nadreego/booking/{booked_no}/location-corrections", summary="대표관리자 예약 위치 정정 이력")
+@router.get("/nadreego/booking/{booked_no}/location-corrections", summary="View reservation location corrections as a primary administrator")
 def booking_location_corrections(booked_no: str, request: Request, spotMasterId: str | None = Query(None), session: Session = DB):
     _, root = context(request, session, representative=True)
     root = resolve_spot(request, session, root, spotMasterId)
@@ -300,8 +300,8 @@ def contract_history(request, session, ident, previous, new, actor, event):
 
 
 @router.post("/nadreego/booking/action",
-             summary="관리자 예약 승인·거절·취소",
-             description="EXTERNAL 예약은 판매자 연결 없이 APPROVE로 확정합니다. 기존 PAYPAL 예약은 판매자 연결·환경 검사를 유지합니다. CANCEL은 인계 전 지점 귀책 취소이며 EXTERNAL은 PG 환불 없이 처리하고 기존 온라인 실결제에는 100% 환불 정책을 유지합니다.")
+             summary="Approve, reject, or cancel a reservation as an administrator",
+             description="APPROVE confirms EXTERNAL reservations without a linked PayPal seller. Existing PAYPAL reservations still require seller and environment checks. CANCEL is a shop-fault cancellation before handover. EXTERNAL cancellations do not call a payment provider; existing completed online payments retain the 100% refund policy.")
 def booking_action(body: BookingAction, request: Request, background_tasks: BackgroundTasks, session: Session = DB):
     actor, root = context(request, session, write=True, settlement=body.action in ("CANCEL", "REJECT"))
     r = booking(request, session, root, body.bookedNo)
@@ -385,7 +385,7 @@ def booking_action(body: BookingAction, request: Request, background_tasks: Back
     return action_result(request, actor, values["reservation_status"], data)
 
 
-@router.post("/nadreego/rent/approve", description="receiptRequired=true가 필수이며 관리자 앱 절차 완료를 HANDOVER_PENDING으로 기록합니다. 고객의 별도 receive 성공 후에만 HANDED_OVER/ON_RENT가 됩니다. 설정에 따른 즉시 대여 전환은 없습니다. EXTERNAL은 온라인 결제를 요구하지 않으며 기존 PAYPAL은 정상 PAID·캡처 및 미환불 상태가 필요합니다. 소유 지점·발리 인계일·유효 QR·차량·모델/가격·재고를 검증합니다.")
+@router.post("/nadreego/rent/approve", description="receiptRequired=true is mandatory. Completing the administrator's handover step records HANDOVER_PENDING. Only a successful customer receive request changes the reservation and rental to HANDED_OVER/ON_RENT. Immediate rental activation cannot be enabled through configuration. EXTERNAL reservations do not require online payment; existing PAYPAL reservations require a valid completed, captured payment without a refund. The owning shop, Bali handover date, QR, vehicle, model, price, and inventory are validated.")
 def approve_rent(body: RentApprove, request: Request, session: Session = DB):
     actor, root = context(request, session, write=True)
     if body.receiptRequired is not True:
@@ -473,7 +473,7 @@ def start_contract(request, session, root, item, vehicles, contracts, uid_token,
         reservationStatus="HANDED_OVER", vehicleAssignmentStatus="LOCKED")
 
 
-@router.post("/nadreego/booking/{booked_no}/receipt-recovery", summary="매장 차량·열쇠 회수 확인 후 인수 보호 해제")
+@router.post("/nadreego/booking/{booked_no}/receipt-recovery", summary="Release the receipt hold after confirming physical recovery of the vehicle and keys")
 def recover_receipt(booked_no: str, body: ReceiptRecovery, request: Request, background_tasks: BackgroundTasks, session: Session = DB):
     actor, root = context(request, session, write=True, settlement=True)
     if not booked_no.startswith("BO"):
