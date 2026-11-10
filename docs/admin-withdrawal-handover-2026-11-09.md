@@ -15,7 +15,7 @@
 ## API·상태
 
 - `DELETE /nadreego/admin/account`: 일반은 인계 후 기존 200·deleted=true. 대표는 전체 하위 범위를 SQL 잠금 아래 확인하며 미완료가 있으면 **409 `DELETION_OBLIGATIONS_REMAIN`**, `nextAction=SETTLE_OUTSTANDING_WORK`로 거절한다. 계정·세션·지점과 업무 상태를 그대로 둔다. 미완료 건수는 기존 context API로 확인한다.
-- `POST /nadreego/admin/account-deletion-requests`: 기존 202 접수 계약을 유지한다. 대표 미완료 시 `WAITING_OBLIGATIONS/LIMITED_TO_SETTLEMENT`로 접수만 보존하고 실제 삭제는 하지 않는다. 업무 정리 후 같은 요청을 배치가 최종 재검사한다. 일반은 배치가 인계를 성공시킨 후 본인 접근을 회수한다.
+- `POST /nadreego/admin/account-deletion-requests`: 202 계약을 유지한다. 대표 미완료 시 `WAITING_OBLIGATIONS/LIMITED_TO_SETTLEMENT`로 접수만 보존하고 실제 삭제는 하지 않는다. 업무 정리 후 같은 요청을 배치가 최종 재검사한다. **11월 9일 후속 변경: 일반은 첫 정상 접수에서 업무 인계와 본인 접근 회수까지 완료하고 REVOKED를 반환한다. 개인정보 정리는 재요청 없이 기존 배치가 이어간다.** 동일 키·영수증·본문의 재전송은 조회만 수행한다. [후속 구현·검사·실제 반영](general-deletion-first-request-2026-11-09.md).
 - `POST /nadreego/shop/adminDelete`: 대표가 일반관리자를 지정 제거하는 기존 경로에도 동일한 업무 인계를 적용한다.
 - 인계 대상이 있는데 같은 지점의 활성 대표/manage 권한을 정확히 하나로 확인하지 못하면 **409 `PRIMARY_ADMIN_REQUIRED_FOR_HANDOVER`**로 즉시 탈퇴를 막는다. 비동기 요청은 기존 단계별 재시도·운영 확인 경로로 남아 업무를 잃지 않는다. 대표를 지정하고 복구한 후 진행한다.
 

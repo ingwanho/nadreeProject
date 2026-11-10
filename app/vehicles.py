@@ -1,7 +1,7 @@
 import uuid
 
 from fastapi import APIRouter, Depends, Request
-from sqlalchemy import or_, select, update
+from sqlalchemy import delete, or_, select, update
 from sqlalchemy.orm import Session
 
 from app.availability import apply_assignments, compute_assignment
@@ -11,7 +11,7 @@ from app.headers import bearer
 from app.pricing import daily_price, load_tiers, tier_view
 from app.rental_common import (action_result, by_number, context, contracts_for, day_end, effective_state,
     expire_maintenance, fleet, is_open, local_date, lock_key, page_result, qr_digest, resolve_spot, rows, verify_qr)
-from app.rental_inputs import Detach, Move, Page, Qr, Repair, VehicleCreate, VehicleNumber
+from app.rental_inputs import Detach, Move, Page, Qr, QrLink, Repair, VehicleCreate, VehicleNumber
 from app.responses import Status
 from app.receipt import HOLD_PREFIX, require_no_hold
 from app.security import now
@@ -27,6 +27,15 @@ def qr_history(request, session, qr, actor, event, reason=None):
         valid_from=now(), change_reason=reason, changed_by=actor, created_at=now()))
 
 
+def issue_qr(request, session, vehicle_id, digest, actor):
+    at = now()
+    qr = dict(vehicle_id=vehicle_id, qr_id=str(uuid.uuid4()), qr_code_hash=digest,
+              qr_status="ACTIVE", issued_at=at, expired_at=None, created_at=at, updated_at=at)
+    session.execute(request.app.state.db.table("MSP_VEHICLE_QR").insert().values(**qr))
+    qr_history(request, session, qr, actor, "ISSUED")
+    return qr
+
+
 def available_actions(request, item, contracts):
     if ((item.get("state") or {}).get("status_reason") or "").startswith(HOLD_PREFIX):
         return []
@@ -36,8 +45,7 @@ def available_actions(request, item, contracts):
     result = ["PRICE_CHANGE", "SPOT_CHANGE"]
     if effective_state(request, item, contracts) in ("AVAILABLE", "MAINTENANCE"):
         result.append("REPAIR")
-    if item["qr"] and item["qr"]["qr_status"] == "ACTIVE":
-        result.append("QR_DELETE")
+    result.append("QR_DELETE" if item["qr"] else "QR_LINK")
     if len(item["sensors"]) == 1:
         result.extend(["SENSOR_DELETE", "LOCATION"])
     return result
@@ -92,10 +100,9 @@ def create_vehicle(body: VehicleCreate, request: Request, session: Session = DB)
     if body.qrToken:
         digest = qr_digest(request, body.qrToken.get_secret_value())
         lock_key(session, "qr", digest)
-        for name in ("MSP_VEHICLE_QR", "MSP_VEHICLE_QR_HISTORY"):
-            t = db.table(name)
-            if session.execute(select(t.c.vehicle_id).where(t.c.qr_code_hash == digest)).first():
-                raise Problem(409, "QR_ALREADY_ISSUED")
+        t = db.table("MSP_VEHICLE_QR")
+        if session.execute(select(t.c.vehicle_id).where(t.c.qr_code_hash == digest)).first():
+            raise Problem(409, "QR_ALREADY_ISSUED")
     ident, at = str(uuid.uuid4()), now()
     values = dict(vehicle_id=ident, vehicle_code="NR-" + ident, plate_number=plate if len(plate) <= 20 else None,
         vehicle_type=model["vehicle_type"], model_name=model["model_name"], is_active=1,
@@ -113,12 +120,35 @@ def create_vehicle(body: VehicleCreate, request: Request, session: Session = DB)
     if sensor:
         session.execute(update(st).where(st.c.sensor_id == body.sensorId).values(vehicle_id=ident))
     if digest:
-        qr = dict(vehicle_id=ident, qr_id=str(uuid.uuid4()), qr_code_hash=digest, qr_status="ACTIVE", issued_at=at, created_at=at, updated_at=at)
-        session.execute(db.table("MSP_VEHICLE_QR").insert().values(**qr))
-        qr_history(request, session, qr, actor.admin["admin_id"], "ISSUED")
+        qr = issue_qr(request, session, ident, digest, actor.admin["admin_id"])
     return dict(status="success", vehicleId=ident, qr={"qrId": qr["qr_id"], "qrStatus": "ACTIVE"},
                 iot={"sensorId": body.sensorId, "sensorStatus": "LINKED" if sensor else "NOT_LINKED"},
                 brand=model["brand"], vehicleName=model["model_name"])
+
+
+@router.post("/nadreego/vehicle/qr/link", summary="기존 차량에 비어 있는 QR 연결",
+             description="vehicleNumber와 QR 원문 qrToken을 보냅니다. 삭제된 QR은 다른 차량에도 재사용할 수 있습니다. 현재 연결된 QR은 비활성이어도 중복 등록할 수 없으며 먼저 삭제해야 합니다. 대상 차량의 기존 QR을 자동 교체하지 않습니다. 같은 활성 연결의 재요청은 동일 qrId를 반환합니다. 대여 중·고객 인수/회수 보호 중에는 변경할 수 없습니다.")
+def link_qr(body: QrLink, request: Request, session: Session = DB):
+    actor, root = context(request, session, write=True)
+    item = by_number(fleet(request, session, root, lock=True), body.vehicleNumber)
+    require_no_hold(item)
+    ident = item["vehicle"]["vehicle_id"]
+    if any(is_open(c) for c in contracts_for(request, session, [ident])):
+        raise Problem(409, "VEHICLE_ALREADY_ON_RENT")
+    digest = qr_digest(request, body.qrToken.get_secret_value())
+    lock_key(session, "qr", digest)
+    table = request.app.state.db.table("MSP_VEHICLE_QR")
+    existing = session.execute(select(table).where(table.c.qr_code_hash == digest)).mappings().first()
+    if existing:
+        if (existing["vehicle_id"] != ident or existing["qr_status"] != "ACTIVE"
+                or existing["expired_at"] is not None and existing["expired_at"] <= now()):
+            raise Problem(409, "QR_ALREADY_ISSUED")
+        qr = existing
+    else:
+        if item["qr"]:
+            raise Problem(409, "VEHICLE_QR_ALREADY_LINKED")
+        qr = issue_qr(request, session, ident, digest, actor.admin["admin_id"])
+    return dict(status="success", vehicleId=ident, qr={"qrId": qr["qr_id"], "qrStatus": "ACTIVE"})
 
 
 @router.post("/nadreego/vehicle/qr/validate", summary="차량 QR로 차량 정보·선택 센서 조회",
@@ -147,7 +177,8 @@ def validate_qr(body: Qr, request: Request, session: Session = DB):
         currentBooking=detail["currentBooking"], currentRental=detail["currentRental"], availableActions=actions))
 
 
-@router.post("/nadreego/sensor/delete", response_model=Status)
+@router.post("/nadreego/sensor/delete", response_model=Status,
+             description="division=QR은 현재 QR 연결 행을 실제 삭제합니다. 삭제 이력은 보존하며 해제한 QR은 다른 차량에 재사용할 수 있습니다. division=SENSOR는 센서 연결만 해제하고 QR은 유지합니다. 대여 중·인수/회수 보호 중에는 삭제할 수 없습니다.")
 def detach(body: Detach, request: Request, session: Session = DB):
     actor, root = context(request, session, write=True)
     item = by_number(fleet(request, session, root, lock=True), body.vehicleNumber)
@@ -164,10 +195,10 @@ def detach(body: Detach, request: Request, session: Session = DB):
     else:
         if item["qr"] is None:
             raise Problem(404, "QR_NOT_FOUND")
-        if item["qr"]["qr_status"] != "INACTIVE":
-            t = db.table("MSP_VEHICLE_QR")
-            session.execute(update(t).where(t.c.vehicle_id == ident).values(qr_status="INACTIVE", updated_at=now()))
-            qr_history(request, session, {**item["qr"], "qr_status": "INACTIVE"}, actor.admin["admin_id"], "INACTIVATED")
+        lock_key(session, "qr", item["qr"]["qr_code_hash"])
+        t = db.table("MSP_VEHICLE_QR")
+        session.execute(delete(t).where(t.c.vehicle_id == ident, t.c.qr_id == item["qr"]["qr_id"]))
+        qr_history(request, session, {**item["qr"], "qr_status": "INACTIVE"}, actor.admin["admin_id"], "DELETED")
     return {"status": "success"}
 
 

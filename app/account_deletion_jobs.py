@@ -8,7 +8,7 @@ from sqlalchemy import delete, select, text, update
 from sqlalchemy.orm import Session
 
 from app.account_deletion_data import cleanup_chat, cleanup_sql
-from app.account_deletion_scope import capture, gate, outstanding, pending_scope_allowed, scope_hash
+from app.account_deletion_scope import capture, gate, outstanding, pending_scope_allowed, request_execution, scope_hash
 from app.account_deletion_security import unseal
 from app.account_deletion_store import TERMINAL, DeletionStore, utc
 from app.chat import FirebaseChat, admin_uid
@@ -42,15 +42,48 @@ def contacts_for(settings, row):
 
 def notify(store, row, mailer, contacts, *, completed=False):
     field = "completionNotified" if completed else "receivedNotified"
+    attempt_field = "completionNotificationAttempts" if completed else "receivedNotificationAttempts"
+    stage = "completed" if completed else "received"
     sent = set(row.get(field, []))
+    attempted = set(row.get(attempt_field, [])) | sent
+    results = row.get("notificationResults", {})
+    previous = results.get(stage, {})
+    summary = {"sentCount": previous.get("sentCount", len(sent)),
+        "failedCount": previous.get("failedCount", 0), "skippedCount": previous.get("skippedCount", 0),
+        "lastAttemptAt": previous.get("lastAttemptAt"), "errorCodes": list(previous.get("errorCodes", []))}
     for contact in contacts:
-        if contact["adminId"] in sent:
+        ident = contact["adminId"]
+        if ident in attempted:
             continue
+        error_code = None
         if not contact.get("email"):
-            raise Problem(503, "DELETION_NOTIFICATION_CONTACT_REQUIRED")
-        mailer.send_deletion_notice(contact["email"], row["requestId"], completed=completed)
-        sent.add(contact["adminId"])
-        save(store, row, **{field: sorted(sent)})
+            outcome, error_code = "SKIPPED", "DELETION_NOTIFICATION_CONTACT_REQUIRED"
+        else:
+            try:
+                mailer.send_deletion_notice(contact["email"], row["requestId"], completed=completed)
+                sent.add(ident)
+                outcome = "SENT"
+            except Exception as error:
+                # Mail is advisory. Persist only known codes, never provider
+                # text, recipient addresses, credentials or exception reprs.
+                outcome = "FAILED"
+                error_code = error.code if isinstance(error, Problem) and error.code in (
+                    "MAIL_NOT_CONFIGURED", "MAIL_UNAVAILABLE") else "MAIL_UNAVAILABLE"
+        attempted.add(ident)
+        summary[{"SENT": "sentCount", "FAILED": "failedCount", "SKIPPED": "skippedCount"}[outcome]] += 1
+        summary["lastAttemptAt"] = utc()
+        if error_code:
+            summary["errorCodes"] = sorted(set(summary["errorCodes"]) | {error_code})
+        logger.log(logging.INFO if outcome == "SENT" else logging.WARNING,
+            "Deletion notice result: %s stage=%s outcome=%s code=%s",
+            row["requestId"], stage, outcome, error_code or "NONE")
+        # Storage failures still propagate: erasure requires durable progress.
+        # A recorded failed/skipped notice is not retried by later job runs.
+        save(store, row, **{field: sorted(sent), attempt_field: sorted(attempted),
+            "notificationResults": {**row.get("notificationResults", {}), stage: dict(summary)}})
+    if stage not in row.get("notificationResults", {}):
+        # Preserve success evidence from requests created before this policy.
+        save(store, row, notificationResults={**row.get("notificationResults", {}), stage: summary})
 
 
 def withdraw(db, store, chat, row, at):
@@ -148,14 +181,24 @@ def process(db, settings, store, chat, mailer, row, at):
         if deleted:
             values["providerDeletionInitiatedAt"] = at
         save(store, row, **values)
-    policy = store.get("policy_retention") or {}
-    policy_valid = (policy.get("verified") is True and policy.get("activeStoresReviewed") is True
-                    and policy.get("reviewUntil") and utc(policy["reviewUntil"]) >= at
-                    and 0 <= policy.get("logMaxDays", -1) <= 30 and 0 <= policy.get("backupMaxDays", -1) <= 30)
+    policy, policy_valid = {}, False
+    try:
+        policy = store.get("policy_retention") or {}
+        policy_valid = bool(policy.get("verified") is True and policy.get("activeStoresReviewed") is True
+            and policy.get("reviewUntil") and utc(policy["reviewUntil"]) >= at
+            and type(policy.get("logMaxDays")) is int and type(policy.get("backupMaxDays")) is int
+            and 0 <= policy.get("logMaxDays", -1) <= 30 and 0 <= policy.get("backupMaxDays", -1) <= 30)
+    except Exception as error:
+        # Retention review is advisory to completion in active systems. Do not
+        # expose provider errors or claim unverified backup/log deletion dates.
+        logger.warning("Deletion retention review unavailable: %s", type(error).__name__)
+        policy = {}
+    retention_status = {"state": "VERIFIED" if policy_valid else "PENDING", "checkedAt": at}
     reviewed = row.get("dataReviewConfirmedHash") == row["scopeHash"]
-    if not policy_valid or row.get("reviewRequired") and not reviewed:
+    if row.get("reviewRequired") and not reviewed:
         save(store, row, requestState="ACTION_REQUIRED", nextAction="REVIEW_DATA_AND_RETENTION",
-            message="The request remains saved. An operator is reviewing shared content or retention controls.")
+            retentionReview=retention_status,
+            message="The request remains saved. An operator is reviewing personal information in shared content.")
         return
     notify(store, row, mailer, contacts, completed=True)
     retained = row.get("retainedData", [])
@@ -167,15 +210,26 @@ def process(db, settings, store, chat, mailer, row, at):
         ownerEmailHash=row["ownerEmailHash"], requestState="COMPLETED_WITH_RETENTION" if retained else "COMPLETED",
         personalDataState="COMPLETED", completedAt=at, nextAction="NONE", completionScope="COMPANY_ACTIVE_SYSTEMS",
         receiptExpiresAt=at + timedelta(days=30), expiresAt=at + timedelta(days=30), updatedAt=at,
-        message="Deletion in company active systems is complete. Retained information and residual copies follow the stated policies.",
-        residualCopies=[{"category": "COMPANY_RESTRICTED_BACKUP", "deleteBy": at + timedelta(days=policy["backupMaxDays"])},
-            {"category": "COMPANY_LOG_RETENTION", "deleteBy": at + timedelta(days=policy["logMaxDays"])}])
+        message="Deletion in company active systems is complete. See retainedData and residualCopies for separately tracked retention.",
+        residualCopies=[])
+    for category, field in (("COMPANY_RESTRICTED_BACKUP", "backupMaxDays"),
+                            ("COMPANY_LOG_RETENTION", "logMaxDays")):
+        residual = {"category": category, "reviewState": retention_status["state"]}
+        if policy_valid:
+            residual["deleteBy"] = at + timedelta(days=policy[field])
+        else:
+            residual["requestedMaxDays"] = 30
+        final["residualCopies"].append(residual)
     if row.get("providerDeletionInitiatedAt"):
         final["residualCopies"].append({"category": "FIREBASE_AUTH_PROVIDER_RESIDUAL",
             "providerDeletionInitiatedAt": row["providerDeletionInitiatedAt"],
             "providerNoticeUrl": "https://firebase.google.com/support/privacy"})
     final["reviewEvidenceHash"] = row.get("dataReviewAudit", {}).get("evidenceHash")
-    final["policyEvidenceHash"] = policy.get("evidenceHash")
+    final["policyEvidenceHash"] = policy.get("evidenceHash") if policy_valid else None
+    final["retentionReview"] = retention_status
+    # Aggregate mail results contain no recipient identities and survive the
+    # removal of private per-account delivery checkpoints.
+    final["notificationResults"] = row.get("notificationResults", {})
     if row.get("reconfirmationDigest"):
         final["reconfirmationDigest"] = row["reconfirmationDigest"]
     store.finish(row, final)
@@ -190,27 +244,33 @@ def run(db, settings, store, chat, mailer, *, at=None):
         if mysql and connection.scalar(text("SELECT GET_LOCK(:name, 0)"), {"name": name}) != 1:
             return {"busy": True}
         try:
-            for row in store.pending():
-                counts["processed"] += 1
-                try:
-                    process(db, settings, store, chat, mailer, row, at)
-                    latest = store.get(row["requestId"])
-                    counts["completed"] += latest["requestState"] in TERMINAL
-                    if latest.get("processingDueAt") and utc(latest["processingDueAt"]) < at and latest["requestState"] not in TERMINAL:
-                        store.update(row["requestId"], {"requestState": "ACTION_REQUIRED", "nextAction": "CONTACT_OPERATOR", "overdue": True})
-                        logger.error("Deletion request overdue: %s", row["requestId"])
-                except Exception as error:
-                    attempts = row.get("attempts", 0) + 1
-                    overdue = bool(row.get("processingDueAt") and utc(row["processingDueAt"]) < at)
-                    needs_operator = attempts >= 5 or overdue
-                    store.update(row["requestId"], {"requestState": "ACTION_REQUIRED" if needs_operator else "RETRYING",
-                        "attempts": attempts, "nextAttemptAt": at + timedelta(minutes=min(60, 2 ** min(attempts, 6))),
-                        "nextAction": "CONTACT_OPERATOR" if needs_operator else "NONE", "overdue": overdue,
-                        "message": "The saved request is awaiting a retry or operator action."})
-                    counts["deferred"] += 1
-                    logger.warning("Deletion request deferred: %s %s", row["requestId"], type(error).__name__)
-                    if needs_operator:
-                        logger.error("Deletion operator action required: %s", row["requestId"])
+            for queued in store.pending():
+                with request_execution(db, queued["requestId"]) as acquired:
+                    if not acquired:
+                        continue  # The first HTTP call is completing withdrawal.
+                    row = store.get(queued["requestId"])
+                    if not row or row.get("requestState") in TERMINAL:
+                        continue
+                    counts["processed"] += 1
+                    try:
+                        process(db, settings, store, chat, mailer, row, at)
+                        latest = store.get(row["requestId"])
+                        counts["completed"] += latest["requestState"] in TERMINAL
+                        if latest.get("processingDueAt") and utc(latest["processingDueAt"]) < at and latest["requestState"] not in TERMINAL:
+                            store.update(row["requestId"], {"requestState": "ACTION_REQUIRED", "nextAction": "CONTACT_OPERATOR", "overdue": True})
+                            logger.error("Deletion request overdue: %s", row["requestId"])
+                    except Exception as error:
+                        attempts = row.get("attempts", 0) + 1
+                        overdue = bool(row.get("processingDueAt") and utc(row["processingDueAt"]) < at)
+                        needs_operator = attempts >= 5 or overdue
+                        store.update(row["requestId"], {"requestState": "ACTION_REQUIRED" if needs_operator else "RETRYING",
+                            "attempts": attempts, "nextAttemptAt": at + timedelta(minutes=min(60, 2 ** min(attempts, 6))),
+                            "nextAction": "CONTACT_OPERATOR" if needs_operator else "NONE", "overdue": overdue,
+                            "message": "The saved request is awaiting a retry or operator action."})
+                        counts["deferred"] += 1
+                        logger.warning("Deletion request deferred: %s %s", row["requestId"], type(error).__name__)
+                        if needs_operator:
+                            logger.error("Deletion operator action required: %s", row["requestId"])
             counts["expiredReceipts"] = store.remove_expired(at)
         finally:
             if mysql:

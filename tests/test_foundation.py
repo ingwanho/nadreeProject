@@ -86,7 +86,7 @@ def test_openapi_has_exact_work_group_routes(client):
     assert "/api/v1/nadree/rental/requests/{request_id}" not in paths
     parameters = paths["/api/v1/nadree/rental/request"]["post"].get("parameters", [])
     assert not any(p["name"] == "Idempotency-Key" for p in parameters)
-    assert len([path for path in paths if not path.startswith("/health/")]) == 78
+    assert len([path for path in paths if not path.startswith("/health/")]) == 79
     assert "post" in paths["/api/v1/nadree/rental/reservations/{reservation_id}/receive"]
     assert "post" in paths["/api/v1/nadree/rental/onsite/requests"]
     payment_return = paths["/api/v1/nadree/rental/payment/return"]["get"]
@@ -96,6 +96,10 @@ def test_openapi_has_exact_work_group_routes(client):
     assert "/nadreego/sensor/qr/resolve" not in paths
     qr_request = paths["/nadreego/vehicle/qr/validate"]["post"]["requestBody"]["content"]["application/json"]
     assert qr_request["example"] == {"qrCode": "NDR-Ab12Cd34"}
+    qr_link = paths["/nadreego/vehicle/qr/link"]["post"]
+    assert qr_link["security"]
+    assert qr_link["requestBody"]["content"]["application/json"]["example"] == {
+        "vehicleNumber": "DK-TEST-301", "qrToken": "NDR-Ab12Cd34"}
     assert "post" in paths["/nadreego/booking/location-correction"]
     assert "get" in paths["/nadreego/booking/{booked_no}/location-corrections"]
     correction = paths["/nadreego/booking/location-correction"]["post"]["requestBody"]["content"]["application/json"]

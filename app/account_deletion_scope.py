@@ -1,7 +1,8 @@
 """SQL authority and admission controls for the Firestore deletion workflow."""
 import json
+from contextlib import contextmanager
 
-from sqlalchemy import or_, select
+from sqlalchemy import or_, select, text
 
 from app.account_deletion_store import digest
 from app.errors import Problem
@@ -10,6 +11,32 @@ from app.security import GENERAL, PRIMARY, roles
 READ_POSTS = {"/nadreego/vehicle/select", "/nadreego/brand", "/nadreego/booking/select",
               "/nadreego/main", "/nadreego/main/calendar", "/nadreego/vehicle/location",
               "/nadreego/vehicle/qr/validate"}
+
+
+@contextmanager
+def request_execution(db, ident, *, wait_seconds=0):
+    """Serialize one receipt's HTTP withdrawal and background erasure."""
+    if db.engine.dialect.name != "mysql":
+        yield True
+        return
+    name = "nadree:delete:" + digest(ident)[:48]
+    with db.engine.connect() as connection:
+        try:
+            acquired = connection.scalar(text("SELECT GET_LOCK(:name, :wait)"),
+                {"name": name, "wait": wait_seconds}) == 1
+        except Exception:
+            connection.invalidate()
+            raise
+        try:
+            yield acquired
+        finally:
+            if acquired:
+                try:
+                    connection.execute(text("SELECT RELEASE_LOCK(:name)"), {"name": name})
+                except Exception:
+                    # A pooled connection must not retain a lost named lock.
+                    connection.invalidate()
+                    raise
 
 
 def gate(db, session, spot_id, *, lock=False):

@@ -41,7 +41,15 @@ Content-Type: application/json
 
 접수 성공은 **202**, `requestAccepted=true`다. 응답은 `requestId`, `requestState`, `scope`, `receivedAt`, `identityVerifiedAt`, `eligibleAt`, `processingDueAt`, `completedAt`, `accessState`, `personalDataState`, 업무 카운터·대상 건수·`nextAction`, 보관 고지를 포함한다. `deleted=true`는 반환하지 않는다. Swagger에 상태별 실제 형식의 예시를 반영했다.
 
-일반 접수 예시는 `PROCESSING/PENDING/NOT_STARTED`다. 배치가 회수하므로 접수 응답만 보고 서버 권한이 이미 회수됐다고 표시하지 않는다. 이후 `accessState=REVOKED`, `personalDataState=IN_PROGRESS`를 거쳐 실제 정리·검토·완료 안내 후에만 `COMPLETED`가 된다.
+2026-11-09 후속 변경: 일반관리자 SELF는 **첫 정상 POST에서 본인 승인 업무 인계와 역할·로그인 세션·채팅·FCM 회수까지 끝낸다.** 정상 첫 응답은 `202`, `requestState=PROCESSING`, `accessState=REVOKED`, `personalDataState=IN_PROGRESS`다. 개인정보 정리는 재요청 없이 배치가 이어가며, 실제 정리·검토 완료 후 `COMPLETED`가 된다. 대표 SUBTREE는 기존 배치·미완료 업무 대기 계약을 유지한다. [변경·적용 결과](general-deletion-first-request-2026-11-09.md).
+
+SELF 응답의 `accessState=REVOKED`를 확인하면 관리자 access/refresh·채팅 세션을 정리하고 탈퇴 화면으로 이동한다. 별도 DELETE나 새 키의 POST를 추가로 호출하지 않는다. 전송 전에 보관한 원래 키·영수증으로 개인정보 상태를 조회한다. 동일 키·영수증·본문의 POST 재전송은 인증이 회수된 뒤에도 읽기만 하며 인계·탈퇴를 반복하지 않는다.
+
+최초 회수 중 채팅/SQL/체크포인트 장애가 있으면 `503 DELETION_OUTCOME_UNKNOWN`이 올 수 있다. 저장된 요청을 없던 것으로 처리하거나 새 키로 다시 접수하지 말고 같은 영수증으로 실제 상태를 확인한다. 배치가 저장된 단계에서 자동 복구한다. `503 DELETION_REQUEST_BUSY`와 requestAccepted=false는 요청별 실행 잠금을 기다리다 접수하지 못한 응답이며 같은 키·영수증으로 확인/재시도한다. 권한·소속이 변경돼 재확인이 필요하면 실제 `nextAction`을 따른다.
+
+2026-11-09 후속 정책: 접수·완료 메일은 발송을 시도하고 결과를 기록하되, SMTP 실패나 이메일 주소 누락 때문에 탈퇴·개인정보 정리를 멈추지 않는다. 따라서 메일 수신 유무로 완료/실패를 판단하지 않고 기존 영수증 상태 API를 기준으로 표시한다. 메일 오류 자체는 RETRYING/CONTACT_OPERATOR 사유가 되지 않지만, 변경 전에 이미 중단된 요청은 자동 재개하지 않는다. API 경로·본문·응답 필드·인증과 중복 방지 계약은 그대로다. [후속 변경·검증](deletion-notice-best-effort-2026-11-09.md).
+
+2026-11-09 추가 변경: 실제 탈퇴·SQL·채팅·관리자 Auth 정리가 끝나면 보관 정책 확인 대기로 멈추지 않고 `COMPLETED` 또는 기존 근거 보존이 있는 `COMPLETED_WITH_RETENTION`, `personalDataState=COMPLETED`로 끝낸다. 완료 범위는 `COMPANY_ACTIVE_SYSTEMS`다. 로그·백업 확인은 `residualCopies[].reviewState=PENDING/VERIFIED`로 별도 고지한다. PENDING에는 요청 기준 `requestedMaxDays=30`만 남기며 미확인 `deleteBy`는 제공하지 않는다. 앱은 `deleteBy`가 없는 항목을 허용하고 이를 삭제 실패로 표시하지 않는다. 실제 공유 자료의 미정리 개인정보 검토는 기존 `ACTION_REQUIRED/REVIEW_DATA_AND_RETENTION`으로 남을 수 있다. [개인정보 완료 처리 결과](account-deletion-completion-2026-11-09.md).
 
 대표 업무 대기는 `WAITING_OBLIGATIONS/LIMITED_TO_SETTLEMENT/NOT_STARTED`, `eligibleAt/processingDueAt=null`, `nextAction=SETTLE_OUTSTANDING_WORK`다. 남은 업무가 있을 때 일반 인증까지 먼저 지워 업무 처리를 막지 않는다.
 

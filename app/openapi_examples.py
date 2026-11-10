@@ -273,6 +273,7 @@ OPENAPI_EXAMPLES = {
         "vehicleImageKey": "vehicles/test-305.jpg",
     },
     "Detach": {"vehicleNumber": "DK-TEST-301", "division": "QR"},
+    "QrLink": {"vehicleNumber": "DK-TEST-301", "qrToken": "NDR-Ab12Cd34"},
     "PriceChange": {"vehicleNumber": "DK-TEST-301", "priceType": "BASIC", "priceInfo": None},
     "Qr": {"qrCode": "NDR-Ab12Cd34"},
     "Lookup": {"qrCode": "NDR-Ab12Cd34", "reservationId": "NRTEST-RES-APP-001"},
@@ -541,6 +542,10 @@ OPENAPI_RESPONSE_EXAMPLES = {
         "iot": {"sensorId": None, "sensorStatus": "NOT_LINKED"},
         "brand": "Honda", "vehicleName": "Vario 125",
     },
+    ("POST", "/nadreego/vehicle/qr/link"): {
+        "status": "success", "vehicleId": "NRTEST-VEHICLE-301",
+        "qr": {"qrId": "<new-qr-id>", "qrStatus": "ACTIVE"},
+    },
     ("POST", "/nadreego/vehicle/qr/validate"): {
         "status": True, "errorCode": None,
         "data": {"vehicleId": "NRTEST-VEHICLE-301", "qrId": "<qr-id>", "qrStatus": "ACTIVE",
@@ -793,13 +798,13 @@ OPENAPI_STATUS_EXAMPLES = {
         ("NOT_AWAITING_RECOVERY", "RESERVATION_VEHICLE_MISMATCH", "RECEIPT_HOLD_INCONSISTENT")}},
 }
 
-# Administrator privacy acceptance is distinct from the legacy immediate DELETE.
+# General administrators withdraw on acceptance; personal-data work continues.
 _DELETION = {
     "status": "success", "requestId": "adr_" + "0" * 64, "requestAccepted": True,
     "requestState": "PROCESSING", "scope": "SELF", "receivedAt": "2026-11-06T06:00:00Z",
     "identityVerifiedAt": "2026-11-06T06:00:00Z", "eligibleAt": "2026-11-06T06:00:00Z",
     "processingDueAt": "2026-11-13T06:00:00Z", "completedAt": None,
-    "accessState": "PENDING", "personalDataState": "NOT_STARTED", "affectedAdminCount": 1,
+    "accessState": "REVOKED", "personalDataState": "IN_PROGRESS", "affectedAdminCount": 1,
     "affectedShopCount": 0, "outstandingWork": {name: 0 for name in (
         "pendingReservations", "activeRentals", "pendingReturns", "pendingRecovery", "pendingRefunds", "pendingExternalSettlements")},
     "nextAction": "NONE", "notificationChannel": "REGISTERED_EMAIL", "completionScope": None,
@@ -807,7 +812,8 @@ _DELETION = {
     "message": "Your account and personal-data deletion request has been received.",
 }
 _DELETION_WAITING = dict(_DELETION, scope="SUBTREE", affectedAdminCount=4, affectedShopCount=2,
-    requestState="WAITING_OBLIGATIONS", accessState="LIMITED_TO_SETTLEMENT", eligibleAt=None, processingDueAt=None,
+    requestState="WAITING_OBLIGATIONS", accessState="LIMITED_TO_SETTLEMENT", personalDataState="NOT_STARTED",
+    eligibleAt=None, processingDueAt=None,
     nextAction="SETTLE_OUTSTANDING_WORK", outstandingWork=dict(_DELETION["outstandingWork"], pendingReservations=1))
 OPENAPI_EXAMPLES.update({
     "DeletionConfirmation": {"confirmationToken": "<server-confirmation-token>", "confirmed": True},
@@ -823,15 +829,22 @@ OPENAPI_STATUS_EXAMPLES.update({
         202: {"selfAccepted": _DELETION, "waitingForObligations": _DELETION_WAITING},
         409: {"scopeChanged": {"status": "fail", "errorCode": "DELETION_SCOPE_CHANGED", "requestAccepted": False,
                                "nextAction": "RELOAD_AND_RECONFIRM"}},
-        503: {"checkSameReceipt": {"status": "fail", "errorCode": "DELETION_OUTCOME_UNKNOWN"}},
+        503: {"checkSameReceipt": {"status": "fail", "errorCode": "DELETION_OUTCOME_UNKNOWN"},
+            "requestBusy": {"status": "fail", "errorCode": "DELETION_REQUEST_BUSY", "requestAccepted": False}},
     },
     ("GET", "/nadreego/admin/account-deletion-requests/status"): {
         200: {"pending": _DELETION, "waiting": _DELETION_WAITING,
             "completed": dict(_DELETION, requestState="COMPLETED", accessState="REVOKED", personalDataState="COMPLETED",
                 completedAt="2026-11-07T06:00:00Z", completionScope="COMPANY_ACTIVE_SYSTEMS",
                 receiptExpiresAt="2026-12-07T06:00:00Z"),
+            "completedWithRetentionReviewPending": dict(_DELETION, requestState="COMPLETED", accessState="REVOKED",
+                personalDataState="COMPLETED", completedAt="2026-11-07T06:00:00Z",
+                completionScope="COMPANY_ACTIVE_SYSTEMS", receiptExpiresAt="2026-12-07T06:00:00Z",
+                residualCopies=[{"category": "COMPANY_RESTRICTED_BACKUP", "reviewState": "PENDING", "requestedMaxDays": 30},
+                    {"category": "COMPANY_LOG_RETENTION", "reviewState": "PENDING", "requestedMaxDays": 30}]),
             "operatorReview": dict(_DELETION, requestState="ACTION_REQUIRED", accessState="REVOKED",
-                personalDataState="IN_PROGRESS", nextAction="REVIEW_DATA_AND_RETENTION")},
+                personalDataState="IN_PROGRESS", nextAction="REVIEW_DATA_AND_RETENTION",
+                message="An operator is reviewing unresolved personal information in shared content.")},
         404: {"notFinalEvidenceOfNonAcceptance": {"status": "fail", "errorCode": "DELETION_REQUEST_UNAVAILABLE"}},
     },
     ("POST", "/nadreego/admin/account-deletion-requests/{deletion_id}/reconfirm"): {202: {"sameRequest": _DELETION_WAITING}},

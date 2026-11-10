@@ -1,5 +1,9 @@
 # Nadree 전체 변경사항 및 인수 문서
 
+## 2026-11-10 차량 QR 실제 삭제·재연결
+
+QR 삭제는 현재 연결을 실제 제거하고 해제된 원문은 다른 차량에도 다시 연결한다. 감사 이력은 보존하되 과거 해시로 재사용을 차단하지 않는다. 기존 차량 등록/조회/센서 삭제 경로는 유지하며 POST /nadreego/vehicle/qr/link(vehicleNumber, qrToken)를 추가한다. 대여·인수/회수 보호·지점 권한을 유지하고 고객 견적·신청 중 재연결 경합을 재검증한다. DB 스키마/env/Firebase 변경은 없다. [프론트 호출 계약](frontend-vehicle-qr-reassignment-2026-11-10.md), [검사·실제 서버 결과](vehicle-qr-reassignment-server-result-2026-11-10.md).
+
 ## 2026-11-09 대표 미완료 업무 차단·일반 승인 건 인계 — 발리 01:03 서버 적용 완료
 
 대표 즉시 DELETE는 본인·모든 하위 지점에 미완료가 있으면 409 DELETION_OBLIGATIONS_REMAIN으로 거절한다. 기존 개인정보 요청은 접수 후 대기하며 실제 삭제는 하지 않는다. 일반의 승인 미완료 건은 대표에게 인계하고 예약·렌트·차량·결제는 취소/삭제하지 않는다. 이력·지점 인계 알림을 추가하며 별도 DB 변경은 없다. [확정 정책·API·서버 명령·검증](admin-withdrawal-handover-2026-11-09.md).

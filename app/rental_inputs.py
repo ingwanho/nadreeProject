@@ -101,6 +101,10 @@ class Detach(VehicleNumber):
     division: Literal["SENSOR", "QR"]
 
 
+class QrLink(VehicleNumber):
+    qrToken: SecretStr = Field(min_length=1, max_length=4096)
+
+
 class PriceChange(VehicleNumber):
     priceType: Literal["BASIC", "PREMIUM"]
     priceInfo: Money | None = None

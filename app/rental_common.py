@@ -191,8 +191,8 @@ def verify_qr(request, session, root, raw, *, lock=False):
     if not session.execute(query.with_for_update() if lock else query).first():
         raise Problem(500, "QR_STATE_INCONSISTENT")
     # Re-read after the same vehicle lock used by issuing, detaching and moving.
-    row = session.execute(select(qr).where(qr.c.vehicle_id == row["vehicle_id"])).mappings().one()
-    if not hmac.compare_digest(row["qr_code_hash"], qr_digest(request, raw)):
+    row = session.execute(select(qr).where(qr.c.vehicle_id == row["vehicle_id"])).mappings().first()
+    if not row or not hmac.compare_digest(row["qr_code_hash"], qr_digest(request, raw)):
         raise Problem(404, "QR_NOT_FOUND")
     if row["qr_status"] == "EXPIRED" or row["expired_at"] is not None and row["expired_at"] <= now():
         raise Problem(410, "QR_EXPIRED")

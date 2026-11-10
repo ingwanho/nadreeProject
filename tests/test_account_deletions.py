@@ -54,6 +54,16 @@ def process(ctx, at=None):
     return run(ctx["db"], ctx["settings"], ctx["store"], ctx["chat"], ctx["mailer"], at=at)
 
 
+def register_pending_self(ctx):
+    """Keep batch-only SELF coverage separate from immediate app withdrawal."""
+    from app.account_deletion_ops import act
+    key, secret = str(uuid4()), secrets.token_urlsafe(32)
+    accepted = act(ctx["db"], ctx["settings"], ctx["store"], "register", admin_id="general",
+        email="general@example.com", idempotency=key, receipt=secret,
+        operator="isolated", evidence="isolated")
+    return accepted, key, secret
+
+
 def test_general_single_request_reaches_erasure_notification_and_receipt_after_logout(privacy, signin):
     ctx = privacy
     own, primary = signin("general"), signin()
@@ -62,9 +72,13 @@ def test_general_single_request_reaches_erasure_notification_and_receipt_after_l
     data = accepted.json()
     assert data["requestAccepted"] is True and "deleted" not in data
     assert data["scope"] == "SELF" and data["requestState"] == "PROCESSING"
+    assert data["accessState"] == "REVOKED" and data["personalDataState"] == "IN_PROGRESS"
     assert data["affectedAdminCount"] == 1 and data["affectedShopCount"] == 0
+    assert ctx["deleted"] == [] and ctx["notices"] == []
+    assert ctx["store"].get(data["requestId"])["steps"]["withdrawal"] is True
+    assert ctx["client"].get("/nadreego/shop/admin", headers=own).status_code == 401
     blocked = ctx["client"].post("/nadreego/admin/update", headers=own, json={"name": "changed after confirmation"})
-    assert blocked.status_code == 409 and blocked.json()["errorCode"] == "DELETION_REQUEST_IN_PROGRESS"
+    assert blocked.status_code == 401
     due = ctx["store"].get(data["requestId"])["processingDueAt"]
     assert process(ctx)["completed"] == 1
     completed = progress(ctx, key, secret)
@@ -93,13 +107,19 @@ def test_same_key_payload_reuse_and_wrong_receipt_do_not_expose_or_duplicate_wor
     ctx = privacy
     own = signin("general")
     accepted, key, secret, body = submit(ctx, own)
+    assert accepted.status_code == 202
+    revoked = list(ctx["revoked"])
+    saved = ctx["store"].get(accepted.json()["requestId"])
     repeat, _, _, _ = submit(ctx, own, key=key, secret=secret, token=body["confirmationToken"])
-    assert repeat.json()["requestId"] == accepted.json()["requestId"]
+    assert repeat.status_code == 202 and repeat.json()["requestId"] == accepted.json()["requestId"]
+    assert ctx["revoked"] == revoked and ctx["store"].get(saved["requestId"]) == saved
     changed, _, _, _ = submit(ctx, own, key=key, secret=secret, token=body["confirmationToken"] + "x")
     assert changed.status_code == 409 and changed.json()["errorCode"] == "IDEMPOTENCY_KEY_REUSED"
     assert progress(ctx, key, secrets.token_urlsafe(32)).status_code == 404
-    duplicate, _, _, _ = submit(ctx, own)
-    assert duplicate.status_code == 409 and duplicate.json()["errorCode"] == "DELETION_REQUEST_ALREADY_ACTIVE"
+    assert ctx["client"].get("/nadreego/admin/account-deletion-context", headers=own).status_code == 401
+    duplicate = ctx["client"].post(BASE, headers={**own, "Idempotency-Key": str(uuid4()),
+        "Deletion-Receipt-Token": secrets.token_urlsafe(32)}, json=body)
+    assert duplicate.status_code == 401
     assert len(list(ctx["store"].pending())) == 1
 
 
@@ -186,9 +206,7 @@ def test_owned_chat_is_redacted_and_other_party_mentions_require_review(privacy,
 
 def test_partial_external_failure_is_saved_and_retries_without_extending_deadline(privacy, signin):
     ctx = privacy
-    accepted, key, secret, _ = submit(ctx, signin("general"))
-    ident = accepted.json()["requestId"]
-    before = ctx["store"].get(ident)
+    own = signin("general")
     calls = []
 
     def fail(uid):
@@ -196,12 +214,16 @@ def test_partial_external_failure_is_saved_and_retries_without_extending_deadlin
         raise RuntimeError("private provider detail must not enter the response")
 
     ctx["chat"].revoke = fail
-    assert process(ctx)["deferred"] == 1
+    response, key, secret, _ = submit(ctx, own)
+    assert response.status_code == 503 and response.json()["errorCode"] == "DELETION_OUTCOME_UNKNOWN"
+    before = ctx["store"].active("general")
+    ident = before["requestId"]
     waiting = ctx["store"].get(ident)
-    assert waiting["requestState"] == "RETRYING" and waiting["processingDueAt"] == before["processingDueAt"]
-    assert "private provider" not in progress(ctx, key, secret).text
+    assert waiting["phase"] == "WITHDRAWING" and not waiting["steps"].get("withdrawal")
+    assert "private provider" not in response.text + progress(ctx, key, secret).text
     ctx["chat"].revoke = lambda uid: None
     assert process(ctx, at=utc() + timedelta(minutes=5))["completed"] == 1
+    assert ctx["store"].get(ident)["processingDueAt"] == before["processingDueAt"]
     assert len(calls) == 1
 
 
@@ -217,14 +239,21 @@ def test_receipt_expires_only_thirty_days_after_completion_pending_requests_surv
     assert ctx["store"].remove_expired(utc(row["completedAt"]) + timedelta(days=30)) == 1
 
 
-def test_missing_copies_policy_never_reports_erasure_complete(privacy, signin):
+def test_missing_copies_policy_does_not_block_completed_active_system_erasure(privacy, signin):
     ctx = privacy
     ctx["store"].rows.pop("policy_retention")
     accepted, key, secret, _ = submit(ctx, signin("general"))
-    process(ctx)
+    result = process(ctx)
+    assert result["completed"] == 1 and result["deferred"] == 0
     status = progress(ctx, key, secret).json()
-    assert status["requestState"] == "ACTION_REQUIRED" and status["personalDataState"] == "IN_PROGRESS"
-    assert status["completedAt"] is None and ctx["store"].get(accepted.json()["requestId"])["steps"]["sql"] is True
+    assert status["requestState"] == "COMPLETED" and status["personalDataState"] == "COMPLETED"
+    assert status["completedAt"] is not None and status["completionScope"] == "COMPANY_ACTIVE_SYSTEMS"
+    row = ctx["store"].get(accepted.json()["requestId"])
+    assert row["retentionReview"]["state"] == "PENDING"
+    for item in status["residualCopies"]:
+        if item["category"] in ("COMPANY_RESTRICTED_BACKUP", "COMPANY_LOG_RETENTION"):
+            assert item["reviewState"] == "PENDING" and item["requestedMaxDays"] == 30
+            assert "deleteBy" not in item
 
 
 def test_scope_drift_waits_for_fresh_confirmation_without_resetting_request(privacy, signin, pending_bookings):
@@ -258,8 +287,7 @@ def test_scope_drift_waits_for_fresh_confirmation_without_resetting_request(priv
 
 def test_committed_withdrawal_is_recovered_after_checkpoint_failure(privacy, signin):
     ctx = privacy
-    accepted, key, secret, _ = submit(ctx, signin("general"))
-    ident = accepted.json()["requestId"]
+    own = signin("general")
     update_record = ctx["store"].update
     failed = []
 
@@ -270,10 +298,16 @@ def test_committed_withdrawal_is_recovered_after_checkpoint_failure(privacy, sig
         update_record(ident, values)
 
     ctx["store"].update = checkpoint_failure
-    assert process(ctx)["deferred"] == 1
-    assert ctx["store"].get(ident)["phase"] == "WITHDRAWING"
+    response, key, secret, _ = submit(ctx, own)
+    assert response.status_code == 503 and response.json()["errorCode"] == "DELETION_OUTCOME_UNKNOWN"
+    saved = ctx["store"].active("general")
+    ident = saved["requestId"]
+    assert saved["phase"] == "WITHDRAWING" and not saved["steps"].get("withdrawal")
+    assert ctx["client"].get("/nadreego/shop/admin", headers=own).status_code == 401
     assert process(ctx, at=utc() + timedelta(minutes=5))["completed"] == 1
     assert progress(ctx, key, secret).json()["requestState"] == "COMPLETED"
+    assert ctx["store"].get(ident)["processingDueAt"] == saved["processingDueAt"]
+    assert failed == [True]
 
 
 def test_operator_recovery_rotation_and_email_intake_share_the_original_job(privacy, signin):
@@ -302,7 +336,7 @@ def test_operator_recovery_rotation_and_email_intake_share_the_original_job(priv
     assert created["requestId"] == duplicate["requestId"]
 
 
-def test_operator_review_and_policy_are_required_evidence_not_fake_success(privacy, signin):
+def test_operator_shared_data_review_remains_required_without_copies_policy(privacy, signin):
     from app.account_deletion_ops import act
     ctx = privacy
     ctx["store"].rows.pop("policy_retention")
@@ -316,13 +350,14 @@ def test_operator_review_and_policy_are_required_evidence_not_fake_success(priva
     categories = ctx["store"].get(ident)["reviewRequired"]
     act(ctx["db"], ctx["settings"], ctx["store"], "review", ident=ident,
         report={"reviewedCategories": categories, "retainedData": []}, **common)
-    process(ctx)
-    assert progress(ctx, key, secret).json()["requestState"] == "ACTION_REQUIRED"
-    act(ctx["db"], ctx["settings"], ctx["store"], "policy", log_days=7, backup_days=14, **common)
     assert process(ctx)["completed"] == 1
     state = progress(ctx, key, secret).json()
     assert ctx["store"].get(ident)["processingDueAt"] == due
-    assert datetime.fromisoformat(state["residualCopies"][0]["deleteBy"]) - datetime.fromisoformat(state["completedAt"]) == timedelta(days=14)
+    assert state["requestState"] == "COMPLETED" and state["personalDataState"] == "COMPLETED"
+    assert ctx["store"].get(ident)["retentionReview"]["state"] == "PENDING"
+    for item in state["residualCopies"]:
+        if item["category"] in ("COMPANY_RESTRICTED_BACKUP", "COMPANY_LOG_RETENTION"):
+            assert item["reviewState"] == "PENDING" and "deleteBy" not in item
 
 
 def test_no_firebase_identity_does_not_claim_provider_deletion(privacy, signin):
@@ -336,8 +371,8 @@ def test_no_firebase_identity_does_not_claim_provider_deletion(privacy, signin):
 def test_repeated_failure_requires_operator_and_never_extends_seven_days(privacy, signin):
     from app.account_deletion_ops import act
     ctx = privacy
-    accepted, key, secret, _ = submit(ctx, signin("general"))
-    ident = accepted.json()["requestId"]
+    accepted, key, secret = register_pending_self(ctx)
+    ident = accepted["requestId"]
     original = ctx["store"].get(ident)
     ctx["chat"].revoke = lambda uid: (_ for _ in ()).throw(RuntimeError("isolated provider failure"))
     for minute in (0, 5, 15, 35, 95):
@@ -416,18 +451,23 @@ def test_commit_response_loss_remains_one_saved_request_and_not_false_rejection(
     assert process(ctx)["completed"] == 1
 
 
-def test_missing_notification_contact_never_counts_as_successful_notice_or_deletion(privacy, signin):
+def test_missing_notification_contact_is_skipped_without_blocking_deletion(privacy, signin):
     ctx = privacy
     account = ctx["db"].table("MSP_ADMIN")
     with ctx["engine"].begin() as conn:
         conn.execute(update(account).where(account.c.admin_id == "general").values(email=None))
     accepted, key, secret, _ = submit(ctx, signin("general"))
     assert accepted.status_code == 202
-    assert process(ctx)["deferred"] == 1
+    result = process(ctx)
+    assert result["deferred"] == 0 and result["completed"] == 1
     row = ctx["store"].get(accepted.json()["requestId"])
-    assert row["requestState"] == "RETRYING" and not row.get("receivedNotified")
-    assert progress(ctx, key, secret).json()["completedAt"] is None
-    assert not ctx["deleted"] and not ctx["notices"]
+    assert row["requestState"] == "COMPLETED"
+    for stage in ("received", "completed"):
+        summary = row["notificationResults"][stage]
+        assert summary["sentCount"] == 0 and summary["failedCount"] == 0 and summary["skippedCount"] == 1
+        assert summary["errorCodes"] == ["DELETION_NOTIFICATION_CONTACT_REQUIRED"]
+    assert progress(ctx, key, secret).json()["completedAt"] is not None
+    assert ctx["deleted"] == [admin_uid("general")] and not ctx["notices"]
 
 
 @pytest.mark.mysql

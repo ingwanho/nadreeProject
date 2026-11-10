@@ -9,14 +9,14 @@ from app.config import Settings
 from app.errors import Problem
 from app.main import create_app
 from app.security import GENERAL, PRIMARY
-from test_account_deletions import privacy, process, submit
+from test_account_deletions import privacy, process, register_pending_self, submit
 
 
 def test_legacy_subtree_delete_preserves_a_pending_member_privacy_request(privacy, signin):
     ctx = privacy
     own, upper = signin("general"), signin()
-    accepted, _, _, _ = submit(ctx, own)
-    assert accepted.status_code == 202
+    accepted, _, _ = register_pending_self(ctx)
+    assert accepted["scope"] == "SELF" and accepted["accessState"] == "PENDING"
     revoked = list(ctx["revoked"])
 
     response = ctx["client"].delete("/nadreego/admin/account", headers=upper)
@@ -99,11 +99,17 @@ def test_privacy_cors_allows_request_headers_and_exposes_retry_after():
 def test_self_and_subtree_requests_cannot_overlap(privacy, signin, first):
     ctx = privacy
     own, upper = signin("general"), signin()
-    first_headers, other_headers = (own, upper) if first == "general" else (upper, own)
+    other_headers = upper if first == "general" else own
+    token = ctx["client"].get("/nadreego/admin/account-deletion-context",
+        headers=other_headers).json()["confirmationToken"]
     revoked = list(ctx["revoked"])
-    accepted, _, _, _ = submit(ctx, first_headers)
-    assert accepted.status_code == 202
-    blocked, _, _, _ = submit(ctx, other_headers)
+    if first == "general":
+        accepted, _, _ = register_pending_self(ctx)
+        assert accepted["scope"] == "SELF"
+    else:
+        accepted, _, _, _ = submit(ctx, upper)
+        assert accepted.status_code == 202
+    blocked, _, _, _ = submit(ctx, other_headers, token=token)
     assert blocked.status_code == 409
     assert blocked.json()["errorCode"] == "DELETION_SCOPE_IN_PROGRESS"
     assert len(list(ctx["store"].pending())) == 1
@@ -147,8 +153,8 @@ def test_saved_request_blocks_overlap_even_when_sql_gate_was_not_committed(branc
 def test_operator_intake_cannot_overlap_an_existing_member_request(privacy, signin):
     from app.account_deletion_ops import act
     ctx = privacy
-    accepted, _, _, _ = submit(ctx, signin("general"))
-    assert accepted.status_code == 202
+    accepted, _, _ = register_pending_self(ctx)
+    assert accepted["scope"] == "SELF"
     with pytest.raises(Problem) as error:
         act(ctx["db"], ctx["settings"], ctx["store"], "register", admin_id="primary",
             email="primary@example.com", idempotency=str(uuid4()), receipt=secrets.token_urlsafe(32),
@@ -162,4 +168,5 @@ def test_unrelated_self_requests_can_still_complete(privacy, signin):
     first, _, _, _ = submit(ctx, signin("general"))
     second, _, _, _ = submit(ctx, signin("general2"))
     assert first.status_code == second.status_code == 202
+    assert first.json()["accessState"] == second.json()["accessState"] == "REVOKED"
     assert process(ctx)["completed"] == 2

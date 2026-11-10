@@ -90,7 +90,9 @@ def act(db, settings, store, command, *, operator, evidence, ident=None, email=N
         raise Problem(404, "DELETION_REQUEST_UNAVAILABLE")
     if command == "inspect":
         return {**public(row), "reviewRequired": row.get("reviewRequired", []),
-                "steps": row.get("steps", {}), "attempts": row.get("attempts", 0), "overdue": row.get("overdue", False)}
+                "steps": row.get("steps", {}), "attempts": row.get("attempts", 0), "overdue": row.get("overdue", False),
+                "notificationResults": row.get("notificationResults", {}),
+                "retentionReview": row.get("retentionReview", {})}
     if command == "rotate-receipt":
         verified_owner(settings, row, email)
         validate_keys("operator-receipt-key", receipt)

@@ -62,7 +62,9 @@ def resolve(request, session, raw, *, lock=False):
         master = db.table("MSP_SPOT_MASTER")
         session.execute(select(master.c.spot_master_id).where(master.c.spot_master_id == spots[0]).with_for_update()).first()
     spot = _spot(request, session, spots[0])
-    verify_qr(request, session, spot, raw, lock=lock)
+    verified = verify_qr(request, session, spot, raw, lock=lock)
+    if verified["vehicle_id"] != record["vehicle_id"] or verified["qr_id"] != record["qr_id"]:
+        raise Problem(404, "QR_NOT_FOUND")
     vehicles = fleet(request, session, spot, vehicle_ids=[record["vehicle_id"]])
     item = vehicles.get(record["vehicle_id"])
     if not item or not item["vehicle"]["is_active"] or not item["rental"]["rental_enabled"] or not item["model"] or not item["model"]["is_active"]:
@@ -271,6 +273,8 @@ def _submit_onsite(body, request, session, uid):
         raise Problem(409, "ONSITE_QUOTE_MISMATCH")
     lock_key(session, "nadri-model", spot["spot_master_id"] + ":" + item["rental"]["model_id"])
     spot, item = resolve(request, session, body.qrCode.get_secret_value(), lock=True)
+    if item["vehicle"]["vehicle_id"] != claims["vehicleId"]:
+        raise Problem(409, "ONSITE_QUOTE_MISMATCH")
     from app.account_deletion_scope import new_work_allowed
     new_work_allowed(db, session, spot["spot_master_id"], lock=True)
     _, price = plan(request, session, spot, item, body.returnDate)

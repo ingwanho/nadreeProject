@@ -1,8 +1,22 @@
 # Nadree API 구현 안내
 
+2026-11-10 **차량 QR 실제 삭제·재연결 반영 완료**: QR 삭제는 현재 연결 행을 제거하며 과거 이력과 관계없이 해제 원문을 재사용한다. 기존 차량에 QR만 연결하는 POST /nadreego/vehicle/qr/link(vehicleNumber, qrToken)를 추가했다. 관련 격리 **96 통과/3 건너뜀**, 02:47 UTC API 재시작·공개/로컬 헬스/명세 정상·79경로를 확인했다. 승인된 testlisence의 INACTIVE 연결 1행은 02:50 UTC 백업 후 삭제했고 차량/센서/예약/결제는 보존했다. DB 스키마/env/Firebase 변경 없음. [프론트 전달](docs/frontend-vehicle-qr-reassignment-2026-11-10.md), [실제 서버 결과·남은 검증](docs/vehicle-qr-reassignment-server-result-2026-11-10.md).
+
+2026-11-09 **개인정보 완료 처리 반영·기존 시험 3건 모두 완료**: 실제 탈퇴·SQL·채팅·관리자 Auth 정리가 끝나면 보관 정책 확인 대기로 멈추지 않고 personalDataState=COMPLETED로 마무리한다. 보관 검토는 별도 PENDING/VERIFIED 기록으로 분리한다. 관련 격리 검사 **117 passed / 1 skipped**, 11:45 UTC API 재시작·헬스/OpenAPI 정상, 12:11 UTC 실제 요청 3건 완료·대기 0건을 확인했다. 공유 사업 정보는 실제 검토 후 보존했고 로그/백업 설정은 이번 우선 범위에서 보류했다. [최종 구현·검증·실제 요청 결과](docs/account-deletion-completion-2026-11-09.md).
+
+2026-11-09 **09:41 UTC 일반관리자 첫 접수 탈퇴 반영 완료**: 일반 SELF 개인정보 요청은 첫 정상 POST에서 업무 인계·렌탈 역할/로그인/채팅/FCM 회수 후 REVOKED를 반환한다. 개인정보 정리는 같은 요청의 배치가 이어가며 추가 POST/DELETE는 필요 없다. 요청별 MySQL 잠금으로 HTTP/배치의 중복 처리를 막고 대표 업무 검사·메일 선택 발송·중복 보호는 유지한다. 관련 격리 검사 **99 passed / 1 skipped**, API 재시작·타이머 복구·로컬/공개 헬스/Swagger/OpenAPI 정상, health 제외 78개 경로다. 기존 요청은 렌탈 회수 완료·개인정보 보관 검토 대기이며 실제 새 계정 탈퇴 시험은 하지 않았다. [구현·앱 전달·검증 결과](docs/general-deletion-first-request-2026-11-09.md).
+
+2026-11-09 **08:56 UTC 후속 새 접수 준비 완료**: 사용자 추가 승인으로 기존 branch2 일반 SELF의 미실행 CONTACT_OPERATOR 요청·owner 연결 2문서만 타입 보존 백업 후 제거했다. 계정·권한·세션·예약·렌트·결제와 SQL gate는 그대로이며 새 요청 가능 상태·로컬/공개 헬스 200을 확인했다. API 재시작·실제 탈퇴·메일/푸시 발송 없음. 앱은 새 확인 토큰·요청 키·영수증으로 접수한다. [백업·검증·새 요청 안내](docs/deletion-notice-best-effort-2026-11-09.md).
+
+2026-11-09 **08:31 UTC 삭제 안내 메일 선택 발송 정책 반영**: 접수·완료 메일은 시도 결과를 기록하고 성공/실패와 관계없이 탈퇴·개인정보 처리를 계속한다. 주소 누락은 SKIPPED로 기록한다. 일반 업무 인계·대표 미완료 검사·중복/권한/보관 검토는 유지한다. 관련 격리 검사 **75 passed / 1 skipped**, 개인정보 타이머 복구·첫 배치 정상 종료·로컬/공개 헬스 200을 확인했다. 기존 CONTACT_OPERATOR 요청은 재개하지 않았다. [변경·검사·실제 반영 결과](docs/deletion-notice-best-effort-2026-11-09.md).
+
+2026-11-09 **04:00 UTC 중복 차단 원복·SMTP 설정 반영 완료**: 사용자 후속 지시에 따라 DELETE의 기존 개인정보 요청·범위 중복·지점 gate 검사를 `91d6be9` 기준으로 복구했다. 일반의 업무 인계와 대표의 전체 하위 미완료 업무 검사는 유지한다. 전달받은 발신 정보와 SSL/465를 실제 env 항목에 반영했고, 무발송 SMTP 인증 235·관련 격리 검사 **63 passed / 1 skipped**·API 재시작·로컬/공개 헬스 정상 확인을 완료했다. 기존 CONTACT_OPERATOR 요청은 재개/삭제하지 않았다. [변경 이력·최종 원복·검증 결과](docs/admin-delete-pending-request-change-2026-11-09.md).
+
 2026-11-09 탈퇴 정책 보완 **발리 01:03 / 11월 8일 17:03 UTC 서버 적용 완료**: `05f5e12` + 실제 반납 완료 판정 1줄 보완으로 대표의 하위 전체 미완료 업무 차단·일반의 본인 승인 업무 대표 인계를 적용했다. ec2-user의 지정 6파일 **110 passed/1 skipped**, 보완 후 인계 검사 **17 passed**(기존 8개 중복)다. API 1회 재시작·로컬/공개 헬스/Swagger 200·78개 경로, 개인정보 배치 새 코드 실행·원래 일정 복구와 기존 작업 보존을 확인했다. DB/env/Firebase 변경 없음. 지정 branch2 지점의 미완료 렌트·예약·환불은 이미 0건이라 데이터 변경은 없고 기존 CONTACT_OPERATOR 요청은 보존했다. 실제 탈퇴/SMTP/Auth·앱·MySQL 경합은 미검증이다. [확정 계약](docs/admin-withdrawal-handover-2026-11-09.md), [실제 적용·테스트 지점 결과](docs/admin-withdrawal-server-result-2026-11-09.md).
 
 **후속 테스트 준비, 17:29 UTC:** 사용자 별도 지시에 따라 branch2의 미실행 실패 요청·owner 문서 2개와 SQL 차단 표시 1개만 백업 후 제거했다. 새 요청 시작 가능 상태를 확인했으며 계정·로그인 세션·예약/렌트/차량/결제는 유지했다. [정리 범위·검증·새 요청 시작 방법](docs/admin-withdrawal-server-result-2026-11-09.md#7-후속-승인--테스트-요청만-제거하여-새-접수-준비).
+
+**11월 9일 02:31 UTC 재검증:** 새로 접수돼 RETRYING에 남은 branch2 요청만 추가 지시로 정리하고, 해당 대표로 정상 로그인해 공개/로컬 검수 API **미완료 6종 0·canExecuteWithdrawal=true·activeRequestId=null**을 실제 확인했다. 기존 DELETE/신규 삭제 요청은 실행하지 않았다. 확인용 로그인으로 대표 앱은 재로그인해야 한다. [최신 실제 응답·시험 순서](docs/admin-withdrawal-server-result-2026-11-09.md#8-추가-요청--실제-검수-api와-기존-delete-호출-준비-확인).
 
 2026-11-06 관리자 개인정보 요청 **08:16 UTC 서버 적용 완료**: `73564d4` + 서버 로컬의 탈퇴 우회/범위 중첩·하위 지점 차단 보완을 적용했다. 테스트 DB에 nullable 포인터 1컬럼을 백업 후 추가했고 미적용 변경은 없다. API 1회 재시작·5분 자동 처리 활성화 완료, 최초 처리 **0건**, 공개/로컬 헬스·준비·Swagger 정상·**78개 경로**, 여권 PUT/GET은 **404**다. 관련 검사만 실행했으며 최종 보완 검사 **46 passed/1 skipped**, 별도 Firestore **3 passed**다. 실제 탈퇴·메일/Auth 삭제·앱 공동 인수와 운영 보관 정책 확인은 별도다. 새 env·Firebase 배포는 없다. [실제 적용 결과](docs/admin-privacy-server-result-2026-11-06.md), [처리·운영 도구](docs/admin-privacy-server-apply-2026-11-06.md), [프론트 전달](docs/frontend-admin-privacy-handoff-2026-11-06.md).
 

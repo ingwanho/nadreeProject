@@ -8,7 +8,7 @@ from pydantic import Field, SecretStr, StrictBool
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
-from app.account_deletion_scope import capture, gate, outstanding, pending_scope_allowed, scope_hash
+from app.account_deletion_scope import capture, gate, outstanding, pending_scope_allowed, request_execution, scope_hash
 from app.account_deletion_security import confirmation, email_hash, seal, validate_keys, verify_confirmation
 from app.account_deletion_store import body_digest, digest, receipt_matches, request_id, utc
 from app.errors import Problem
@@ -35,6 +35,16 @@ class DeletionConfirmation(Body):
 def public(row):
     return {"status": "success", "requestAccepted": True,
             **{name: row[name] for name in PUBLIC_FIELDS if name in row}}
+
+
+def replay(row, secret, fingerprint):
+    if not receipt_matches(row, secret):
+        return None
+    if row.get("expiresAt") and utc(row["expiresAt"]) <= utc():
+        raise Problem(404, "DELETION_REQUEST_UNAVAILABLE")
+    if row.get("bodyDigest") != fingerprint:
+        raise Problem(409, "IDEMPOTENCY_KEY_REUSED", request_outcome={"requestAccepted": False})
+    return public(row)
 
 
 def storage(operation, *, saving=False):
@@ -109,7 +119,7 @@ def make_record(request, actor, snapshot, members, work, ident, secret, fingerpr
 
 @router.post("/account-deletion-requests", response_model=AccountDeletionRequestResult, status_code=202, dependencies=[bearer],
              summary="관리자 탈퇴·개인정보 삭제 요청 접수",
-             description="현재 인증과 확인 토큰으로 접수합니다. 대표는 모든 하위 지점의 미완료 업무가 있으면 WAITING_OBLIGATIONS로 대기하며 실제 삭제하지 않습니다. 일반은 본인이 승인한 미완료 업무를 같은 지점 대표에게 인계하며 업무 데이터는 취소/삭제하지 않습니다. FCM Firestore에 상태를 저장합니다. Idempotency-Key와 256비트 이상 무작위 Deletion-Receipt-Token을 전송 전에 보관합니다. 접수는 개인정보 삭제 완료가 아닙니다.")
+             description="현재 인증과 확인 토큰으로 접수합니다. 일반관리자는 첫 접수에서 본인 승인 미완료 업무를 같은 지점 대표에게 인계하고 역할·세션·채팅·FCM 회수를 완료한 뒤 accessState=REVOKED를 반환합니다. 개인정보 정리는 재요청 없이 배치가 이어갑니다. 대표는 기존 배치 방식이며 모든 하위 지점에 미완료 업무가 있으면 WAITING_OBLIGATIONS로 대기합니다. 업무 데이터는 취소/삭제하지 않습니다. FCM Firestore에 상태를 저장합니다. Idempotency-Key와 256비트 이상 무작위 Deletion-Receipt-Token을 전송 전에 보관합니다. 동일 키·영수증·본문의 재전송은 조회만 수행합니다. 접수는 개인정보 삭제 완료가 아닙니다.")
 def submit_deletion(body: DeletionConfirmation, request: Request,
                     idempotency_key: str = Header(alias="Idempotency-Key", max_length=64),
                     receipt_token: SecretStr = Header(alias="Deletion-Receipt-Token", max_length=128)):
@@ -122,42 +132,57 @@ def submit_deletion(body: DeletionConfirmation, request: Request,
     require_schema(db)
     fingerprint = body_digest({"confirmationToken": body.confirmationToken.get_secret_value(), "confirmed": True})
     existing = storage(lambda: store.get(ident))
-    if existing and receipt_matches(existing, secret):
-        if existing.get("expiresAt") and utc(existing["expiresAt"]) <= utc():
-            raise Problem(404, "DELETION_REQUEST_UNAVAILABLE")
-        if existing.get("bodyDigest") != fingerprint:
-            raise Problem(409, "IDEMPOTENCY_KEY_REUSED", request_outcome={"requestAccepted": False})
-        return public(existing)
-    with Session(db.engine) as session, session.begin():
-        actor = principal(request, session)
-        _, snapshot, members = context_data(request, session, actor)
-        verify_confirmation(request.app.state.settings, body.confirmationToken.get_secret_value(),
-                            actor.admin["admin_id"], scope_hash(snapshot))
-        if existing:
-            raise Problem(409, "IDEMPOTENCY_KEY_REUSED", request_outcome={"requestAccepted": False})
-        active = storage(lambda: store.active(actor.admin["admin_id"]))
-        if active:
-            raise Problem(409, "DELETION_REQUEST_ALREADY_ACTIVE", request_outcome={"requestAccepted": False})
-        pending_scope_allowed(store, snapshot)
-        work = outstanding(db, session, snapshot)
-        for spot in snapshot["spots"]:
-            current = gate(db, session, spot["id"], lock=True)
-            if current and current != ident:
-                raise Problem(409, "DELETION_SCOPE_IN_PROGRESS", request_outcome={"requestAccepted": False})
-        row = make_record(request, actor, snapshot, members, work, ident, secret, fingerprint)
-        # Durable acceptance precedes SQL side effects. If SQL subsequently fails,
-        # the same Firestore request is recovered by the worker, not forgotten.
-        row, _ = storage(lambda: store.create(row), saving=True)
-        request.state.deletion_saved = True
-        if not receipt_matches(row, secret) or row.get("bodyDigest") != fingerprint:
-            raise Problem(409, "IDEMPOTENCY_KEY_REUSED", request_outcome={"requestAccepted": False})
-        if snapshot["scope"] == "SUBTREE":
-            rent = db.table("MSP_SPOT_RENT")
-            session.execute(update(rent).where(rent.c.spot_master_id.in_([s["id"] for s in snapshot["spots"]]))
-                            .values(deletion_request_id=ident))
-    # Do not couple acceptance to all external erasure/SMTP work. The worker
-    # returns the same receipt state after reboot or provider failure.
-    return public(row)
+    repeated = replay(existing, secret, fingerprint)
+    if repeated is not None:
+        return repeated
+    with request_execution(db, ident, wait_seconds=10) as acquired:
+        if not acquired:
+            raise Problem(503, "DELETION_REQUEST_BUSY", request_outcome={"requestAccepted": False})
+        # A competing first call may have revoked the session while we waited.
+        # Authenticate a new acceptance only after checking its exact replay.
+        existing = storage(lambda: store.get(ident))
+        repeated = replay(existing, secret, fingerprint)
+        if repeated is not None:
+            return repeated
+        with Session(db.engine) as session, session.begin():
+            actor = principal(request, session)
+            _, snapshot, members = context_data(request, session, actor)
+            verify_confirmation(request.app.state.settings, body.confirmationToken.get_secret_value(),
+                                actor.admin["admin_id"], scope_hash(snapshot))
+            if existing:
+                raise Problem(409, "IDEMPOTENCY_KEY_REUSED", request_outcome={"requestAccepted": False})
+            active = storage(lambda: store.active(actor.admin["admin_id"]))
+            if active:
+                raise Problem(409, "DELETION_REQUEST_ALREADY_ACTIVE", request_outcome={"requestAccepted": False})
+            pending_scope_allowed(store, snapshot)
+            work = outstanding(db, session, snapshot)
+            for spot in snapshot["spots"]:
+                current = gate(db, session, spot["id"], lock=True)
+                if current and current != ident:
+                    raise Problem(409, "DELETION_SCOPE_IN_PROGRESS", request_outcome={"requestAccepted": False})
+            row = make_record(request, actor, snapshot, members, work, ident, secret, fingerprint)
+            # Keep recoverable consent before SQL revocation or external work.
+            row, created = storage(lambda: store.create(row), saving=True)
+            request.state.deletion_saved = True
+            if not receipt_matches(row, secret) or row.get("bodyDigest") != fingerprint:
+                raise Problem(409, "IDEMPOTENCY_KEY_REUSED", request_outcome={"requestAccepted": False})
+            if snapshot["scope"] == "SUBTREE":
+                rent = db.table("MSP_SPOT_RENT")
+                session.execute(update(rent).where(rent.c.spot_master_id.in_([s["id"] for s in snapshot["spots"]]))
+                                .values(deletion_request_id=ident))
+        if created and row["scope"] == "SELF":
+            from app.account_deletion_jobs import withdraw
+            try:
+                # Acceptance's transaction has released its locks. The worker
+                # cannot touch this receipt until this first withdrawal exits.
+                withdraw(db, store, request.app.state.chat, row, utc())
+            except Exception as error:
+                logger.warning("Immediate deletion withdrawal deferred: %s %s", ident, type(error).__name__)
+                raise Problem(503, "DELETION_OUTCOME_UNKNOWN") from None
+        latest = storage(lambda: store.get(ident), saving=True)
+        if not latest:
+            raise Problem(503, "DELETION_OUTCOME_UNKNOWN")
+        return public(latest)
 
 
 @router.get("/account-deletion-requests/status", response_model=AccountDeletionRequestResult,
