@@ -93,7 +93,8 @@ def test_empty_branch_sees_all_active_brands_and_models_with_basic_prices(catalo
         "model-b-300": None, "model-b-unknown": None, "model-z-160": 10,
     }
     assert by_model["test-model"] == {"modelId": "test-model", "brand": "Aster", "modelName": "Commuter 125",
-        "cc": 125, "modelImageKey": "catalog/test-model.png", "vehicleCount": 0, "price": 7}
+        "cc": 125, "modelImageKey": "catalog/test-model.png", "modelImageUrl": None,
+        "vehicleCount": 0, "price": 7}
     inventory = catalog["client"].post("/nadreego/vehicle/select", headers=headers, json={"page": 1, "pageSize": 100})
     assert inventory.status_code == 200 and inventory.json()["items"] == [] and inventory.json()["totalCount"] == 0
 

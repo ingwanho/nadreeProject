@@ -1,5 +1,7 @@
 # Nadree API 구현 안내
 
+2026-11-11 **S3 이미지 조회 로컬 구현·서버 미적용**: 기존 이미지 키를 유지하고 모델/차량 조회에 `modelImageUrl`/`vehicleImageUrl`을 추가한다. 비공개 버킷의 `models/`·`vehicles/` 객체에만 GET 서명 URL을 만들며 기본 15분이다. DB 마이그레이션은 없다. 실제 AWS 버킷·EC2 역할·사진 업로드·서버 설정은 별도이며 [설정 절차](#s3-이미지-설정)를 따른다.
+
 2026-11-10 **지점 계층·이름 규칙 및 기존 데이터 반영 완료**: 부모 master ID로 `org → region → local → spot`을 결정하며 모든 신규 지점에 정규 계층·master·렌탈 설정을 함께 생성한다. `unit_name`이 본인 지점명이고 `spot_name`은 leaf 전용이다. 프론트 필드·관리자 `spotMasterId`는 유지한다. 테스트 DB를 비공개 백업 후 **신규 5행·수정 28행** 적용, master **27→30개**, 잔여 수정 **0건**, 업무 참조 검증 17테이블 동일을 확인했다. 관련 격리 고유 **153개 통과**, **10:37 UTC** API 전환 후 로컬/공개 헬스·명세 정상·79경로 유지. [적용 내용·기존 코드 변경·앱 안내·검증 한계](docs/nadree-full-change-handoff.md#2026-11-10-지점-계층master-idunit_name--기존-데이터-정리-완료).
 
 2026-11-10 **회원가입 10회 제한·공개 영어 표기 반영 완료**: 가입 이메일별 1시간 10회/IP별 5분 10회로 유지하며 11번째부터 429다. 남은 API/Swagger/스키마 고정 예시·PayPal 복귀 안내를 영어로 바꿨고 공개 명세의 한글 0개를 확인했다. 관련 격리 **31 passed**, 09:54 UTC API 재시작·로컬/공개 상태/명세/정적 페이지 정상·79경로·오류 0이다. 사용자 입력·실제 DB값·기존 Redis 기록·다른 요청 제한은 유지한다. [정책·실제 적용·검증 범위](docs/nadree-full-change-handoff.md#2026-11-10-회원가입-10회-제한공개-영어-표기--서버-반영-완료).
@@ -176,6 +178,73 @@ FCM 토큰은 앱이 전달한 현재 기기의 최신 값 1개를 계정별로 
 | `NADREE_ENV` | `development`, `test`, `production` |
 
 JWT 키·issuer·audience는 기존 서버와 분리한다. 전화번호 키는 공유 데이터와의 호환성이 필요하므로 배포 환경에서 안전하게 주입한다. 기존 `.env` 전체를 복제하지 않는다.
+
+## S3 이미지 설정
+
+같은 AWS 계정의 비공개 S3 일반 목적 버킷과 EC2 IAM 역할을 사용하는 기준이다. 서버는 읽기만 하며 사진은 운영자가 S3 콘솔에서 업로드한다. 이 변경은 업로드 API나 AWS 리소스를 생성하지 않는다.
+
+1. **S3 → 버킷 만들기**에서 일반 목적 버킷을 생성한다. `nadreeVehicleImg`는 대문자가 있어 사용할 수 없고 `nadree-vehicle-img`는 예시 이름이다. 이미 사용 중이면 다른 고유한 소문자 이름을 선택하고 아래 정책·env에도 실제 이름을 사용한다. AWS 리전은 EC2와 같은 리전을 권장하며 **실제 버킷 리전**을 기록한다. 서울은 `ap-northeast-2`다. Firebase 리전과 별도다.
+2. **객체 소유권: ACL 비활성화**, **모든 퍼블릭 액세스 차단: 켜짐**, **기본 암호화: SSE-S3**를 사용한다. 버킷 공개·정적 웹 사이트 호스팅 설정은 필요 없다.
+3. 버킷에 `models`와 `vehicles` 폴더를 만들고 사진을 업로드한다. 예를 들어 `models/honda/vario-125.jpg`, `vehicles/차량ID/front.jpg`다. 객체의 Content-Type을 실제 파일에 맞게 `image/jpeg`, `image/png`, `image/webp` 등으로 설정한다. 키는 대소문자·하위 경로까지 정확히 일치해야 한다.
+4. **EC2 → 인스턴스 → 보안 → IAM 역할**에서 현재 역할을 연다. **IAM → 해당 역할 → 권한 추가 → 인라인 정책 생성 → JSON**에 [이미지 읽기 정책](deployment/s3-image-read-policy.json)을 붙여 넣는다. 정책의 두 버킷 이름을 실제 이름으로 바꾼다. 이 정책은 이미지 두 경로에만 `s3:GetObject`를 허용한다. 기존 SSM 등 권한을 유지한다. EC2 역할이 없다면 신뢰할 서비스 EC2로 역할을 만든 뒤 **인스턴스 → 작업 → 보안 → IAM 역할 수정**으로 연결한다. 이 읽기 정책은 콘솔 업로드용 권한과 별개다.
+5. 서버 `/srv/nadree-api/.env`에 아래 세 값을 설정한다. 리전 예시는 서울이므로 다른 리전에 만들었다면 반드시 변경한다. 액세스 키·시크릿 키를 추가하지 않고 EC2 역할의 임시 자격 증명을 사용한다.
+
+```dotenv
+NADREE_S3_IMAGE_BUCKET=nadree-vehicle-img
+NADREE_S3_IMAGE_REGION=ap-northeast-2
+NADREE_S3_IMAGE_URL_TTL_SECONDS=900
+```
+
+기존 이미지 컬럼에 **버킷 내부 객체 키**를 저장한다. `s3://…`, 버킷 이름, 콘솔 URL, 만료되는 서명 URL을 저장하지 않는다. 기존 스키마를 그대로 사용하며 마이그레이션은 없다. 아래는 운영자가 실제 ID와 업로드 키를 확인한 뒤 실행할 예시이며 자동 실행하지 않는다. 기존 Star Pickers 모델 시드는 이미지가 NULL이므로 사진 업로드만으로 연결되지 않는다.
+
+```sql
+UPDATE MSP_VEHICLE_MODEL
+SET model_image_key = 'models/honda/vario-125.jpg'
+WHERE model_id = 'SPCAT-HONDA-VARIO-125';
+
+UPDATE MSP_RENTAL_VEHICLE
+SET vehicle_image_key = 'vehicles/실제차량ID/front.jpg'
+WHERE vehicle_id = '실제차량ID';
+```
+
+새 코드를 pull한 후 서비스 실행 계정 기준으로 의존성을 설치하고 API를 재시작한다. 현재 서비스 이름이 `nadree-api.service`인 경우:
+
+```sh
+sudo -u ec2-user -H /srv/nadree-api/.venv/bin/python -m pip install -r /srv/nadree-api/requirements.lock
+sudo systemctl restart nadree-api.service
+sudo systemctl status nadree-api.service --no-pager
+```
+
+| 조회 | 이미지 필드 |
+| --- | --- |
+| `POST /nadreego/brand` | `vehicle[].modelImageKey` / `modelImageUrl` |
+| `POST /nadreego/vehicle/select` | `items[].modelImageKey` / `modelImageUrl`, `items[].vehicle.vehicleImageKey` / `vehicleImageUrl` |
+| `POST /nadreego/main/calendar` | `items[].vehicleImageKey` / `vehicleImageUrl` |
+| 관리자 QR·예약·홈의 차량 객체 | `vehicleImageKey` / `vehicleImageUrl` |
+| 고객 availability·예약/렌트 내역·QR의 모델 객체 | `modelImageKey` / `modelImageUrl` |
+
+앱·웹은 URL 필드를 이미지 주소로 사용한다. 기존 공개 HTTPS 키는 URL에도 그대로 반환한다. 이미지 키 없음·지원하지 않는 경로·S3 설정 누락·서명 실패면 URL만 null이고 기존 키·차량 조회는 유지한다. URL은 기본 900초(설정 가능 범위 60~3600초)이며 EC2 임시 자격 증명 만료에 따라 더 일찍 만료될 수도 있다. 만료되면 업무 API를 다시 조회한다. S3 URL이나 서명 쿼리를 로그·공유 문서에 기록하지 않는다.
+
+URL 생성은 S3 객체 존재/권한을 조회하지 않는다. 실제로 이미지가 열리는지 GET으로 확인해야 한다. API에서 방금 받은 이미지 URL을 브라우저로 열거나, EC2에 AWS CLI가 있다면 다음 명령으로 역할·키 접근부터 검사한다. GET으로 서명한 URL에 `curl -I`의 HEAD를 보내지 않는다.
+
+```sh
+sudo -u ec2-user -H aws s3api get-object --bucket nadree-vehicle-img --key models/honda/vario-125.jpg --region ap-northeast-2 /tmp/nadree-model-test.jpg
+```
+
+웹에서 fetch/canvas 등으로 사진을 읽는 경우 **S3 → 해당 버킷 → 권한 → CORS**에 실제 프론트 origin을 추가한다. 단순 이미지 표시·네이티브 앱은 상황에 따라 CORS가 필요 없으며 FastAPI CORS와 S3 CORS는 별도다. 예시 origin은 실제 웹 주소로 교체한다.
+
+```json
+[
+  {
+    "AllowedOrigins": ["https://실제-프론트-도메인"],
+    "AllowedMethods": ["GET"],
+    "AllowedHeaders": ["*"],
+    "MaxAgeSeconds": 3600
+  }
+]
+```
+
+로컬에서는 가짜 자격 증명으로 실제 SDK 서명·키 보존·오류 격리와 관리자/고객 응답을 검증한다. 실제 AWS IAM·객체 GET·브라우저 표시는 AWS 설정 후 별도 검증한다. AWS 공식 문서: [버킷 생성](https://docs.aws.amazon.com/AmazonS3/latest/userguide/create-bucket-overview.html), [버킷 이름](https://docs.aws.amazon.com/AmazonS3/latest/userguide/bucketnamingrules.html), [EC2 역할](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/iam-roles-for-amazon-ec2.html), [서명 URL](https://docs.aws.amazon.com/AmazonS3/latest/userguide/using-presigned-url.html), [S3 CORS](https://docs.aws.amazon.com/AmazonS3/latest/userguide/cors.html).
 
 ## 테스트와 DB 변경
 

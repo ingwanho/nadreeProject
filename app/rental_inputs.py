@@ -88,7 +88,8 @@ class VehicleCreate(Body):
     vehicleName: Annotated[str, Field(min_length=1, max_length=50)]
     modelId: ModelId
     plateNumber: Plate
-    vehicleImageKey: Annotated[str, Field(max_length=500)] | None = None
+    vehicleImageKey: Annotated[str, Field(max_length=500,
+        description="Optional image object key under vehicles/ in the configured S3 bucket, or an existing public HTTPS image URL. Store the key, not a temporary signed URL.")] | None = None
 
     @model_validator(mode="after")
     def registration(self):

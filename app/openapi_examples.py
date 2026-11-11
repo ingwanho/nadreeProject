@@ -27,6 +27,7 @@ TEST_MODEL_125 = {
     "cc": 125,
     "vehicleType": "SCOOTER",
     "modelImageKey": "models/test-vario-125.jpg",
+    "modelImageUrl": None,
 }
 
 TEST_MODEL_155 = {
@@ -36,6 +37,7 @@ TEST_MODEL_155 = {
     "cc": 155,
     "vehicleType": "SCOOTER",
     "modelImageKey": "models/test-nmax-155.jpg",
+    "modelImageUrl": None,
 }
 
 TEST_WEB_MODEL_125 = {
@@ -45,6 +47,7 @@ TEST_WEB_MODEL_125 = {
     "cc": 125,
     "vehicleType": "SCOOTER",
     "modelImageKey": "https://placehold.co/640x480/png?text=NRTEST-WEB-125",
+    "modelImageUrl": "https://placehold.co/640x480/png?text=NRTEST-WEB-125",
 }
 
 TEST_WEB_MODEL_NO_DELIVERY = {
@@ -54,6 +57,7 @@ TEST_WEB_MODEL_NO_DELIVERY = {
     "cc": 125,
     "vehicleType": "SCOOTER",
     "modelImageKey": "https://placehold.co/640x480/png?text=NRTEST-NO-DELIVERY",
+    "modelImageUrl": "https://placehold.co/640x480/png?text=NRTEST-NO-DELIVERY",
 }
 
 TEST_PRICE = {
@@ -568,14 +572,16 @@ OPENAPI_RESPONSE_EXAMPLES = {
     ("POST", "/nadreego/brand"): {
         "brand": ["Honda", "SYM", "Yamaha"], "vehicle": [
             {"modelId": TEST_MODEL_125["modelId"], "brand": "Honda", "modelName": "Vario 125",
-             "cc": 125, "modelImageKey": "models/test-vario-125.jpg", "vehicleCount": 3, "price": 25},
+             "cc": 125, "modelImageKey": "models/test-vario-125.jpg", "modelImageUrl": None, "vehicleCount": 3, "price": 25},
             {"modelId": TEST_WEB_MODEL_125["modelId"], "brand": "Honda", "modelName": "Vario Web Test 125",
-             "cc": 125, "modelImageKey": TEST_WEB_MODEL_125["modelImageKey"], "vehicleCount": 2, "price": 25},
+             "cc": 125, "modelImageKey": TEST_WEB_MODEL_125["modelImageKey"],
+             "modelImageUrl": TEST_WEB_MODEL_125["modelImageUrl"], "vehicleCount": 2, "price": 25},
             {"modelId": TEST_WEB_MODEL_NO_DELIVERY["modelId"], "brand": "SYM",
              "modelName": "Cruiser No Delivery Test", "cc": 125,
-             "modelImageKey": TEST_WEB_MODEL_NO_DELIVERY["modelImageKey"], "vehicleCount": 1, "price": 25},
+             "modelImageKey": TEST_WEB_MODEL_NO_DELIVERY["modelImageKey"],
+             "modelImageUrl": TEST_WEB_MODEL_NO_DELIVERY["modelImageUrl"], "vehicleCount": 1, "price": 25},
             {"modelId": TEST_MODEL_155["modelId"], "brand": "Yamaha", "modelName": "NMAX 155",
-             "cc": 155, "modelImageKey": "models/test-nmax-155.jpg", "vehicleCount": 0, "price": 35},
+             "cc": 155, "modelImageKey": "models/test-nmax-155.jpg", "modelImageUrl": None, "vehicleCount": 0, "price": 35},
         ], "tier": [], "price": None, "page": 1, "pageSize": 20, "totalCount": 4, "hasNext": False,
     },
     ("POST", "/nadreego/vehicle/select"): {
@@ -692,7 +698,8 @@ _ADMIN_PENDING = {
     "availableActions": ["RECOVER_VEHICLE"],
     "reservation": {"reservationId": "NRTEST-RES-APP-001", "assignedVehicleId": "NRTEST-NDR-ONLY-001",
         "assignmentStatus": "LOCKED", "startDatetime": "2026-11-03T14:00:00+08:00", "endDatetime": "2026-11-05T23:59:59+08:00"},
-    "vehicle": {"vehicleId": "NRTEST-NDR-ONLY-001", "vehicleNo": "DK-NDR-ONLY-001", "vehicleStatus": "DISABLED"},
+    "vehicle": {"vehicleId": "NRTEST-NDR-ONLY-001", "vehicleNo": "DK-NDR-ONLY-001", "vehicleStatus": "DISABLED",
+        "vehicleImageKey": "vehicles/test-vehicle/front.jpg", "vehicleImageUrl": None},
     "rental": None,
 }
 _ADMIN_EXPIRED = dict(_ADMIN_PENDING, reservationStatus="EXPIRED", canReceive=False,
@@ -781,6 +788,7 @@ OPENAPI_STATUS_EXAMPLES = {
             "isBlocking": True, "canReassign": False, "canHandOver": False, "handoverBlockedReason": "VEHICLE_RECEIPT_HOLD"}]}),
         "startDate": "2026-11-04", "endDate": "2026-11-06", "timeZone": "Asia/Makassar", "warnings": []}}},
     ("POST", "/nadreego/vehicle/select"): {200: {"awaitingReceipt": _page_example({
+        "modelImageKey": "models/test-vario-125.jpg", "modelImageUrl": None,
         "vehicle": _ADMIN_PENDING["vehicle"], "currentBooking": _booking_example(_ADMIN_PENDING),
         "currentRental": None, "availableActions": []})}},
     ("POST", "/nadreego/vehicle/qr/validate"): {200: {"awaitingReceipt": {

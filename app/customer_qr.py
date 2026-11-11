@@ -115,7 +115,7 @@ def lookup(body: Lookup, request: Request, session=DB):
                      if own and c["reservation_id"] == own["reservation_id"]), None) if own else None
     return {"status": "success", "vehicleId": vehicle,
             "vehicleNo": item["rental"]["plate_number_full"] or item["vehicle"].get("plate_number"),
-            "vehicleStatus": (item["state"] or {}).get("status"), "model": _model_view(item["model"]),
+            "vehicleStatus": (item["state"] or {}).get("status"), "model": _model_view(request, item["model"]),
             "spot": _spot_view(spot), "reservationId": own["reservation_id"] if own else None,
             "reservationStatus": own["reservation_status"] if own else None,
             "vehicleMatch": "ASSIGNED" if own and own["assigned_vehicle_id"] == vehicle else "MODEL_PENDING" if own else None,

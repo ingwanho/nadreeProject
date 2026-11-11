@@ -153,10 +153,11 @@ def _spot_view(spot):
                          "longitude": float(spot["lng"]) if spot.get("lng") is not None else None}}
 
 
-def _model_view(model):
+def _model_view(request, model):
     return {"modelId": model["model_id"], "brand": model.get("brand"), "modelName": model.get("model_name"),
             "cc": model.get("cc"), "vehicleType": model.get("vehicle_type"),
-            "modelImageKey": model.get("model_image_key")}
+            "modelImageKey": model.get("model_image_key"),
+            "modelImageUrl": request.app.state.images.model_url(model.get("model_image_key"))}
 
 
 def _delivery(request, session, spot, model, pickup, returned, *, required=False, region_id=None, delivery_type=None):
@@ -299,7 +300,7 @@ def _availability_for(request, session, body, *, selected_spot=None, selected_mo
                 continue
             price = _price_view(request, groups, body.startDate, body.returnDate, delivery,
                                 getattr(body, "totalPrice", None), model=model)
-            items.append({"spot": _spot_view(spot), "model": _model_view(model), "price": price,
+            items.append({"spot": _spot_view(spot), "model": _model_view(request, model), "price": price,
                           "canRequest": location_snapshot(spot) is not None,
                           "cannotRequestReason": None if location_snapshot(spot) is not None else "SHOP_LOCATION_REQUIRED",
                           "delivery": {**delivery, "pickupLocation": getattr(body, "pickupLocation", None),
@@ -442,7 +443,7 @@ def _record_view(request, reservation, contract, payment, spot, model, *, sessio
             "spot": dict(_spot_view(spot), location=(criteria.get("pickupLocationSnapshot") or {})) if reservation else _spot_view(spot),
             "pickupLocationSnapshot": (contract or {}).get("pickup_location_snapshot") if contract else criteria.get("pickupLocationSnapshot"),
             "returnLocationSnapshot": (contract or {}).get("return_location_snapshot") if contract else criteria.get("returnLocationSnapshot"),
-            "model": _model_view(model) if model else None,
+            "model": _model_view(request, model) if model else None,
             "startDate": start_date.isoformat() if start_date else None,
             "returnDate": return_date.isoformat() if isinstance(return_date, date) else None,
             "actualStartTime": iso(request, (contract or {}).get("actual_start_time")),

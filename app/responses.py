@@ -134,6 +134,8 @@ class CustomerModel(BaseModel):
     cc: int | None = None
     vehicleType: str | None = None
     modelImageKey: str | None = None
+    modelImageUrl: str | None = Field(default=None,
+        description="HTTPS model image URL. Private S3 URLs expire (default 15 minutes); refresh the API response. Null when no usable key or signing configuration is available. modelImageKey is preserved.")
 
 
 class CustomerPricingTier(BaseModel):

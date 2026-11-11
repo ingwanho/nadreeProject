@@ -10,6 +10,7 @@ from app.admin_signup import router as admin_signup_router
 from app.chat import FirebaseChat, router as chat_router
 from app.chat_push_endpoint import GooglePushIdentity, router as chat_push_router
 from app.config import Settings
+from app.images import ImageURLs
 from app.db import Database
 from app.errors import Problem, install_handlers
 from app.fcm import FcmSender
@@ -79,7 +80,7 @@ See `docs/nadree-api-test-handoff-2026-10-01.md` in the repository for the full 
 
 
 def create_app(settings=None, db=None, limiter=None, mailer=None, fcm=None, locations=None, customer_auth=None,
-               passport_storage=None, deletion_store=None):
+               passport_storage=None, deletion_store=None, images=None):
     settings = settings or Settings()
     if settings.env == "production" and (len(settings.jwt_secret.get_secret_value().encode()) < 32
                                          or not settings.database_url.get_secret_value()
@@ -102,6 +103,9 @@ def create_app(settings=None, db=None, limiter=None, mailer=None, fcm=None, loca
         if close_locations is not None:
             close_locations()
         app.state.chat_push_identity.close()
+        close_images = getattr(app.state.images, "close", None)
+        if close_images is not None:
+            close_images()
 
     application = FastAPI(
         title="Nadree API",
@@ -126,6 +130,7 @@ def create_app(settings=None, db=None, limiter=None, mailer=None, fcm=None, loca
             expose_headers=["Cache-Control", "Content-Disposition", "Retry-After"],
         )
     application.state.settings = settings
+    application.state.images = images or ImageURLs(settings)
     application.state.db = db or Database(settings.database_url.get_secret_value())
     application.state.limiter = limiter or RateLimiter(settings.redis_url.get_secret_value())
     application.state.mailer = mailer or PasswordMailer(settings)
