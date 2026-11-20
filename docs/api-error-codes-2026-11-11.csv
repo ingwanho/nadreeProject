@@ -1,0 +1,287 @@
+﻿code,defined_http_statuses,outcome_metadata_http_statuses,scopes,summary_ko,source_locations
+ACCOUNT_ALREADY_EXISTS,409,,HTTP,,app/admin_signup.py:148
+ACCOUNT_IDENTITY_AMBIGUOUS,409,,HTTP,,app/admin_signup.py:136
+ADMIN_NOT_FOUND,404,,conditional,,app/management.py:47
+ADMIN_REQUEST_ALREADY_EXISTS,409,,HTTP,,app/admin_signup.py:172
+ADMIN_REQUEST_ALREADY_PROCESSED,409,,HTTP,,app/management.py:514 ; app/management.py:554
+ADMIN_REQUEST_AMBIGUOUS,409,,HTTP,,app/management.py:509
+ADMIN_REQUEST_NOT_FOUND,404,,HTTP,,app/management.py:511
+ADMIN_SCOPE_INCONSISTENT,409,,conditional,,app/management.py:51
+APPLICANT_ACCOUNT_UNAVAILABLE,409,,HTTP,,app/admin_signup.py:143 ; app/management.py:525
+APPLICANT_ALREADY_RENTAL_ADMIN,409,,HTTP,,app/admin_signup.py:145 ; app/management.py:534
+APPLICANT_EMAIL_CHANGED,409,,HTTP,,app/management.py:527
+APPLICANT_MEMBERSHIP_CONFLICT,409,,HTTP,,app/management.py:530
+AUTH_NOT_CONFIGURED,503,,HTTP / conditional,,app/account_deletion_security.py:18 ; app/customer_qr.py:152 ; app/paypal_onboarding.py:69 ; app/security.py:50 ; app/security.py:60 ; app/security.py:75 ; app/security.py:87
+AUTH_REQUIRED,401,,conditional,,app/chat_push_endpoint.py:32 ; app/chat_push_endpoint.py:35 ; app/security.py:140 ; app/security.py:148 ; app/security.py:161 ; app/security.py:170 ; app/security.py:69
+AVAILABILITY_CHECK_TIMEOUT,503,,conditional,,app/availability.py:71
+CHAT_MEMBERSHIP_LIMIT,503,,HTTP,,app/chat.py:179
+CHAT_MEMBERSHIP_REQUIRED,403,,HTTP,,app/chat.py:177
+CHAT_NOT_CONFIGURED,503,,HTTP / conditional / internal,,app/chat.py:48 ; app/chat_push_endpoint.py:64 ; app/chat_retention.py:40
+CHAT_PUSH_AUTH_UNAVAILABLE,503,,conditional,,app/chat_push_endpoint.py:42
+CHAT_PUSH_BUSY,503,,HTTP,,app/chat_push_endpoint.py:72
+CHAT_PUSH_CALLER_DENIED,403,,conditional,,app/chat_push_endpoint.py:47
+CHAT_PUSH_NOT_CONFIGURED,503,,conditional,,app/chat_push_endpoint.py:38
+CHAT_PUSH_PROCESSING_DEFERRED,503,,HTTP,,app/chat_push_endpoint.py:70
+CHAT_SYNC_FAILED,503,,conditional,,app/chat.py:123 ; app/chat.py:130 ; app/chat.py:82
+CHAT_USER_DISABLED,403,,conditional,,app/chat.py:95 ; app/chat.py:99
+CHILD_HIERARCHY_NOT_SUPPORTED,422,,HTTP,,app/management.py:402
+CLIENT_UPDATE_REQUIRED,409,,HTTP,,app/rentals.py:392
+CONTRACT_DATES_INVALID,422,,HTTP,,app/management.py:414
+COORDINATE_PAIR_REQUIRED,422,,HTTP,,app/management.py:286
+CURRENCY_NOT_SUPPORTED,409,,conditional,,app/customer_rentals.py:319
+CUSTOMER_FIREBASE_ACCOUNT_DELETE_FAILED,503,,conditional,,app/firebase_auth.py:112
+CUSTOMER_FIREBASE_AUTH_NOT_CONFIGURED,503,,HTTP / conditional,,app/chat.py:56 ; app/firebase_auth.py:107 ; app/firebase_auth.py:42 ; app/firebase_auth.py:67 ; app/firebase_auth.py:74 ; app/main.py:178
+CUSTOMER_NOT_FOUND,404,,conditional,,app/admin_customers.py:117
+DATABASE_NOT_CONFIGURED,503,,HTTP / conditional,데이터베이스 연결 설정이 없음,app/db.py:100 ; app/db.py:28 ; app/db.py:47 ; app/main.py:167
+DATABASE_UNAVAILABLE,503,,HTTP,데이터베이스 요청을 처리하지 못함,app/errors.py:44
+DATA_CONFLICT,409,,HTTP,데이터 무결성 또는 중복 제약 충돌,app/errors.py:38
+DELETION_NOTIFICATION_CONTACT_REQUIRED,,,internal,탈퇴 안내 메일을 보낼 연락처가 없음,app/account_deletion_jobs.py:60
+DELETION_NOT_AUTHORIZED,403,,conditional,,app/account_deletion_scope.py:100 ; app/account_deletion_scope.py:109 ; app/account_deletion_scope.py:114
+DELETION_NOT_CONFIGURED,503,,HTTP / conditional,,app/account_deletion_store.py:45 ; app/account_deletions.py:92
+DELETION_OBLIGATIONS_REMAIN,409,,HTTP,,app/management.py:187
+DELETION_OUTCOME_UNKNOWN,503,,HTTP / conditional,탈퇴 요청 저장 또는 처리 결과를 확정하지 못함,app/account_deletions.py:182 ; app/account_deletions.py:185 ; app/account_deletions.py:58 ; app/errors.py:43
+DELETION_RECONFIRMATION_REQUIRED,409,,internal,,app/account_deletion_ops.py:128
+DELETION_REQUEST_ALREADY_ACTIVE,409,,HTTP / conditional,,app/account_deletion_store.py:81 ; app/account_deletions.py:157
+DELETION_REQUEST_BUSY,503,,HTTP,,app/account_deletions.py:141
+DELETION_REQUEST_IN_PROGRESS,409,,conditional,,app/account_deletion_scope.py:67
+DELETION_REQUEST_UNAVAILABLE,404,,HTTP / conditional / internal,,app/account_deletion_ops.py:32 ; app/account_deletion_ops.py:34 ; app/account_deletion_ops.py:90 ; app/account_deletions.py:200 ; app/account_deletions.py:202 ; app/account_deletions.py:216 ; app/account_deletions.py:225 ; app/account_deletions.py:45
+DELETION_SCHEMA_UPDATE_REQUIRED,503,,conditional,,app/account_deletions.py:63
+DELETION_SCOPE_CHANGED,409,,conditional,,app/account_deletion_security.py:55
+DELETION_SCOPE_IN_PROGRESS,409,,HTTP / conditional / internal,,app/account_deletion_jobs.py:116 ; app/account_deletion_ops.py:74 ; app/account_deletion_scope.py:88 ; app/account_deletions.py:163 ; app/account_deletions.py:235
+DELETION_STATE_INVALID,409,,HTTP / internal,,app/account_deletion_ops.py:102 ; app/account_deletion_ops.py:105 ; app/account_deletion_ops.py:116 ; app/account_deletions.py:227
+DELETION_STATUS_UNAVAILABLE,503,,conditional,탈퇴 요청 상태를 조회하지 못함,app/account_deletion_scope.py:65 ; app/account_deletion_scope.py:92 ; app/account_deletions.py:58
+DELIVERY_NOT_SUPPORTED,409,,conditional,,app/customer_rentals.py:176 ; app/customer_rentals.py:183
+DELIVERY_REGION_NOT_FOUND,404,,HTTP,,app/delivery.py:23
+DELIVERY_REGION_NOT_SUPPORTED,409,,conditional,선택한 배송 요금표를 지원하지 않음,app/customer_rentals.py:188
+DELIVERY_REGION_REQUIRED,409,,conditional,배송 요금표 선택이 필요함,app/customer_rentals.py:188
+DELIVERY_SETTING_NOT_FOUND,404,,HTTP,,app/delivery.py:78
+DUPLICATE_RENTAL_REQUEST,409,,HTTP,,app/customer_rentals.py:761
+DUPLICATE_SPOT_NAME,409,,HTTP,,app/management.py:423
+EMAIL_IN_USE,409,,HTTP,,app/admin_signup.py:141 ; app/auth.py:192
+EMAIL_UPDATE_BUSY,409,,conditional,,app/db.py:92
+EMPTY_OR_NULL_UPDATE,422,,HTTP,,app/auth.py:171 ; app/management.py:277
+EMPTY_PROFILE_UPDATE,422,,HTTP,,app/customer_rentals.py:626
+FIREBASE_ID_TOKEN_INVALID,401,,conditional,,app/firebase_auth.py:89 ; app/firebase_auth.py:91 ; app/firebase_auth.py:96
+FIREBASE_ID_TOKEN_REQUIRED,401,,conditional,,app/firebase_auth.py:78
+FIREBASE_REAUTHENTICATION_REQUIRED,401,,HTTP,,app/customer_rentals.py:580
+FIREBASE_UID_MISMATCH,401,,conditional,,app/firebase_auth.py:94
+IDEMPOTENCY_KEY_REUSED,409,,HTTP / conditional / internal,,app/account_deletion_ops.py:82 ; app/account_deletions.py:154 ; app/account_deletions.py:169 ; app/account_deletions.py:47
+IDENTITY_NOT_VERIFIED,403,,internal,,app/account_deletion_ops.py:65
+INVALID_CONFIRMATION,422,,HTTP / conditional,,app/account_deletion_security.py:51 ; app/account_deletion_security.py:53 ; app/account_deletions.py:131 ; app/account_deletions.py:212
+INVALID_CREDENTIALS,401,,HTTP,,app/auth.py:48
+INVALID_DATE,400,,conditional,날짜를 서비스 시간대로 변환할 수 없음,app/rental_common.py:23 ; app/rental_common.py:30
+INVALID_DELETION_KEY,422,,conditional,,app/account_deletion_security.py:61
+INVALID_DELETION_RECEIPT,422,,conditional,,app/account_deletion_security.py:63
+INVALID_EMAIL,422,,HTTP / conditional,,app/admin_signup.py:24 ; app/auth.py:188
+INVALID_INPUT,422,,HTTP,요청 입력 형식이나 값이 올바르지 않음,app/errors.py:34
+INVALID_NADRI_USER_TOKEN,401,,HTTP / conditional,,app/customer_rentals.py:657 ; app/customer_rentals.py:704 ; app/security.py:108 ; app/security.py:111 ; app/security.py:115 ; app/security.py:118 ; app/security.py:96
+INVALID_ONSITE_PERIOD,422,,conditional,,app/customer_qr.py:129
+INVALID_QR,400,,conditional,QR 원문이 비어 있거나 허용 형식 범위를 벗어남,app/rental_common.py:172
+INVALID_REFRESH_TOKEN,401,,HTTP / conditional,,app/auth.py:106 ; app/auth.py:84 ; app/auth.py:92 ; app/customer_rentals.py:55 ; app/customer_rentals.py:602 ; app/customer_rentals.py:605 ; app/customer_rentals.py:612 ; app/customer_rentals.py:68
+INVALID_SERVICE_TOKEN,401,,conditional,,app/chat_push_endpoint.py:44
+INVITE_CODE_ALREADY_USED,409,,HTTP,초대코드 소진 갱신 조건이 변경됨,app/admin_signup.py:181
+INVITE_CODE_GENERATION_FAILED,503,,conditional,,app/management.py:39
+INVITE_CODE_NOT_FOUND,404,,HTTP / conditional,사용 가능한 초대코드를 찾을 수 없음,app/admin_signup.py:64 ; app/auth.py:155
+LOCATION_DATA_INVALID,502,,conditional,위치 제공자의 데이터 형식이 올바르지 않음,app/locations.py:74 ; app/locations.py:79
+LOCATION_HISTORY_SCHEMA_UPDATE_REQUIRED,503,,HTTP,,app/rentals.py:57 ; app/rentals.py:88
+LOCATION_NOT_CONFIGURED,503,,conditional,,app/locations.py:35 ; app/locations.py:52 ; app/locations.py:56
+LOCATION_NOT_FOUND,404,,conditional,,app/locations.py:67 ; app/locations.py:71
+LOCATION_SNAPSHOT_CHANGED,409,,HTTP,,app/rentals.py:64
+LOCATION_UNAVAILABLE,503,,conditional,,app/locations.py:58 ; app/locations.py:77
+LOGIN_ID_IN_USE,409,,HTTP,,app/admin_signup.py:139
+MAIL_NOT_CONFIGURED,503,,conditional,,app/mail.py:14
+MAIL_UNAVAILABLE,503,,conditional,,app/mail.py:48 ; app/mail.py:50
+MAINTENANCE_DATE_INVALID,400,,HTTP,정비 종료일이 허용 범위를 벗어남,app/vehicles.py:242
+MFA_REQUIRED,403,,HTTP / conditional,,app/auth.py:51 ; app/security.py:150 ; app/security.py:163
+MODEL_ASSIGNMENT_INCONSISTENT,409,,conditional,,app/availability.py:81
+MODEL_NOT_FOUND,404,,conditional,,app/customer_rentals.py:144
+NOTIFICATION_NOT_FOUND,404,,HTTP,,app/notifications.py:119
+NOT_AWAITING_RECEIPT,409,,HTTP,고객 인수 확인 대기 상태가 아님,app/customer_qr.py:363
+NOT_AWAITING_RECOVERY,409,,HTTP,직원 차량 회수 확인 대상 상태가 아님,app/rentals.py:486
+OBLIGATIONS_NOT_SETTLED,409,,internal,,app/account_deletion_ops.py:109
+ONLINE_PAYMENT_DISABLED,409,,conditional,,app/reservation_payments.py:30
+ONLINE_PAYMENT_NOT_REQUIRED,409,,conditional,,app/reservation_payments.py:28
+ONSITE_QUOTE_CHANGED,409,,conditional,,app/customer_qr.py:283
+ONSITE_QUOTE_EXPIRED,409,,conditional,,app/customer_qr.py:271
+ONSITE_QUOTE_INVALID,409,,conditional,,app/customer_qr.py:185
+ONSITE_QUOTE_MISMATCH,409,,conditional,,app/customer_qr.py:261 ; app/customer_qr.py:274 ; app/customer_qr.py:278
+ONSITE_REQUEST_CLOSED,409,200,HTTP / conditional,닫힌 현장 신청 키로 다시 신청함,app/customer_qr.py:333 ; app/onsite_requests.py:107
+ONSITE_REQUEST_EXPIRED,409,,HTTP / conditional,,app/customer_rentals.py:1220 ; app/rentals.py:246 ; app/rentals.py:309 ; app/rentals.py:334
+ONSITE_REQUEST_NOT_FOUND,404,,conditional,해당 고객의 현장 신청 키가 없음,app/customer_qr.py:311
+ONSITE_REQUEST_OUTCOME_UNKNOWN,503,,conditional,현장 신청의 최종 결과를 확정하지 못함,app/customer_qr.py:311
+ONSITE_REQUEST_SCHEMA_UPDATE_REQUIRED,503,,conditional,,app/onsite_requests.py:18 ; app/onsite_requests.py:21
+ONSITE_RESULT_UNAVAILABLE,503,,HTTP / conditional,현장 신청 결과 기록이 일치하지 않거나 조회 불가,app/customer_qr.py:329 ; app/onsite_requests.py:74
+ORGANIZATION_MAPPING_INCONSISTENT,409,,HTTP,,app/management.py:323
+OUTSIDE_HANDOVER_DAY,409,,conditional,,app/rentals.py:244
+OUTSIDE_RESERVATION_PERIOD,409,,conditional,,app/rentals.py:242
+PARENT_HIERARCHY_INCOMPLETE,422,,HTTP,,app/management.py:406 ; app/management.py:454
+PARENT_SPOT_NOT_FOUND,404,,HTTP,,app/management.py:396
+PASSPORT_IMAGE_INVALID,422,,inactive,여권 이미지 데이터가 올바르지 않음,app/passport.py:118 ; app/passport.py:122 ; app/passport.py:136 ; app/passport.py:140 ; app/passport.py:149 ; app/passport.py:80 ; app/passport.py:85 ; app/passport.py:88
+PASSPORT_IMAGE_SIZE_INVALID,422,,inactive,여권 이미지 크기가 허용 범위를 벗어남,app/passport.py:82
+PASSPORT_IMAGE_TYPE_INVALID,422,,inactive,허용하지 않은 여권 이미지 형식,app/passport.py:76
+PASSPORT_MASK_REQUIRED,422,,inactive,여권 이미지 비식별 처리 확인이 없음,app/passport.py:74
+PASSPORT_NOT_FOUND,404,,inactive,저장된 여권 이미지 키가 없음,app/rentals.py:189
+PASSPORT_RENTAL_NOT_ACTIVE,404,,inactive,여권 처리 가능한 활성 렌탈이 없음,app/rentals.py:117
+PASSPORT_RENTAL_NOT_FOUND,404,,inactive,여권 처리 대상 렌탈 식별자가 올바르지 않음,app/rentals.py:106
+PASSPORT_SCHEMA_REQUIRED,503,,inactive,여권 이미지 저장 컬럼이 없음,app/rentals.py:121
+PASSPORT_STORAGE_NOT_CONFIGURED,503,,inactive,여권 이미지 저장소 또는 경로 설정이 올바르지 않음,app/passport.py:35 ; app/passport.py:39 ; app/rentals.py:128
+PASSPORT_STORAGE_OBJECT_MISSING,503,,inactive,여권 이미지 저장 객체가 없음,app/passport.py:62
+PASSWORD_LENGTH_INVALID,422,,conditional,,app/security.py:33
+PAYMENT_ALREADY_LINKED,409,,conditional,,app/reservation_payments.py:49
+PAYMENT_ALREADY_PAID,409,,conditional,,app/payment_attempts.py:28
+PAYMENT_AMOUNT_MISMATCH,500,,internal,,app/paypal.py:457
+PAYMENT_CAPTURE_MISMATCH,500,,internal,,app/paypal.py:459
+PAYMENT_DEADLINE_EXPIRED,409,,conditional,,app/customer_rentals.py:846
+PAYMENT_ENVIRONMENT_MISMATCH,409,,conditional,,app/merchant_accounts.py:24
+PAYMENT_IN_PROGRESS,409,,HTTP / conditional,,app/customer_rentals.py:1005 ; app/customer_rentals.py:962 ; app/payment_attempts.py:31 ; app/payment_attempts.py:65 ; app/refunds.py:24
+PAYMENT_MERCHANT_RECONCILIATION_REQUIRED,409,,conditional,,app/merchant_accounts.py:22 ; app/paypal.py:159 ; app/paypal.py:282 ; app/paypal.py:301 ; app/paypal.py:315 ; app/paypal.py:344
+PAYMENT_NOT_FOUND,404,,HTTP / conditional,,app/customer_rentals.py:1038 ; app/customer_rentals.py:1044 ; app/customer_rentals.py:1047 ; app/customer_rentals.py:1109 ; app/customer_rentals.py:1126
+PAYMENT_NOT_MATCHED,409 / 500,,internal,,app/paypal.py:445 ; app/paypal.py:623
+PAYMENT_PRIOR_ATTEMPT_UNRESOLVED,503,,internal,,app/paypal.py:513
+PAYMENT_QUOTE_CHANGED,409,,conditional,,app/customer_rentals.py:854 ; app/customer_rentals.py:864
+PAYMENT_QUOTE_UNAVAILABLE,409,,HTTP / conditional,,app/customer_rentals.py:862 ; app/customer_rentals.py:979 ; app/customer_rentals.py:982
+PAYMENT_RECONCILIATION_REQUIRED,409,,HTTP / conditional,,app/customer_rentals.py:970 ; app/payment_attempts.py:51 ; app/payment_attempts.py:57 ; app/payment_attempts.py:67
+PAYMENT_RECOVERY_CONFIGURATION_OR_DATABASE_ERROR,,,internal,결제 복구 작업 설정 또는 데이터베이스 오류,app/payment_recovery.py:97
+PAYMENT_RECOVERY_RUNTIME_ERROR,,,internal,결제 복구 작업의 실행 오류,app/payment_recovery.py:94
+PAYMENT_REQUIRED,409,,conditional,인계에 필요한 유효한 완료 결제가 없음,app/reservation_payments.py:46
+PAYMENT_SCHEMA_UPDATE_REQUIRED,503,,conditional / internal,,app/payment_attempts.py:18 ; app/refund_recovery.py:18
+PAYMENT_STATE_INCONSISTENT,409,,conditional,결제 기록의 개수 또는 상태가 업무 조건과 불일치,app/refunds.py:29 ; app/refunds.py:40 ; app/reservation_payments.py:38 ; app/reservation_payments.py:46 ; app/reservation_payments.py:54
+PAYMENT_STATE_INVALID,409,,HTTP,,app/customer_rentals.py:1045 ; app/customer_rentals.py:1057 ; app/customer_rentals.py:1068 ; app/customer_rentals.py:1081 ; app/customer_rentals.py:1086
+PAYMENT_SUBJECT_INVALID,500,,internal,,app/paypal.py:461 ; app/paypal.py:466 ; app/paypal.py:471
+PAYPAL_AMOUNT_INVALID,500,,conditional,,app/paypal.py:293 ; app/paypal.py:295 ; app/paypal.py:348 ; app/paypal.py:350 ; app/paypal.py:77
+PAYPAL_AMOUNT_MISMATCH,500,,internal,,app/paypal.py:401
+PAYPAL_APPROVAL_URL_MISSING,500 / 503,,HTTP / conditional,사용 가능한 PayPal 구매자 승인 URL이 없음,app/customer_rentals.py:1022 ; app/paypal.py:323 ; app/paypal.py:331
+PAYPAL_CAPTURE_MISMATCH,500,,internal,,app/paypal.py:395
+PAYPAL_CAPTURE_REFERENCE_MISSING,500,,conditional,,app/paypal.py:366
+PAYPAL_DIRECT_PRIMARY_REQUIRED,403,,HTTP / conditional,,app/management.py:237 ; app/paypal_onboarding.py:50
+PAYPAL_ID_INVALID,500,,conditional,,app/paypal.py:61
+PAYPAL_MERCHANT_MISMATCH,409 / 500,,conditional / internal,,app/payment_attempts.py:60 ; app/paypal.py:398 ; app/paypal.py:448
+PAYPAL_MERCHANT_NOT_READY,409,,conditional,PayPal 판매자 계정의 결제 수신 준비가 확인되지 않음,app/paypal.py:179 ; app/paypal.py:256
+PAYPAL_MERCHANT_SCHEMA_UPDATE_REQUIRED,503,,HTTP / conditional,,app/customer_rentals.py:952 ; app/merchant_accounts.py:10 ; app/paypal_onboarding.py:84
+PAYPAL_NOT_CONFIGURED,500,,conditional,,app/paypal.py:226
+PAYPAL_ONBOARDING_INCOMPLETE,409,,conditional,PayPal 판매자 연결 완료가 확인되지 않음,app/paypal.py:189 ; app/paypal.py:256
+PAYPAL_ONBOARDING_REQUIRED,409,,HTTP,,app/management.py:239
+PAYPAL_ONBOARDING_RETURN_URL_REQUIRED,503,,HTTP,,app/paypal_onboarding.py:66
+PAYPAL_ONBOARDING_STATE_EXPIRED,410,,HTTP,,app/paypal_onboarding.py:107
+PAYPAL_ONBOARDING_STATE_INVALID,400,,HTTP,,app/paypal_onboarding.py:109
+PAYPAL_ONBOARDING_TRACKING_MISMATCH,409,,conditional,,app/paypal.py:191
+PAYPAL_PARTNER_NOT_CONFIGURED,503,,conditional,,app/paypal.py:167 ; app/paypal.py:184
+PAYPAL_PAYMENT_RETURN_URL_REQUIRED,503,,conditional,,app/paypal.py:307
+PAYPAL_PROCESSING_FAILED,,,internal,PayPal 이벤트 처리 중 내부 오류,app/paypal.py:662
+PAYPAL_REFERRAL_INVALID,500,,conditional,,app/paypal.py:198 ; app/paypal.py:213 ; app/paypal.py:219
+PAYPAL_REFUND_MISMATCH,500,,internal,,app/paypal.py:374
+PAYPAL_RESOURCE_MISMATCH,500,,conditional,,app/paypal.py:286
+PAYPAL_RESPONSE_INVALID,,,internal,PayPal 응답 데이터가 올바르지 않음,app/payment_recovery.py:57 ; app/paypal.py:269
+PAYPAL_SERVICE_UNAVAILABLE,500 / 503,,HTTP / conditional,PayPal 요청 또는 응답 처리에 실패함,app/customer_rentals.py:1015 ; app/paypal.py:264 ; app/paypal.py:267 ; app/paypal.py:270
+PAYPAL_SINGLE_CAPTURE_REQUIRED,500,,internal,,app/paypal.py:391 ; app/paypal.py:403
+PAYPAL_SINGLE_PAYMENT_REQUIRED,500,,internal,,app/paypal.py:387
+PAYPAL_TIME_INVALID,500,,conditional,,app/paypal.py:87
+PAYPAL_TRANSPORT_ERROR,,,internal,PayPal 네트워크 요청 오류,app/paypal.py:266
+PHONE_STORAGE_MAPPING_REQUIRED,503,,HTTP,,app/auth.py:197
+PII_ENCRYPTION_NOT_CONFIGURED,503,,conditional,,app/security.py:266
+PLANNED_END_DATE_INVALID,400,,HTTP,현장 렌탈의 예정 반납일이 올바르지 않음,app/rentals.py:428
+PRICE_NOT_CONFIGURED,409,,conditional,,app/availability.py:36 ; app/rentals.py:217
+PRICE_OPTION_INVALID,409,,conditional,선택한 가격 옵션이 현재 견적과 일치하지 않음,app/customer_rentals.py:334
+PRICE_OPTION_REQUIRED,409,,conditional,가격만으로 단일 옵션을 확정할 수 없어 선택이 필요함,app/customer_rentals.py:334
+PRICE_QUOTE_MISMATCH,409,,conditional,,app/customer_rentals.py:329
+PRIMARY_ADMIN_ALREADY_EXISTS,409,,HTTP,,app/admin_signup.py:131
+PRIMARY_ADMIN_CANNOT_BE_REMOVED,409,,HTTP,,app/management.py:116
+PRIMARY_ADMIN_INCONSISTENT,409,,HTTP,,app/management.py:78
+PRIMARY_ADMIN_REQUIRED,403,,HTTP / conditional,,app/management.py:279 ; app/security.py:214
+PRIMARY_ADMIN_REQUIRED_FOR_HANDOVER,409,,conditional,,app/admin_rental_exit.py:34
+QR_ALREADY_ISSUED,409,,HTTP,,app/vehicles.py:115 ; app/vehicles.py:155
+QR_EXPIRED,410,,conditional,QR 유효기간이 지남,app/rental_common.py:198 ; app/rentals.py:222
+QR_INACTIVE,409,,conditional,QR이 비활성 상태임,app/rental_common.py:200 ; app/rentals.py:224
+QR_NOT_FOUND,404,,HTTP / conditional,유효한 조회 범위에서 QR을 찾을 수 없음,app/customer_qr.py:56 ; app/customer_qr.py:67 ; app/rental_common.py:184 ; app/rental_common.py:187 ; app/rental_common.py:196 ; app/rentals.py:220 ; app/vehicles.py:207
+QR_STATE_INCONSISTENT,409 / 500,,conditional,QR과 차량 또는 지점 연결 데이터가 불일치,app/customer_qr.py:60 ; app/rental_common.py:189 ; app/rental_common.py:192 ; app/rental_common.py:202
+QR_VALIDATION_UNAVAILABLE,503,,conditional,QR 검증 설정을 사용할 수 없음,app/rental_common.py:175 ; app/rentals.py:226
+RATE_LIMITED,429,,conditional,요청 횟수 제한을 초과함,app/security.py:248
+RATE_LIMIT_NOT_CONFIGURED,503,,conditional,,app/security.py:242 ; app/security.py:252
+RATE_LIMIT_UNAVAILABLE,503,,conditional,,app/security.py:246 ; app/security.py:256
+REAUTHENTICATION_REQUIRED,401,,HTTP,,app/auth.py:179
+RECEIPT_DEADLINE_EXPIRED,409,,HTTP,고객 인수 확인 기한이 지남,app/customer_qr.py:361
+RECEIPT_HOLD_INCONSISTENT,409,,HTTP,인수 대기 예약과 차량 보호 정보가 불일치,app/customer_qr.py:368 ; app/rentals.py:498
+RECEIPT_SCHEMA_UPDATE_REQUIRED,503,,conditional,,app/receipt.py:14
+REFUND_ALREADY_IN_PROGRESS,409,,conditional,,app/refunds.py:48
+REFUND_AMOUNT_EXCEEDED,500,,internal,,app/paypal.py:488
+REFUND_AMOUNT_MISMATCH,503,,internal,,app/refund_recovery.py:77
+REFUND_CURRENCY_MISMATCH,500,,internal,,app/paypal.py:481
+REFUND_DETAILS_UNAVAILABLE,500,,internal,,app/paypal.py:491
+REFUND_IDEMPOTENCY_WINDOW_EXPIRED,,,internal,환불 멱등 처리 보장 기간이 지나 수동 검토 필요,app/refund_recovery.py:48
+REFUND_ID_MISMATCH,503,,internal,,app/refund_recovery.py:79
+REFUND_NOT_COMPLETED,500,,internal,,app/paypal.py:479
+REFUND_POLICY_SCHEMA_UPDATE_REQUIRED,503,,conditional,,app/refunds.py:18
+REFUND_RESPONSE_INVALID,,,internal,환불 응답 데이터가 올바르지 않음,app/refund_recovery.py:87
+REFUND_RETRIES_EXHAUSTED,,,internal,환불 자동 재시도 횟수를 초과함,app/refund_recovery.py:50
+REFUND_STATUS_UNKNOWN,503,,internal,,app/refund_recovery.py:82
+RENTAL_CUSTOMER_NOT_FOUND,404,,conditional,,app/rentals.py:100
+RENTAL_NOT_FOUND,404,,HTTP,대상 열린 렌탈 계약이 없음,app/rentals.py:531
+RENTAL_ROLE_NOT_CONFIGURED,503,,HTTP / conditional,,app/management.py:537 ; app/schema_check.py:34
+RENTAL_ROLE_REQUIRED,403,,HTTP / conditional,,app/auth.py:54 ; app/security.py:152 ; app/security.py:216
+RENTAL_SPOT_NOT_CONFIGURED,404 / 409,,HTTP / conditional,,app/management.py:222 ; app/management.py:245 ; app/management.py:264 ; app/management.py:309 ; app/paypal_onboarding.py:87
+RENTAL_STATE_INCONSISTENT,409,,HTTP / conditional,렌탈 계약 및 차량 상태가 일치하지 않음,app/availability.py:110 ; app/availability.py:116 ; app/availability.py:124 ; app/availability.py:137 ; app/rentals.py:531 ; app/rentals.py:534 ; app/rentals.py:538 ; app/rentals.py:543 ; app/rentals.py:546
+RENTAL_UNAVAILABLE,409,,conditional,,app/customer_rentals.py:323
+RENTAL_USER_SCHEMA_UPDATE_REQUIRED,503,,HTTP,,app/customer_rentals.py:710
+RENTAL_USER_STORAGE_UNAVAILABLE,503,,HTTP,,app/customer_rentals.py:571
+RENTAL_VEHICLE_NOT_CONFIGURED,409,,HTTP,,app/rentals.py:398
+REPRESENTATIVE_AMBIGUOUS,409,,conditional,대표 관리자 또는 적용 범위를 하나로 확정하지 못함,app/admin_signup.py:52 ; app/admin_signup.py:78
+REPRESENTATIVE_NOT_FOUND,404,,conditional,활성 대표 관리자 조회 결과가 없음,app/admin_signup.py:52 ; app/admin_signup.py:78
+REPRESENTATIVE_REQUIRED,409,,conditional,,app/admin_signup.py:107
+REQUEST_KEY_REUSED,409,,HTTP / conditional,,app/customer_qr.py:232 ; app/customer_qr.py:267 ; app/onsite_requests.py:76
+REQUIRED_SHOP_FIELD,422,,HTTP,,app/management.py:284
+REQUIRED_SHOP_PROFILE_MISSING,422,,HTTP,,app/management.py:409
+RESERVATION_ALREADY_HANDED_OVER,409,,HTTP / conditional,,app/customer_rentals.py:1225 ; app/rentals.py:42
+RESERVATION_ASSIGNMENT_INVALID,409,,conditional,,app/availability.py:146 ; app/rentals.py:240
+RESERVATION_CHANGED,409,,conditional,,app/availability.py:185
+RESERVATION_CRITERIA_INVALID,409,,conditional,,app/availability.py:25
+RESERVATION_NOT_APPROVED,409,,conditional,,app/rentals.py:231
+RESERVATION_NOT_APPROVED_FOR_PAYMENT,409,,conditional,,app/customer_rentals.py:812
+RESERVATION_NOT_FOUND,404,,HTTP / conditional,,app/customer_qr.py:343 ; app/customer_qr.py:90 ; app/customer_rentals.py:1192 ; app/customer_rentals.py:1216 ; app/customer_rentals.py:809 ; app/rentals.py:35 ; app/rentals.py:480 ; app/rentals.py:84
+RESERVATION_PAYMENT_METHOD_INVALID,409,,conditional,,app/reservation_payments.py:18
+RESERVATION_PERIOD_ENDED,409,,HTTP,,app/rentals.py:332
+RESERVATION_PRICE_INVALID,409,,conditional,,app/availability.py:29
+RESERVATION_PRICE_UNAVAILABLE,409,,conditional,,app/availability.py:33
+RESERVATION_SELECTION_REQUIRED,409,,HTTP,,app/customer_qr.py:106
+RESERVATION_START_PASSED,409,,HTTP,,app/customer_rentals.py:755
+RESERVATION_STATE_INVALID,409,,HTTP,,app/customer_rentals.py:1218 ; app/rentals.py:312 ; app/rentals.py:53
+RESERVATION_VEHICLE_MISMATCH,409,,HTTP / conditional,,app/customer_qr.py:100 ; app/customer_qr.py:348 ; app/customer_qr.py:356 ; app/rentals.py:233 ; app/rentals.py:236 ; app/rentals.py:408 ; app/rentals.py:493
+RESOURCE_BUSY,409,,conditional,동일 자원에 대한 동시 처리 잠금을 얻지 못함,app/rental_common.py:91
+SCHEMA_MAPPING_REQUIRED,503,,conditional,,app/db.py:113 ; app/schema_check.py:27 ; app/schema_check.py:30
+SENSOR_ALREADY_LINKED,409,,conditional,,app/vehicles.py:82
+SENSOR_CODE_INVALID,409,,HTTP / conditional,,app/locations.py:60 ; app/vehicles.py:223
+SENSOR_IN_USE,409,,conditional,,app/vehicles.py:86
+SENSOR_NOT_FOUND,404,,conditional,,app/vehicles.py:80
+SENSOR_NOT_LINKED,404 / 409,,HTTP,연결 센서가 없거나 단일 센서를 확정하지 못함,app/vehicles.py:202 ; app/vehicles.py:220
+SENSOR_SPOT_INCONSISTENT,409,,HTTP,,app/vehicles.py:279
+SENSOR_STATE_INCONSISTENT,409,,HTTP / conditional,,app/rentals.py:215 ; app/vehicles.py:176 ; app/vehicles.py:274
+SHOP_CLOSING,409,,conditional,,app/account_deletion_scope.py:55 ; app/security.py:222
+SHOP_LOCATION_REQUIRED,409,,conditional,지점 주소 또는 좌표 설정이 없어 신청할 수 없음,app/customer_qr.py:135 ; app/customer_rentals.py:326
+SHOP_PAYPAL_ALREADY_CONNECTED,409,,HTTP,,app/paypal_onboarding.py:112 ; app/paypal_onboarding.py:61
+SHOP_PAYPAL_ENVIRONMENT_MISMATCH,409,,conditional,,app/merchant_accounts.py:16
+SHOP_PAYPAL_MERCHANT_REQUIRED,409,,conditional,,app/merchant_accounts.py:14
+SPOT_ACCESS_DENIED,403,,conditional,,app/admin_customers.py:88 ; app/rental_common.py:81 ; app/security.py:211 ; app/security.py:220
+SPOT_CONTRACT_INACTIVE,403,,conditional,,app/security.py:183 ; app/security.py:187
+SPOT_NOT_FOUND,404,,conditional,,app/admin_signup.py:82 ; app/customer_rentals.py:121 ; app/rental_common.py:68
+SPOT_REQUIRED,403,,conditional,,app/account_deletion_scope.py:105 ; app/security.py:195
+SPOT_UNAVAILABLE,403 / 409,,conditional,,app/customer_rentals.py:124 ; app/customer_rentals.py:133 ; app/security.py:201 ; app/security.py:206
+TARGET_ROLE_INVALID,409,,HTTP,,app/management.py:72
+TIER_BASE_NOT_UNIQUE,409,,conditional,,app/pricing.py:92
+TIER_BATCH_DUPLICATE_RANGE,422,,HTTP,,app/pricing.py:81
+TIER_BATCH_SPOT_MISMATCH,422,,HTTP,,app/pricing.py:79
+TIER_NOT_FOUND,404 / 409,,HTTP,일치하는 가격 구간이 없거나 복수임,app/pricing.py:143
+TIER_RANGE_OVERLAP,409,,conditional,,app/pricing.py:95
+TOKEN_PAIR_MISMATCH,401,,HTTP,,app/auth.py:119 ; app/auth.py:177 ; app/chat.py:216 ; app/customer_rentals.py:699 ; app/customer_rentals.py:708
+TOP_LEVEL_ORG_FORBIDDEN,403,,HTTP,,app/management.py:388
+VALUE_EXCEEDS_DB_LIMIT,422,,conditional,,app/db.py:116
+VEHICLE_ALREADY_ON_RENT,409,,HTTP / conditional,,app/rentals.py:210 ; app/vehicles.py:147 ; app/vehicles.py:198 ; app/vehicles.py:237 ; app/vehicles.py:262
+VEHICLE_ASSIGNMENT_LOCKED,409,,conditional,,app/rentals.py:238
+VEHICLE_HAS_RESERVATIONS,409,,HTTP,,app/vehicles.py:267
+VEHICLE_MODEL_MISMATCH,409,,HTTP,,app/vehicles.py:99
+VEHICLE_MODEL_NOT_FOUND,404,,HTTP,,app/vehicles.py:97
+VEHICLE_NOT_FOUND,404,,HTTP / conditional,대상 차량을 찾을 수 없음,app/rental_common.py:135 ; app/rentals.py:263 ; app/rentals.py:402 ; app/vehicles.py:174
+VEHICLE_NUMBER_AMBIGUOUS,409,,conditional,동일 차량번호로 복수 차량이 조회됨,app/rental_common.py:135
+VEHICLE_NUMBER_EXISTS,409,,HTTP,,app/vehicles.py:104
+VEHICLE_QR_ALREADY_LINKED,409,,HTTP,,app/vehicles.py:159
+VEHICLE_RECEIPT_HOLD,409,,HTTP / conditional,미인수 차량 보호 상태라 변경 또는 반납 불가,app/receipt.py:27 ; app/rentals.py:526
+VEHICLE_SPOT_INCONSISTENT,409,,conditional,,app/rental_common.py:116
+VEHICLE_UNAVAILABLE,409,,HTTP / conditional,,app/availability.py:50 ; app/availability.py:69 ; app/customer_qr.py:71 ; app/rentals.py:213 ; app/rentals.py:338 ; app/vehicles.py:240

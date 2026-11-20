@@ -8,6 +8,7 @@ from app.availability import apply_assignments, compute_assignment
 from app.db import require_columns, transaction
 from app.errors import Problem
 from app.headers import bearer
+from app.images import image_fields
 from app.pricing import daily_price, load_tiers, tier_view
 from app.rental_common import (action_result, by_number, context, contracts_for, day_end, effective_state,
     expire_maintenance, fleet, is_open, local_date, lock_key, page_result, qr_digest, resolve_spot, rows, verify_qr)
@@ -53,11 +54,18 @@ def available_actions(request, item, contracts):
 
 def vehicle_view(request, item, contracts):
     v, rv, model = item["vehicle"], item["rental"], item["model"] or {}
+    image_key = rv["vehicle_image_key"]
+    # Both response fields describe the selected display image; the vehicle's
+    # stored image remains unchanged when its model supplies the default photo.
+    if image_key in (None, ""):
+        image_key = model.get("model_image_key")
+        image_url = request.app.state.images.model_url(image_key)
+    else:
+        image_url = request.app.state.images.vehicle_url(image_key)
     return dict(vehicleId=v["vehicle_id"], vehicleNo=rv["plate_number_full"] or v["plate_number"],
         plateNumberFull=rv["plate_number_full"], modelId=rv["model_id"], brand=model.get("brand"),
         modelName=model.get("model_name"), cc=model.get("cc"), vehicleType=model.get("vehicle_type"),
-        vehicleImageKey=rv["vehicle_image_key"],
-        vehicleImageUrl=request.app.state.images.vehicle_url(rv["vehicle_image_key"]),
+        **image_fields(request.app.state.settings, "vehicle", image_key, image_url),
         vehicleStatus=effective_state(request, item, contracts))
 
 
@@ -295,8 +303,8 @@ def brands(body: Page, request: Request, session: Session = DB):
     for model in models:
         basic = {"rental": {"price_type": "BASIC", "premium_daily_price": None}, "model": model}
         ordered.append(dict(modelId=model["model_id"], brand=model["brand"], modelName=model["model_name"], cc=model["cc"],
-            modelImageKey=model["model_image_key"],
-            modelImageUrl=request.app.state.images.model_url(model["model_image_key"]),
+            **image_fields(request.app.state.settings, "model", model["model_image_key"],
+                request.app.state.images.model_url(model["model_image_key"])),
             vehicleCount=counts.get(model["model_id"], 0),
             price=daily_price(basic, tiers)))
     selected = ordered[(body.page - 1) * body.pageSize:body.page * body.pageSize]
@@ -305,7 +313,7 @@ def brands(body: Page, request: Request, session: Session = DB):
         page=body.page, pageSize=body.pageSize, totalCount=len(ordered), hasNext=body.page * body.pageSize < len(ordered))
 
 
-@router.post("/nadreego/vehicle/select", description="Preserves items[].modelImageKey and items[].vehicle.vehicleImageKey. The matching modelImageUrl and vehicleImageUrl fields contain public HTTPS or temporary S3 GET URLs (default 15 minutes), or null when unavailable. Refresh this response after URL expiration.")
+@router.post("/nadreego/vehicle/select", description="Keeps the existing image fields. items[].modelImageKey/modelImageUrl describe the model photo. items[].vehicle.vehicleImageKey/vehicleImageUrl describe the vehicle photo when configured, otherwise its model photo. URLs are public HTTPS or temporary S3 GET URLs (default 15 minutes), or null when unavailable. Refresh this response after URL expiration.")
 def list_vehicles(body: Page, request: Request, session: Session = DB):
     from app.readmodels import fleet_details
     _, root = context(request, session)

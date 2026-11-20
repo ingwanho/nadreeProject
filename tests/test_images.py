@@ -46,6 +46,33 @@ def test_sdk_signs_the_exact_object_key_without_remote_lookups(image_urls, monke
     assert query["X-Amz-Security-Token"] == ["test-session-not-real"]
 
 
+def test_lazy_client_signs_regional_s3_host_without_redirects(monkeypatch, tmp_path):
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "test-access-not-real")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "test-secret-not-real")
+    monkeypatch.setenv("AWS_SESSION_TOKEN", "test-session-not-real")
+    monkeypatch.setenv("AWS_EC2_METADATA_DISABLED", "true")
+    monkeypatch.setenv("AWS_CONFIG_FILE", str(tmp_path / "no-aws-config"))
+    monkeypatch.setenv("AWS_SHARED_CREDENTIALS_FILE", str(tmp_path / "no-aws-credentials"))
+
+    def no_remote_calls(*args, **kwargs):
+        pytest.fail("Regional URL generation must not contact AWS")
+
+    monkeypatch.setattr("botocore.client.BaseClient._make_api_call", no_remote_calls)
+    images = ImageURLs(Settings(_env_file=None, s3_image_bucket="nadree-vehicle-img",
+        s3_image_region="ap-northeast-2"))
+    assert images._client is None
+    try:
+        parsed = urlsplit(images.model_url("models/reviewed-model.jpg"))
+        query = parse_qs(parsed.query)
+        assert parsed.netloc == "nadree-vehicle-img.s3.ap-northeast-2.amazonaws.com"
+        assert parsed.path == "/models/reviewed-model.jpg"
+        assert "/ap-northeast-2/s3/aws4_request" in query["X-Amz-Credential"][0]
+        assert query["X-Amz-Algorithm"] == ["AWS4-HMAC-SHA256"]
+        assert query["X-Amz-Security-Token"] == ["test-session-not-real"]
+    finally:
+        images.close()
+
+
 @pytest.mark.parametrize("method,key", [
     ("model_url", None), ("vehicle_url", ""),
     ("model_url", "vehicles/private.jpg"), ("vehicle_url", "models/vario.jpg"),
@@ -124,7 +151,7 @@ def test_admin_catalog_inventory_calendar_and_qr_keep_keys_and_expose_image_urls
     item = inventory.json()["items"][0]
     assert item["modelImageKey"] == model_key and item["modelImageUrl"].startswith("https://")
     assert item["vehicle"]["vehicleImageKey"] == vehicle_key
-    assert item["vehicle"]["vehicleImageUrl"].startswith("https://")
+    assert unquote(urlsplit(item["vehicle"]["vehicleImageUrl"]).path) == "/" + vehicle_key
     tomorrow = date.today() + timedelta(days=1)
     calendar = client.post("/nadreego/main/calendar", headers=headers,
         json={**page, "startDate": tomorrow.isoformat(), "endDate": (tomorrow + timedelta(days=1)).isoformat()})
@@ -162,3 +189,80 @@ def test_unavailable_credentials_do_not_break_vehicle_queries(image_vehicle):
     item = response.json()["items"][0]
     assert item["modelImageKey"] == model_key and item["modelImageUrl"] is None
     assert item["vehicle"]["vehicleImageKey"] == vehicle_key and item["vehicle"]["vehicleImageUrl"] is None
+
+
+@pytest.mark.parametrize("vehicle_key", [None, ""])
+@pytest.mark.parametrize("model_key", ["models/test-model.jpg", "https://example.com/model.jpg"])
+def test_absent_vehicle_photo_uses_model_image_in_inventory_calendar_and_qr(image_vehicle, vehicle_key, model_key):
+    ctx, headers, _old_model_key, _old_vehicle_key = image_vehicle
+    with ctx["engine"].begin() as connection:
+        connection.execute(metadata.tables["MSP_RENTAL_VEHICLE"].update().values(vehicle_image_key=vehicle_key))
+        connection.execute(metadata.tables["MSP_VEHICLE_MODEL"].update().values(model_image_key=model_key))
+    page = {"page": 1, "pageSize": 20}
+    inventory = ctx["client"].post("/nadreego/vehicle/select", headers=headers, json=page)
+    assert inventory.status_code == 200, inventory.text
+    item = inventory.json()["items"][0]
+    assert item["modelImageKey"] == model_key
+    tomorrow = date.today() + timedelta(days=1)
+    calendar = ctx["client"].post("/nadreego/main/calendar", headers=headers, json={
+        **page, "startDate": tomorrow.isoformat(), "endDate": (tomorrow + timedelta(days=1)).isoformat()})
+    assert calendar.status_code == 200, calendar.text
+    qr = ctx["client"].post("/nadreego/vehicle/qr/validate", headers=headers, json={"qrCode": "NDR-Ab12Cd34"})
+    assert qr.status_code == 200, qr.text
+    for vehicle in (item["vehicle"], calendar.json()["items"][0], qr.json()["data"]["vehicle"]):
+        assert vehicle["vehicleImageKey"] == model_key
+        if model_key.startswith("https://"):
+            assert vehicle["vehicleImageUrl"] == model_key
+        else:
+            assert unquote(urlsplit(vehicle["vehicleImageUrl"]).path) == "/" + model_key
+    with ctx["engine"].connect() as connection:
+        # A display fallback must never replace the vehicle's own stored key.
+        stored = connection.execute(metadata.tables["MSP_RENTAL_VEHICLE"].select()).mappings().one()
+        assert stored["vehicle_image_key"] == vehicle_key
+
+
+@pytest.mark.parametrize("vehicle_key", ["models/not-a-vehicle-photo.jpg", "vehicles/../passport/private.jpg"])
+def test_invalid_configured_vehicle_photo_is_not_hidden_by_model_fallback(image_vehicle, vehicle_key):
+    ctx, headers, model_key, _old_vehicle_key = image_vehicle
+    with ctx["engine"].begin() as connection:
+        connection.execute(metadata.tables["MSP_RENTAL_VEHICLE"].update().values(vehicle_image_key=vehicle_key))
+    response = ctx["client"].post("/nadreego/vehicle/select", headers=headers, json={"page": 1, "pageSize": 20})
+    assert response.status_code == 200, response.text
+    item = response.json()["items"][0]
+    assert unquote(urlsplit(item["modelImageUrl"]).path) == "/" + model_key
+    assert item["vehicle"]["vehicleImageKey"] == vehicle_key
+    assert item["vehicle"]["vehicleImageUrl"] is None
+
+
+def test_vehicle_signing_failure_does_not_fall_back_to_public_model_image(image_vehicle):
+    ctx, headers, _model_key, vehicle_key = image_vehicle
+    public_model_image = "https://example.com/test-model.jpg"
+    with ctx["engine"].begin() as connection:
+        connection.execute(metadata.tables["MSP_VEHICLE_MODEL"].update().values(model_image_key=public_model_image))
+
+    class MissingCredentials:
+        def generate_presigned_url(self, *args, **kwargs):
+            raise NoCredentialsError()
+        def close(self):
+            pass
+
+    ctx["app"].state.images._client = MissingCredentials()
+    response = ctx["client"].post("/nadreego/vehicle/select", headers=headers, json={"page": 1, "pageSize": 20})
+    assert response.status_code == 200, response.text
+    item = response.json()["items"][0]
+    assert item["modelImageUrl"] == public_model_image
+    assert item["vehicle"]["vehicleImageKey"] == vehicle_key
+    assert item["vehicle"]["vehicleImageUrl"] is None
+
+
+@pytest.mark.parametrize("model_key", [None, "vehicles/not-a-model-photo.jpg"])
+def test_missing_vehicle_photo_with_unusable_model_image_keeps_query_successful(image_vehicle, model_key):
+    ctx, headers, _old_model_key, _vehicle_key = image_vehicle
+    with ctx["engine"].begin() as connection:
+        connection.execute(metadata.tables["MSP_RENTAL_VEHICLE"].update().values(vehicle_image_key=None))
+        connection.execute(metadata.tables["MSP_VEHICLE_MODEL"].update().values(model_image_key=model_key))
+    response = ctx["client"].post("/nadreego/vehicle/select", headers=headers, json={"page": 1, "pageSize": 20})
+    assert response.status_code == 200, response.text
+    item = response.json()["items"][0]
+    assert item["modelImageKey"] == model_key and item["modelImageUrl"] is None
+    assert item["vehicle"]["vehicleImageKey"] == model_key and item["vehicle"]["vehicleImageUrl"] is None

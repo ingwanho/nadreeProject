@@ -16,6 +16,7 @@ from app.errors import Problem
 from app.spot_hierarchy import unit_name
 from app.fcm import queue_reservation_request
 from app.headers import fcm_header, refresh_header
+from app.images import image_fields
 from app.paypal import execute_refund, identifier
 from app.receipt import is_onsite, view as receipt_view
 from app.reservation_payments import (EXTERNAL, PAYPAL, checkout_enabled, payment_flags,
@@ -153,11 +154,16 @@ def _spot_view(spot):
                          "longitude": float(spot["lng"]) if spot.get("lng") is not None else None}}
 
 
-def _model_view(request, model):
+def _model_view(request, model, *, vehicle_image_key=None):
+    if vehicle_image_key in (None, ""):
+        image_key = model.get("model_image_key")
+        image_url = request.app.state.images.model_url(image_key)
+    else:
+        image_key = vehicle_image_key
+        image_url = request.app.state.images.vehicle_url(image_key)
     return {"modelId": model["model_id"], "brand": model.get("brand"), "modelName": model.get("model_name"),
             "cc": model.get("cc"), "vehicleType": model.get("vehicle_type"),
-            "modelImageKey": model.get("model_image_key"),
-            "modelImageUrl": request.app.state.images.model_url(model.get("model_image_key"))}
+            **image_fields(request.app.state.settings, "model", image_key, image_url)}
 
 
 def _delivery(request, session, spot, model, pickup, returned, *, required=False, region_id=None, delivery_type=None):
@@ -370,7 +376,14 @@ def _latest_payment(request, session, reservation_id=None, contract_id=None):
                            .order_by(table.c.payment_id.desc())).mappings().first()
 
 
-def _record_view(request, reservation, contract, payment, spot, model, *, session=None):
+def _record_vehicle_id(reservation, contract):
+    criteria = (reservation or {}).get("required_criteria_json") or {}
+    onsite_vehicle = criteria.get("onsiteVehicleId") if isinstance(criteria, dict) else None
+    return ((contract or {}).get("vehicle_id") or (reservation or {}).get("assigned_vehicle_id")
+            or onsite_vehicle)
+
+
+def _record_view(request, reservation, contract, payment, spot, model, *, session=None, vehicle_images=None):
     if not spot:
         return None
     criteria = (reservation or {}).get("required_criteria_json") or {}
@@ -425,6 +438,15 @@ def _record_view(request, reservation, contract, payment, spot, model, *, sessio
         "calculatedTotalTo": _number(quote.get("calculatedTotalTo", total_to)),
         "finalTotal": _number(quote.get("finalTotal", price_total)),
     }
+    vehicle_id = _record_vehicle_id(reservation, contract)
+    vehicle_image_key = None
+    if vehicle_id:
+        if vehicle_images is not None:
+            vehicle_image_key = vehicle_images.get(vehicle_id)
+        elif session is not None:
+            vehicles = _db(request).table("MSP_RENTAL_VEHICLE")
+            vehicle_image_key = session.scalar(select(vehicles.c.vehicle_image_key).where(
+                vehicles.c.vehicle_id == vehicle_id))
     return {"recordType": "RENTAL" if contract else "RESERVATION",
             **receipt_view(request, reservation, contract),
             "reservationId": (reservation or {}).get("reservation_id"),
@@ -443,7 +465,7 @@ def _record_view(request, reservation, contract, payment, spot, model, *, sessio
             "spot": dict(_spot_view(spot), location=(criteria.get("pickupLocationSnapshot") or {})) if reservation else _spot_view(spot),
             "pickupLocationSnapshot": (contract or {}).get("pickup_location_snapshot") if contract else criteria.get("pickupLocationSnapshot"),
             "returnLocationSnapshot": (contract or {}).get("return_location_snapshot") if contract else criteria.get("returnLocationSnapshot"),
-            "model": _model_view(request, model) if model else None,
+            "model": _model_view(request, model, vehicle_image_key=vehicle_image_key) if model else None,
             "startDate": start_date.isoformat() if start_date else None,
             "returnDate": return_date.isoformat() if isinstance(return_date, date) else None,
             "actualStartTime": iso(request, (contract or {}).get("actual_start_time")),
@@ -476,12 +498,14 @@ def _customer_records(request, session, uid, *, completed=False, page=1, size=20
         reservations = [r for r in reservations if r["reservation_status"] in ("REQUESTED", "APPROVED", "HANDOVER_PENDING", "HANDED_OVER")]
         contracts = [c for c in contracts if c["contract_status"] in ("ON_RENT", "OVERDUE") and c["actual_end_time"] is None]
     reservation_by_id = {r["reservation_id"]: r for r in reservations}
-    vehicle_ids = {c["vehicle_id"] for c in contracts}
-    vehicle_models = {}
+    vehicle_ids = {_record_vehicle_id(r, None) for r in reservations} | {c["vehicle_id"] for c in contracts}
+    vehicle_ids.discard(None)
+    vehicle_models, vehicle_images = {}, {}
     if vehicle_ids:
         rv, models = db.table("MSP_RENTAL_VEHICLE"), db.table("MSP_VEHICLE_MODEL")
-        for row in session.execute(select(rv.c.vehicle_id, models).join(models, models.c.model_id == rv.c.model_id).where(rv.c.vehicle_id.in_(vehicle_ids))).mappings():
+        for row in session.execute(select(rv.c.vehicle_id, rv.c.vehicle_image_key, models).join(models, models.c.model_id == rv.c.model_id).where(rv.c.vehicle_id.in_(vehicle_ids))).mappings():
             vehicle_models[row["vehicle_id"]] = dict(row)
+            vehicle_images[row["vehicle_id"]] = row["vehicle_image_key"]
     spot_ids = {r["spot_master_id"] for r in reservations} | {c["pickup_spot_master_id"] for c in contracts}
     spots = {}
     if spot_ids:
@@ -501,12 +525,14 @@ def _customer_records(request, session, uid, *, completed=False, page=1, size=20
         model = models.get(reservation["model_id"]) if reservation else vehicle_models.get(contract["vehicle_id"])
         payment = _latest_payment(request, session, reservation_id=contract.get("reservation_id"), contract_id=contract["rental_contract_id"])
         spot_id = reservation["spot_master_id"] if reservation else contract["pickup_spot_master_id"]
-        records.append(_record_view(request, reservation, contract, payment, spots.get(spot_id), model, session=session))
+        records.append(_record_view(request, reservation, contract, payment, spots.get(spot_id), model,
+            session=session, vehicle_images=vehicle_images))
     for reservation in reservations:
         if reservation["reservation_id"] in linked:
             continue
         payment = _latest_payment(request, session, reservation_id=reservation["reservation_id"])
-        records.append(_record_view(request, reservation, None, payment, spots.get(reservation["spot_master_id"]), models.get(reservation["model_id"]), session=session))
+        records.append(_record_view(request, reservation, None, payment, spots.get(reservation["spot_master_id"]),
+            models.get(reservation["model_id"]), session=session, vehicle_images=vehicle_images))
     if completed:
         records.sort(key=lambda item: (item.get("actualEndTime") or "", item.get("rentalContractId") or ""), reverse=True)
     else:

@@ -133,9 +133,10 @@ class CustomerModel(BaseModel):
     modelName: str | None = None
     cc: int | None = None
     vehicleType: str | None = None
-    modelImageKey: str | None = None
+    modelImageKey: str | None = Field(default=None,
+        description="Selected image key in normal mode. TEMPORARY TEST: image_response_test_swap=true returns the display URL here instead. Vehicle-bound responses prefer the vehicle photo; model-level responses use the model photo.")
     modelImageUrl: str | None = Field(default=None,
-        description="HTTPS model image URL. Private S3 URLs expire (default 15 minutes); refresh the API response. Null when no usable key or signing configuration is available. modelImageKey is preserved.")
+        description="Display URL in normal mode; TEMPORARY TEST image_response_test_swap=true returns the selected stored key here instead. Private S3 display URLs expire (default 15 minutes); refresh the API response. URL signing failure leaves the display URL null.")
 
 
 class CustomerPricingTier(BaseModel):

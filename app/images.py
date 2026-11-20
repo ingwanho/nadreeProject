@@ -10,6 +10,13 @@ from botocore.exceptions import BotoCoreError, ClientError
 logger = logging.getLogger(__name__)
 
 
+def image_fields(settings, prefix, key, url):
+    """Apply the temporary test response layout after image selection/signing."""
+    if getattr(settings, "image_response_test_swap", False):
+        key, url = url, key
+    return {prefix + "ImageKey": key, prefix + "ImageUrl": url}
+
+
 class ImageURLs:
     def __init__(self, settings, client=None):
         self.bucket = settings.s3_image_bucket
@@ -42,7 +49,7 @@ class ImageURLs:
             with self._lock:
                 if self._client is None:
                     self._client = boto3.session.Session().client("s3", region_name=self.region,
-                        config=Config(signature_version="s3v4"))
+                        config=Config(signature_version="s3v4", s3={"addressing_style": "virtual"}))
             return self._client.generate_presigned_url("get_object",
                 Params={"Bucket": self.bucket, "Key": key}, ExpiresIn=self.ttl, HttpMethod="GET")
         except (BotoCoreError, ClientError) as error:

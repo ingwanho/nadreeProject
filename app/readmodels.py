@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from app.availability import reservation_end
 from app.db import transaction
 from app.headers import bearer
+from app.images import image_fields
 from app.pricing import daily_price, load_tiers
 from app.rental_common import (OPEN, MOVABLE, context, contracts_for, day_end, effective_state, fleet,
     is_open, iso, local_date, midnight, page_result, resolve_spot, rows)
@@ -101,8 +102,9 @@ def fleet_details(request, session, root, vehicles):
         qr_state = qr["qr_status"] if qr else None
         if qr and qr["expired_at"] is not None and qr["expired_at"] <= now():
             qr_state = "EXPIRED"
-        items.append(dict(vehicle=vehicle_view(request, item, contracts), modelImageKey=(item["model"] or {}).get("model_image_key"),
-            modelImageUrl=request.app.state.images.model_url((item["model"] or {}).get("model_image_key")),
+        model_key = (item["model"] or {}).get("model_image_key")
+        items.append(dict(vehicle=vehicle_view(request, item, contracts),
+            **image_fields(request.app.state.settings, "model", model_key, request.app.state.images.model_url(model_key)),
             registrationType="SENSOR" if item["sensors"] else "QR_ONLY", qrStatus=qr_state,
             sensorStatus="LINKED" if len(item["sensors"]) == 1 else "ERROR" if item["sensors"] else "UNLINKED",
             priceType=item["rental"]["price_type"], priceInfo=item["rental"]["premium_daily_price"], dailyPrice=daily_price(item, tiers),
@@ -298,7 +300,7 @@ def calendar_vehicle_page(request, session, spot, body, keyword):
     return total, page
 
 
-@router.post("/nadreego/main/calendar", description="Each vehicle preserves vehicleImageKey and includes vehicleImageUrl: a public HTTPS or temporary S3 GET URL (default 15 minutes), or null when unavailable. Refresh this response after URL expiration.")
+@router.post("/nadreego/main/calendar", description="Each vehicle returns vehicleImageKey and vehicleImageUrl for its own photo, or its model photo when no vehicle photo is configured. The URL is public HTTPS or a temporary S3 GET URL (default 15 minutes), or null when unavailable. Refresh this response after URL expiration.")
 def calendar(body: Calendar, request: Request, session: Session = DB):
     _, root = context(request, session)
     spot = resolve_spot(request, session, root, body.spotCode)

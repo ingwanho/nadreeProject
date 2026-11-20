@@ -24,6 +24,9 @@ class Settings(BaseSettings):
     s3_image_bucket: str = Field(default="", pattern=r"^(?:|[a-z0-9][a-z0-9.-]{1,61}[a-z0-9])$")
     s3_image_region: str = ""
     s3_image_url_ttl_seconds: int = Field(default=900, ge=60, le=3600)
+    # TEMP TEST: disable after the frontend image-field compatibility check.
+    # This changes response placement only; stored keys and URL signing stay unchanged.
+    image_response_test_swap: bool = False
     field_encrypt_key: SecretStr = SecretStr("")
     qr_hash_key: SecretStr = SecretStr("")
     availability_timeout_seconds: float = Field(default=2.0, gt=0, le=10)

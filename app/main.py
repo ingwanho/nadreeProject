@@ -109,7 +109,12 @@ def create_app(settings=None, db=None, limiter=None, mailer=None, fcm=None, loca
 
     application = FastAPI(
         title="Nadree API",
-        description=OPENAPI_DESCRIPTION,
+        description=OPENAPI_DESCRIPTION + (
+            "\n\n**TEMPORARY TEST IMAGE FIELD SWAP ENABLED.** Responses currently put the display "
+            "URL in ...ImageKey and the stored object key in ...ImageUrl. Field names and request "
+            "bodies are unchanged. Static examples show the normal layout. Restore "
+            "NADREE_IMAGE_RESPONSE_TEST_SWAP=false and restart after frontend testing."
+            if getattr(settings, "image_response_test_swap", False) else ""),
         version="0.1.0",
         openapi_url="/openapi.json",
         docs_url="/docs",
