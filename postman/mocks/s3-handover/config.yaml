@@ -1,0 +1,10 @@
+version: 1
+name: s3-handover
+slug: s3-handover
+protocol: http
+interceptRequests: true
+port: 4500
+scenarios:
+  - name: default
+    path: ./default.js
+    default: true

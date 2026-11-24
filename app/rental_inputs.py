@@ -4,6 +4,7 @@ from typing import Annotated, Literal
 from pydantic import Field, SecretStr, StrictBool, model_validator
 
 from app.schemas import Body, Identifier, Token
+from app.rental_profile import DocumentNumber, SnsInfo
 
 Positive = Annotated[int, Field(strict=True, ge=1)]
 Money = Annotated[int, Field(strict=True, ge=0, le=2147483647)]
@@ -11,7 +12,7 @@ Cc = Annotated[int, Field(strict=True, ge=0, le=2147483647)]
 Plate = Annotated[str, Field(min_length=1, max_length=25, pattern=r"\S")]
 Spot = Annotated[str, Field(min_length=1, max_length=60)]
 ModelId = Annotated[str, Field(min_length=1, max_length=50)]
-VehicleState = Literal["AVAILABLE", "ON_RENT", "MAINTENANCE", "DISABLED"]
+VehicleState = Literal["AVAILABLE", "ON_RENT", "MAINTENANCE", "DISABLED", "UNTRACKED_RENT"]
 ReservationState = Literal["REQUESTED", "APPROVED", "HANDOVER_PENDING", "HANDED_OVER", "RETURNED", "REJECTED", "CANCELED", "EXPIRED"]
 RentalState = Literal["ON_RENT", "OVERDUE", "RETURNED", "CANCELED"]
 Reason = Annotated[str, Field(max_length=200)]
@@ -135,6 +136,7 @@ class BookingAction(Body):
     action: Literal["APPROVE", "REJECT", "CANCEL"]
     reason: Reason | None = None
     cancellationReasonType: Literal["BRANCH_FAULT"] | None = None
+    finalPrice: Money | None = Field(default=None, description="Required on APPROVE for new handover-flow reservations. Final total in USD; currency is not an input field.")
 
     @model_validator(mode="after")
     def cancellation_reason(self):
@@ -159,12 +161,16 @@ class NadriProfile(Body):
     GENDER: Literal["M", "F", "OTHER"] | None = None
     NATIONALITY: Annotated[str, Field(min_length=2, max_length=2, pattern=r"^[A-Z]{2}$")] | None = None
     fcmToken: Token | None = None
+    passportNumber: DocumentNumber | None = None
+    driverLicenseNumber: DocumentNumber | None = None
+    snsInfo: SnsInfo | None = None
 
 
 class NadriAvailability(Body):
     startDate: Date
     returnDate: Date
-    cc: Annotated[int, Field(strict=True, gt=0, le=2147483647)]
+    minCc: Cc
+    maxCc: Cc | None
     deliveryRequested: StrictBool
     pickupLocation: Address | None = None
     returnLocation: Address | None = None
@@ -173,6 +179,8 @@ class NadriAvailability(Body):
 
     @model_validator(mode="after")
     def dates(self):
+        if self.maxCc is not None and self.maxCc < self.minCc:
+            raise ValueError("maxCc must be at least minCc")
         if self.returnDate <= self.startDate or (self.returnDate - self.startDate).days > 30:
             raise ValueError("invalid rental date range")
         if self.deliveryRequested and not self.pickupLocation:
@@ -224,6 +232,7 @@ class NadriPaymentCapture(Body):
 
 
 class RentApprove(Qr):
+    handoverId: Identifier | None = None
     receiptRequired: Literal[True] | None = None
     bookedNo: Annotated[str, Field(min_length=3, max_length=52, pattern=r"^BO.+$")] | None = None
     uidToken: Identifier | None = None

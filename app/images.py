@@ -11,9 +11,7 @@ logger = logging.getLogger(__name__)
 
 
 def image_fields(settings, prefix, key, url):
-    """Apply the temporary test response layout after image selection/signing."""
-    if getattr(settings, "image_response_test_swap", False):
-        key, url = url, key
+    """Return the normal key/URL contract, including with an old test env value."""
     return {prefix + "ImageKey": key, prefix + "ImageUrl": url}
 
 

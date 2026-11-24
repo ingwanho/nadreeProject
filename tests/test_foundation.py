@@ -86,7 +86,7 @@ def test_openapi_has_exact_work_group_routes(client):
     assert "/api/v1/nadree/rental/requests/{request_id}" not in paths
     parameters = paths["/api/v1/nadree/rental/request"]["post"].get("parameters", [])
     assert not any(p["name"] == "Idempotency-Key" for p in parameters)
-    assert len([path for path in paths if not path.startswith("/health/")]) == 79
+    assert len([path for path in paths if not path.startswith("/health/")]) == 102
     assert "post" in paths["/api/v1/nadree/rental/reservations/{reservation_id}/receive"]
     assert "post" in paths["/api/v1/nadree/rental/onsite/requests"]
     payment_return = paths["/api/v1/nadree/rental/payment/return"]["get"]
@@ -120,9 +120,9 @@ def test_openapi_has_exact_work_group_routes(client):
     assert openapi["info"]["description"].find("NRTEST-WEB-MODEL-125") >= 0
     assert openapi["components"]["schemas"]["CustomerModel"]["example"]["modelId"] == "NRTEST-WEB-MODEL-125"
     assert openapi["components"]["schemas"]["CustomerPrice"]["example"]["totalOptions"] == [105, 165]
-    assert openapi["components"]["schemas"]["RentApprove"]["example"]["receiptRequired"] is True
+    assert openapi["components"]["schemas"]["RentApprove"]["example"]["handoverId"]
     assert openapi["components"]["schemas"]["CustomerQrLookup"]["example"]["reservationStatus"] == "HANDOVER_PENDING"
-    assert paths["/nadreego/rent/approve"]["post"]["responses"]["200"]["content"]["application/json"]["example"]["currentState"] == "HANDOVER_PENDING"
+    assert paths["/nadreego/rent/approve"]["post"]["responses"]["200"]["content"]["application/json"]["example"]["currentState"] == "ON_RENT"
     outcomes = paths["/api/v1/nadree/rental/onsite/requests/{client_request_id}"]["get"]["responses"]
     assert outcomes["404"]["content"]["application/json"]["examples"]["notFoundIsNotFinal"]["value"]["requestStatus"] == "UNKNOWN"
     assert outcomes["202"]["content"]["application/json"]["examples"]["processing"]["value"]["requestFinal"] is False

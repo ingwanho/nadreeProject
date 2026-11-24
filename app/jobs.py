@@ -8,7 +8,7 @@ import argparse
 from datetime import date, datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import select, text, update
+from sqlalchemy import or_, select, text, update
 from sqlalchemy.orm import Session
 
 from app.config import Settings
@@ -43,8 +43,9 @@ def expire_maintenance(db, settings, at=None):
     state, contracts = db.table("MSP_VEHICLE_STATUS"), db.table("MSP_RENTAL_CONTRACT")
     changed = 0
     with Session(db.engine) as session, session.begin():
-        rows = session.execute(select(state).where(state.c.status == "MAINTENANCE",
-                                                    state.c.maintenance_until < today).with_for_update()).mappings().all()
+        rows = session.execute(select(state).where(or_(
+            (state.c.status == "MAINTENANCE") & (state.c.maintenance_until < today),
+            (state.c.status == "UNTRACKED_RENT") & (state.c.untracked_rent_until < today))).with_for_update()).mappings().all()
         for row in rows:
             open_rental = session.execute(select(contracts.c.rental_contract_id).where(
                 contracts.c.vehicle_id == row["vehicle_id"], contracts.c.contract_status.in_(OPEN_CONTRACTS),
@@ -52,8 +53,8 @@ def expire_maintenance(db, settings, at=None):
             if open_rental:
                 continue
             result = session.execute(update(state).where(state.c.vehicle_id == row["vehicle_id"],
-                state.c.status == "MAINTENANCE", state.c.maintenance_until == row["maintenance_until"])
-                .values(status="AVAILABLE", maintenance_until=None, changed_by=None,
+                state.c.status == row["status"])
+                .values(status="AVAILABLE", maintenance_until=None, untracked_rent_until=None, changed_by=None,
                         status_reason="Maintenance period ended", status_changed_at=at, updated_at=at))
             changed += result.rowcount
     return changed
@@ -130,6 +131,8 @@ def expire_unpaid_payments(db, settings, at=None, notifier=None, paypal=None):
                     reservations.c.reservation_status == "APPROVED").values(**values))
                 if result.rowcount != 1:
                     continue
+                from app.handover import expire_for_reservation
+                expire_for_reservation(db, session, reservation, at)
                 session.execute(history.insert().values(reservation_id=reservation_id, event_type="EXPIRED",
                     previous_reservation_status="APPROVED", new_reservation_status="EXPIRED",
                     previous_vehicle_id=reservation["assigned_vehicle_id"], new_vehicle_id=None,
@@ -176,7 +179,7 @@ def rebuild_daily_inventory(db, settings, days=None, at=None):
     written = 0
     with Session(db.engine) as session, session.begin():
         fleet_query = select(histories.c.spot_master_id, vehicles.c.vehicle_id, rentals.c.model_id,
-            states.c.status, states.c.maintenance_until, states.c.status_changed_at).select_from(
+            states.c.status, states.c.maintenance_until, states.c.untracked_rent_until, states.c.status_changed_at).select_from(
                 histories.join(vehicles, vehicles.c.vehicle_id == histories.c.vehicle_id)
                 .join(rentals, rentals.c.vehicle_id == vehicles.c.vehicle_id)
                 .join(models, models.c.model_id == rentals.c.model_id)
@@ -203,6 +206,8 @@ def rebuild_daily_inventory(db, settings, days=None, at=None):
                 blocked = {row["vehicle_id"] for row in fleet_items if row["status"] == "DISABLED"}
                 blocked.update(row["vehicle_id"] for row in fleet_items
                               if row["status"] == "MAINTENANCE" and row["maintenance_until"] and row["maintenance_until"] >= target)
+                blocked.update(row["vehicle_id"] for row in fleet_items
+                              if row["status"] == "UNTRACKED_RENT" and row["untracked_rent_until"] and row["untracked_rent_until"] >= target)
                 for reservation in approved:
                     if reservation["spot_master_id"] != spot_id or reservation["model_id"] != model_id:
                         continue

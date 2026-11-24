@@ -6,7 +6,7 @@ from decimal import Decimal, InvalidOperation
 from fastapi import APIRouter, BackgroundTasks, Depends, Query, Request
 from fastapi.responses import HTMLResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from sqlalchemy import or_, select, update
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -26,6 +26,7 @@ from app.refunds import prepare_booking_refund
 from app.payment_policy import payment_deadline
 from app.payment_attempts import attempts, guard_other_attempts, inspect_order, replay_allowed
 from app.pricing import daily_price, load_tiers
+from app.rental_profile import personal_view, sync_personal
 from app.rental_common import contracts_for, day_end, fleet, iso, local_date, location_snapshot, lock_key, midnight
 from app.rental_inputs import (NadriAvailability, NadriLogin, NadriPaymentCapture,
                                NadriPaymentOrder, NadriProfile, NadriRentalRequest, ReservationCancel)
@@ -199,18 +200,8 @@ def _price_groups(request, session, spot, model_id, start, end, *, check_availab
     vehicles = fleet(request, session, spot, model_id=model_id)
     if not vehicles:
         return []
-    start_day, end_day = local_date(request, start), local_date(request, end)
-    dates = [start_day + timedelta(days=index) for index in range((end_day - start_day).days)]
-    inventory_rows = []
-    if check_availability:
-        try:
-            inventory = _db(request).table("MSP_MODEL_DAILY_INVENTORY")
-            inventory_rows = session.execute(select(inventory).where(inventory.c.spot_master_id == spot["spot_master_id"],
-                inventory.c.model_id == model_id, inventory.c.target_date.in_(dates))).mappings().all()
-        except (SQLAlchemyError, Problem):
-            inventory_rows = []
-        if inventory_rows and (len(inventory_rows) < len(dates) or any((row.get("available_qty") or 0) < 1 for row in inventory_rows)):
-            return []
+    # The solver uses current returns and dated blocks. A cached daily snapshot
+    # must not hide capacity released by an early return or an ended block.
     tiers = load_tiers(request, session, spot["spot_master_id"])
     prices = {}
     for item in vehicles.values():
@@ -287,7 +278,8 @@ def _availability_for(request, session, body, *, selected_spot=None, selected_mo
     for spot in spots:
         candidate_models = models or [dict(row) for row in session.execute(select(_db(request).table("MSP_VEHICLE_MODEL")).where(
             _db(request).table("MSP_VEHICLE_MODEL").c.is_active == 1,
-            _db(request).table("MSP_VEHICLE_MODEL").c.cc == body.cc if hasattr(body, "cc") else _db(request).table("MSP_VEHICLE_MODEL").c.model_id == selected_model)).mappings()]
+            (_db(request).table("MSP_VEHICLE_MODEL").c.cc >= body.minCc) if hasattr(body, "minCc") else _db(request).table("MSP_VEHICLE_MODEL").c.model_id == selected_model,
+            (_db(request).table("MSP_VEHICLE_MODEL").c.cc <= body.maxCc) if hasattr(body, "maxCc") and body.maxCc is not None else True)).mappings()]
         for model in candidate_models:
             if selected_model and model["model_id"] != selected_model:
                 continue
@@ -383,7 +375,7 @@ def _record_vehicle_id(reservation, contract):
             or onsite_vehicle)
 
 
-def _record_view(request, reservation, contract, payment, spot, model, *, session=None, vehicle_images=None):
+def _record_view(request, reservation, contract, payment, spot, model, *, session=None, vehicle_images=None, vehicle_numbers=None, detailed=False):
     if not spot:
         return None
     criteria = (reservation or {}).get("required_criteria_json") or {}
@@ -447,7 +439,7 @@ def _record_view(request, reservation, contract, payment, spot, model, *, sessio
             vehicles = _db(request).table("MSP_RENTAL_VEHICLE")
             vehicle_image_key = session.scalar(select(vehicles.c.vehicle_image_key).where(
                 vehicles.c.vehicle_id == vehicle_id))
-    return {"recordType": "RENTAL" if contract else "RESERVATION",
+    result = {"recordType": "RENTAL" if contract else "RESERVATION",
             **receipt_view(request, reservation, contract),
             "reservationId": (reservation or {}).get("reservation_id"),
             # bookingId is the customer-app alias for the server reservation ID.
@@ -482,6 +474,19 @@ def _record_view(request, reservation, contract, payment, spot, model, *, sessio
                          "deliveryTotalFee": int((reservation or {}).get("delivery_total_fee_snapshot") or 0)},
             "price": price,
             "payment": _payment_view(payment)}
+    if session is not None:
+        from app.handover import detail_fields
+        extra = detail_fields(request, session, reservation, contract, detailed=detailed)
+        result.update(extra)
+        if extra["finalPrice"] is not None:
+            result["price"]["finalTotal"] = extra["finalPrice"]
+        if vehicle_id and vehicle_numbers is not None:
+            result["vehicleNo"] = vehicle_numbers.get(vehicle_id)
+        elif vehicle_id:
+            v, rv = _db(request).table("MSP_VEHICLE"), _db(request).table("MSP_RENTAL_VEHICLE")
+            result["vehicleNo"] = session.scalar(select(func.coalesce(rv.c.plate_number_full, v.c.plate_number))
+                .select_from(rv.join(v, v.c.vehicle_id == rv.c.vehicle_id)).where(rv.c.vehicle_id == vehicle_id))
+    return result
 
 
 def _customer_records(request, session, uid, *, completed=False, page=1, size=20):
@@ -500,12 +505,16 @@ def _customer_records(request, session, uid, *, completed=False, page=1, size=20
     reservation_by_id = {r["reservation_id"]: r for r in reservations}
     vehicle_ids = {_record_vehicle_id(r, None) for r in reservations} | {c["vehicle_id"] for c in contracts}
     vehicle_ids.discard(None)
-    vehicle_models, vehicle_images = {}, {}
+    vehicle_models, vehicle_images, vehicle_numbers = {}, {}, {}
     if vehicle_ids:
-        rv, models = db.table("MSP_RENTAL_VEHICLE"), db.table("MSP_VEHICLE_MODEL")
-        for row in session.execute(select(rv.c.vehicle_id, rv.c.vehicle_image_key, models).join(models, models.c.model_id == rv.c.model_id).where(rv.c.vehicle_id.in_(vehicle_ids))).mappings():
+        rv, models, v = db.table("MSP_RENTAL_VEHICLE"), db.table("MSP_VEHICLE_MODEL"), db.table("MSP_VEHICLE")
+        for row in session.execute(select(rv.c.vehicle_id, rv.c.vehicle_image_key,
+                func.coalesce(rv.c.plate_number_full, v.c.plate_number).label("vehicle_no"), models)
+                .join(models, models.c.model_id == rv.c.model_id).join(v, v.c.vehicle_id == rv.c.vehicle_id)
+                .where(rv.c.vehicle_id.in_(vehicle_ids))).mappings():
             vehicle_models[row["vehicle_id"]] = dict(row)
             vehicle_images[row["vehicle_id"]] = row["vehicle_image_key"]
+            vehicle_numbers[row["vehicle_id"]] = row["vehicle_no"]
     spot_ids = {r["spot_master_id"] for r in reservations} | {c["pickup_spot_master_id"] for c in contracts}
     spots = {}
     if spot_ids:
@@ -526,13 +535,13 @@ def _customer_records(request, session, uid, *, completed=False, page=1, size=20
         payment = _latest_payment(request, session, reservation_id=contract.get("reservation_id"), contract_id=contract["rental_contract_id"])
         spot_id = reservation["spot_master_id"] if reservation else contract["pickup_spot_master_id"]
         records.append(_record_view(request, reservation, contract, payment, spots.get(spot_id), model,
-            session=session, vehicle_images=vehicle_images))
+            session=session, vehicle_images=vehicle_images, vehicle_numbers=vehicle_numbers))
     for reservation in reservations:
         if reservation["reservation_id"] in linked:
             continue
         payment = _latest_payment(request, session, reservation_id=reservation["reservation_id"])
         records.append(_record_view(request, reservation, None, payment, spots.get(reservation["spot_master_id"]),
-            models.get(reservation["model_id"]), session=session, vehicle_images=vehicle_images))
+            models.get(reservation["model_id"]), session=session, vehicle_images=vehicle_images, vehicle_numbers=vehicle_numbers))
     if completed:
         records.sort(key=lambda item: (item.get("actualEndTime") or "", item.get("rentalContractId") or ""), reverse=True)
     else:
@@ -545,7 +554,8 @@ def _customer_records(request, session, uid, *, completed=False, page=1, size=20
 def _user_view(request, session, user):
     items, _ = _customer_records(request, session, user["uid_token"], page=1, size=100)
     return {"uidToken": user["uid_token"], "name": user.get("name"), "age": user.get("age"),
-            "gender": user.get("gender"), "nationality": user.get("nationality"), "ongoingRequests": items}
+            "gender": user.get("gender"), "nationality": user.get("nationality"),
+            **personal_view(request.app.state.settings, user), "ongoingRequests": items}
 
 
 @user_router.post("/login", response_model=CustomerLogin,
@@ -626,6 +636,8 @@ def nadree_profile(body: NadriProfile, request: Request, session: Session = DB):
         raise Problem(422, "EMPTY_PROFILE_UPDATE")
     table = _db(request).table("MSP_RENTAL_USER")
     values = {}
+    sync_personal(request, session, user.uid_token,
+                  {key: getattr(body, key) for key in fields if key in ("passportNumber", "driverLicenseNumber", "snsInfo")})
     for source, target in (("NAME", "name"), ("Age", "age"), ("GENDER", "gender"), ("NATIONALITY", "nationality")):
         if source in fields:
             values[target] = getattr(body, source)
@@ -643,7 +655,7 @@ def nadree_profile(body: NadriProfile, request: Request, session: Session = DB):
         session.execute(update(table).where(table.c.uid_token == user.uid_token).values(**values))
     row = session.execute(select(table).where(table.c.uid_token == user.uid_token)).mappings().one()
     return {"status": "success", "user": {"uidToken": row["uid_token"], "name": row.get("name"), "age": row.get("age"),
-                                             "gender": row.get("gender"), "nationality": row.get("nationality")}}
+        "gender": row.get("gender"), "nationality": row.get("nationality"), **personal_view(request.app.state.settings, row)}}
 
 
 @user_router.get("/profile", response_model=CustomerProfileResult,
@@ -657,7 +669,7 @@ def nadree_profile_view(request: Request, session: Session = DB):
         raise Problem(401, "INVALID_NADRI_USER_TOKEN")
     return {"status": "success", "user": {"uidToken": row["uid_token"], "name": row.get("name"),
                                              "age": row.get("age"), "gender": row.get("gender"),
-                                             "nationality": row.get("nationality")}}
+        "nationality": row.get("nationality"), **personal_view(request.app.state.settings, row)}}
 
 
 @user_router.delete("/account", response_model=CustomerAccountDeletion,
@@ -674,6 +686,7 @@ def nadree_delete_account(request: Request, session: Session = DB):
     refresh_table = _db(request).table("MSP_RENTAL_USER_REFRESH_TOKEN")
     current = now()
     values = {"name": None, "age": None, "gender": None, "nationality": None,
+              "passport_number_enc": None, "driver_license_number_enc": None, "sns_info": None,
               "fcm_token": None, "fcm_token_updated_at": current,
               "user_access_revoked_at": current, "updated_at": current}
     require_columns(table, values)
@@ -767,12 +780,12 @@ def nadree_request(body: NadriRentalRequest, request: Request, session: Session 
     quote["requestedTotal"] = body.totalPrice
     quote["finalTotal"] = body.totalPrice
     availability_request = {"startDate": body.startDate.isoformat(), "returnDate": body.returnDate.isoformat(),
-                            "cc": item["model"].get("cc"), "deliveryRequested": body.deliveryRequested,
+                            "minCc": item["model"].get("cc"), "maxCc": item["model"].get("cc"), "deliveryRequested": body.deliveryRequested,
                             "pickupLocation": body.pickupLocation, "returnLocation": body.returnLocation}
     quote["calculatedTotalFrom"] = quote["totalFrom"]
     quote["calculatedTotalTo"] = quote["totalTo"]
     criteria = {"source": "nadri.rental.availability", "availabilityRequest": availability_request,
-                "customerReceiptRequired": True,
+                "customerReceiptRequired": False, "handoverFlowVersion": 2,
                 "paymentMethod": request.app.state.settings.reservation_payment_method,
                 "pickupLocationSnapshot": item["spot"]["location"], "returnLocationSnapshot": item["spot"]["location"],
                 "selected": {"spotMasterId": body.spotMasterId, "modelId": body.modelId,
@@ -852,6 +865,12 @@ def _revalidate_reservation_quote(request, session, reservation):
     stored = criteria.get("quote") if isinstance(criteria, dict) else None
     if not isinstance(stored, dict) or stored.get("currency") != request.app.state.settings.rental_currency:
         raise Problem(409, "PAYMENT_QUOTE_CHANGED")
+    from app.handover import current, is_v2
+    if is_v2(reservation):
+        h = current(request, session, reservation["reservation_id"], include_canceled=False)
+        if not h or reservation["reservation_status"] != "APPROVED" or h["final_price"] <= 0:
+            raise Problem(409, "PAYMENT_QUOTE_UNAVAILABLE")
+        return dict(stored, finalTotal=Decimal(h["final_price"]))
     # Reservation creation validated the price and saved it server-side. Later
     # catalogue/delivery changes must not rewrite an accepted reservation.
     final_total = stored.get("finalTotal", stored.get("requestedTotal"))
@@ -1198,7 +1217,26 @@ def nadree_reservation_detail(reservation_id: str, request: Request, session: Se
     model_table = db.table("MSP_VEHICLE_MODEL")
     model = session.execute(select(model_table).where(model_table.c.model_id == reservation["model_id"])).mappings().first()
     return {"status": "success", "item": _record_view(request, reservation, dict(contract) if contract else None,
-        payment, _spot(request, session, reservation["spot_master_id"], active=False), dict(model) if model else None, session=session)}
+        payment, _spot(request, session, reservation["spot_master_id"], active=False), dict(model) if model else None, session=session, detailed=True)}
+
+
+@router.get("/contracts/{rental_contract_id}", response_model=CustomerReservationDetail,
+            dependencies=[Depends(customer_access_token)], summary="Get the customer's own rental by contract ID")
+def contract_detail(rental_contract_id: str, request: Request, session: Session = DB):
+    user = user_principal(request, session)
+    ct, rv, models = (_db(request).table(name) for name in ("MSP_RENTAL_CONTRACT", "MSP_RENTAL_VEHICLE", "MSP_VEHICLE_MODEL"))
+    contract = session.execute(select(ct).where(ct.c.rental_contract_id == rental_contract_id,
+                                               ct.c.uid_token == user.uid_token)).mappings().first()
+    if not contract:
+        raise Problem(404, "RENTAL_NOT_FOUND")
+    if contract["reservation_id"]:
+        return nadree_reservation_detail(contract["reservation_id"], request, session)
+    model = session.execute(select(models).join(rv, rv.c.model_id == models.c.model_id)
+        .where(rv.c.vehicle_id == contract["vehicle_id"])).mappings().first()
+    payment = _latest_payment(request, session, contract_id=rental_contract_id)
+    return {"status": "success", "item": _record_view(request, None, dict(contract), payment,
+        _spot(request, session, contract["pickup_spot_master_id"], active=False), dict(model) if model else None,
+        session=session, detailed=True)}
 
 
 @router.post("/request/cancel", response_model=CustomerCancellation,

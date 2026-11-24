@@ -1,5 +1,5 @@
 """Hand approved unfinished work to the shop primary without canceling rentals."""
-from sqlalchemy import select
+from sqlalchemy import inspect, select, update
 
 from app.errors import Problem
 from app.notifications import record_notification
@@ -23,7 +23,13 @@ def transfer_approved_work(db, session, spot_id, admin_id):
         .order_by(contracts.c.rental_contract_id).with_for_update()).mappings().all()
     finished = {r["reservation_id"] for r in rentals if r.get("actual_end_time") is not None and r["contract_status"] == "RETURNED"}
     owned = [b for b in owned if b["reservation_id"] not in finished]
-    if not owned:
+    handovers = []
+    if inspect(session.connection()).has_table("MSP_RENTAL_HANDOVER"):
+        ht = db.table("MSP_RENTAL_HANDOVER")
+        handovers = session.execute(select(ht).where(ht.c.spot_master_id == spot_id,
+            ht.c.assigned_admin_id == admin_id, ht.c.handover_status.not_in(("STARTED", "CANCELED")))
+            .order_by(ht.c.handover_id).with_for_update()).mappings().all()
+    if not owned and not handovers:
         return 0
     admins, scope = db.table("MSP_ADMIN"), db.table("MSP_ADMIN_SPOT_SCOPE")
     candidates = session.scalars(select(admins.c.admin_id).join(scope, scope.c.admin_id == admins.c.admin_id).where(
@@ -48,4 +54,9 @@ def transfer_approved_work(db, session, spot_id, admin_id):
                     changed_by=recipient, reason="ADMIN_ACCOUNT_DELETED", created_at=now()))
         record_notification(db, session, spot_id, "RESERVATION_MANAGER_TRANSFERRED", "RESERVATION", ident,
             "reservation:" + ident + ":handover:" + fingerprint(admin_id)[:24])
-    return len(owned)
+    for handover in handovers:
+        session.execute(update(ht).where(ht.c.handover_id == handover["handover_id"], ht.c.assigned_admin_id == admin_id)
+            .values(assigned_admin_id=recipient, updated_at=now()))
+        record_notification(db, session, spot_id, "HANDOVER_MANAGER_TRANSFERRED", "HANDOVER", handover["handover_id"],
+            "handover:" + handover["handover_id"] + ":transfer:" + fingerprint(admin_id)[:24])
+    return len({b["reservation_id"] for b in owned} | {h["reservation_id"] for h in handovers})

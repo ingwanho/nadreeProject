@@ -3,7 +3,7 @@ from collections import defaultdict
 from datetime import datetime, timedelta
 
 from ortools.sat.python import cp_model
-from sqlalchemy import update
+from sqlalchemy import select, update
 
 from app.errors import Problem
 from app.pricing import daily_price, load_tiers
@@ -88,6 +88,13 @@ def compute_assignment(request, session, spot, vehicles, contracts, *, candidate
     reservations = [r for r in reservations if not (
         (r.get("required_criteria_json") or {}).get("requestType") == "ONSITE"
         and r.get("hold_expires_at") and r["hold_expires_at"] <= at)]
+    started_handovers = set()
+    v2_ids = [r["reservation_id"] for r in reservations
+              if (r.get("required_criteria_json") or {}).get("handoverFlowVersion") == 2]
+    if v2_ids:
+        h = request.app.state.db.table("MSP_RENTAL_HANDOVER")
+        started_handovers = set(session.scalars(select(h.c.reservation_id).where(
+            h.c.reservation_id.in_(v2_ids), h.c.customer_started_at.is_not(None), h.c.handover_status != "CANCELED")))
     if candidate:
         reservations.append(candidate)
     start = min([at] + [r["start_datetime"] for r in reservations])
@@ -111,10 +118,11 @@ def compute_assignment(request, session, spot, vehicles, contracts, *, candidate
         if not item["vehicle"]["is_active"] or not item["rental"]["rental_enabled"] or not model["is_active"] or state["status"] == "DISABLED":
             fixed.append((ident, tick(start), tick(end)))
             continue
-        if state["status"] == "MAINTENANCE" and (not maintenance or maintenance[0] != ident):
-            if state["maintenance_until"] is None:
+        if state["status"] in ("MAINTENANCE", "UNTRACKED_RENT") and (not maintenance or maintenance[0] != ident):
+            period_column = "untracked_rent_until" if state["status"] == "UNTRACKED_RENT" else "maintenance_until"
+            if state.get(period_column) is None:
                 raise Problem(409, "RENTAL_STATE_INCONSISTENT")
-            until = day_end(request, state["maintenance_until"])
+            until = day_end(request, state[period_column])
             if until > at:
                 fixed.append((ident, tick(max(start, state["status_changed_at"])), tick(until)))
         for contract in [c for c in contracts if c["vehicle_id"] == ident and c["contract_status"] != "CANCELED"]:
@@ -140,7 +148,7 @@ def compute_assignment(request, session, spot, vehicles, contracts, *, candidate
         onsite_vehicle = (r.get("required_criteria_json") or {}).get("onsiteVehicleId")
         if onsite_vehicle:
             eligible = [ident for ident in eligible if ident == onsite_vehicle]
-        if r["vehicle_assignment_status"] == "LOCKED":
+        if r["vehicle_assignment_status"] == "LOCKED" or r["reservation_id"] in started_handovers:
             eligible = [ident for ident in eligible if ident == r["assigned_vehicle_id"]]
         elif r["vehicle_assignment_status"] not in MOVABLE + ("SOFT_HOLD",):
             raise Problem(409, "RESERVATION_ASSIGNMENT_INVALID")
@@ -152,6 +160,9 @@ def compute_assignment(request, session, spot, vehicles, contracts, *, candidate
 def reservation_history(request, session, previous, values, event, actor_id, reason=None, *, customer=False):
     from app.notifications import record_notification
     new = {**previous, **values}
+    if new["reservation_status"] in ("CANCELED", "REJECTED", "EXPIRED"):
+        from app.handover import close_for_reservation
+        close_for_reservation(request, session, new, reason or event)
     from app.chat import queue_booking_chat
     queue_booking_chat(request, session, new["reservation_id"], new["reservation_status"])
     h = request.app.state.db.table("MSP_RESERVATION_HISTORY")
@@ -184,3 +195,8 @@ def apply_assignments(request, session, assignments, reservations, actor_id, *, 
         if result.rowcount != 1:
             raise Problem(409, "RESERVATION_CHANGED")
         reservation_history(request, session, previous, values, "VEHICLE_REASSIGNED", actor_id)
+        if (previous.get("required_criteria_json") or {}).get("handoverFlowVersion") == 2:
+            from app.handover import current, save
+            h = current(request, session, ident, include_canceled=False)
+            if h and h["handover_status"] == "NOT_STARTED":
+                save(request, session, h, vehicle_id=vehicle_id)

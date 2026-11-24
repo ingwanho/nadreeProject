@@ -5,8 +5,8 @@ from datetime import date, timedelta, timezone
 from typing import Annotated
 
 import jwt
-from fastapi import APIRouter, Depends, Request, Response
-from pydantic import Field, SecretStr
+from fastapi import APIRouter, Depends, Query, Request, Response
+from pydantic import Field, SecretStr, model_validator
 from sqlalchemy import select
 
 from app.availability import compute_assignment, price_key, reservation_history
@@ -24,7 +24,7 @@ from app.rental_common import (contracts_for, day_end, fleet, iso, local_date, l
                                lock_key, qr_digest, verify_qr)
 from app.rental_inputs import Qr
 from app.rentals import check_handover_vehicle, paid_booking, start_contract
-from app.schemas import Body
+from app.schemas import Body, Identifier
 from app.security import now, user_principal
 
 router = APIRouter(prefix="/api/v1/nadree/rental", tags=["Nadree customer rentals"],
@@ -38,8 +38,16 @@ class Lookup(Qr):
     reservationId: str | None = Field(default=None, min_length=1, max_length=50)
 
 
-class Quote(Qr):
+class Quote(Body):
+    qrCode: SecretStr | None = Field(default=None, min_length=1, max_length=4096)
+    vehicleId: Identifier | None = None
     returnDate: date
+
+    @model_validator(mode="after")
+    def selection(self):
+        if (self.qrCode is None) == (self.vehicleId is None):
+            raise ValueError("Supply exactly one of qrCode and vehicleId")
+        return self
 
 
 class OnsiteRequest(Quote):
@@ -70,6 +78,51 @@ def resolve(request, session, raw, *, lock=False):
     if not item or not item["vehicle"]["is_active"] or not item["rental"]["rental_enabled"] or not item["model"] or not item["model"]["is_active"]:
         raise Problem(409, "VEHICLE_UNAVAILABLE")
     return spot, item
+
+
+def resolve_vehicle(request, session, vehicle_id, *, lock=False):
+    db = request.app.state.db
+    membership, master = db.table("MSP_VEHICLE_SPOT_HISTORY"), db.table("MSP_SPOT_MASTER")
+    spots = list(session.scalars(select(membership.c.spot_master_id).where(
+        membership.c.vehicle_id == vehicle_id, membership.c.released_at.is_(None))))
+    if len(spots) != 1:
+        raise Problem(404, "VEHICLE_NOT_FOUND")
+    if lock:
+        session.execute(select(master.c.spot_master_id).where(master.c.spot_master_id == spots[0]).with_for_update()).first()
+    spot = _spot(request, session, spots[0])
+    item = fleet(request, session, spot, vehicle_ids=[vehicle_id], lock=lock).get(vehicle_id)
+    if not item:
+        raise Problem(404, "VEHICLE_NOT_FOUND")
+    return spot, item
+
+
+def selected_vehicle(request, session, body, *, lock=False):
+    return (resolve(request, session, body.qrCode.get_secret_value(), lock=lock) if body.qrCode is not None
+            else resolve_vehicle(request, session, body.vehicleId, lock=lock))
+
+
+@router.get("/onsite/vehicles", summary="List specific vehicles available for a customer-requested onsite rental")
+def onsite_vehicles(request: Request, shopId: str = Query(..., min_length=1, max_length=36),
+                    returnDate: date = Query(...), page: int = Query(1, ge=1),
+                    pageSize: int = Query(20, ge=1, le=100), session=DB):
+    user = user_principal(request, session)
+    limited(request, user.uid_token)
+    spot = _spot(request, session, shopId)
+    vehicles = fleet(request, session, spot)
+    items = []
+    for ident, item in sorted(vehicles.items()):
+        try:
+            _, price = plan(request, session, spot, item, returnDate)
+        except Problem as error:
+            if error.status in (404, 409, 410):
+                continue
+            raise
+        items.append({"vehicleId": ident, "vehicleNo": item["rental"]["plate_number_full"] or item["vehicle"].get("plate_number"),
+            "model": _model_view(request, item["model"], vehicle_image_key=item["rental"].get("vehicle_image_key")),
+            "spot": _spot_view(spot), "price": price})
+    total = len(items)
+    return {"status": "success", "items": items[(page - 1) * pageSize:page * pageSize],
+            "page": page, "pageSize": pageSize, "totalCount": total, "hasNext": page * pageSize < total}
 
 
 def limited(request, uid):
@@ -106,9 +159,16 @@ def lookup(body: Lookup, request: Request, session=DB):
             raise Problem(409, "RESERVATION_SELECTION_REQUIRED")
         own = candidates[0] if candidates else None
     actions = []
+    handover = None
     if own:
         state = own["reservation_status"]
         actions = ["CONFIRM_RECEIPT"] if view(request, own)["canReceive"] else ["WAIT_APPROVAL"] if state == "REQUESTED" else ["WAIT_HANDOVER"] if state == "APPROVED" else []
+        from app.handover import current, is_v2, summary
+        if is_v2(own) and state == "APPROVED":
+            h = current(request, session, own["reservation_id"], include_canceled=False)
+            if h:
+                handover = {"handoverId": h["handover_id"], **summary(h)}
+                actions = ["START_HANDOVER" if h["handover_status"] == "NOT_STARTED" else "CONTINUE_HANDOVER"]
     elif (item["state"] or {}).get("status") == "AVAILABLE":
         actions = ["ONSITE_QUOTE"]
     contract = next((c for c in contracts_for(request, session, [vehicle])
@@ -120,7 +180,7 @@ def lookup(body: Lookup, request: Request, session=DB):
             "spot": _spot_view(spot), "reservationId": own["reservation_id"] if own else None,
             "reservationStatus": own["reservation_status"] if own else None,
             "vehicleMatch": "ASSIGNED" if own and own["assigned_vehicle_id"] == vehicle else "MODEL_PENDING" if own else None,
-            **view(request, own, contract), "availableActions": actions}
+            **view(request, own, contract), "handover": handover, "availableActions": actions}
 
 
 def plan(request, session, spot, item, return_date):
@@ -158,7 +218,7 @@ def quote(body: Quote, request: Request, session=DB):
     user = user_principal(request, session)
     require_schema(request.app.state.db)
     limited(request, user.uid_token)
-    spot, item = resolve(request, session, body.qrCode.get_secret_value())
+    spot, item = selected_vehicle(request, session, body)
     from app.account_deletion_scope import new_work_allowed
     new_work_allowed(request.app.state.db, session, spot["spot_master_id"])
     _, price = plan(request, session, spot, item, body.returnDate)
@@ -193,7 +253,7 @@ def insert_reservation(request, session, spot, item, uid, return_date, *, key=No
         assigned_vehicle_id=item["vehicle"]["vehicle_id"] if approved else None, client_request_id=key,
         hold_expires_at=day_end(request, local_date(request, at)), delivery_request_type="PICKUP",
         created_at=at, updated_at=at)
-    candidate["required_criteria_json"].update(requestType="ONSITE", customerReceiptRequired=True,
+    candidate["required_criteria_json"].update(requestType="ONSITE", customerReceiptRequired=False, handoverFlowVersion=2,
         onsiteVehicleId=item["vehicle"]["vehicle_id"], onsiteRequest=evidence,
         paymentMethod=EXTERNAL, quote=price,
         selected={"spotMasterId": spot["spot_master_id"], "modelId": item["rental"]["model_id"],
@@ -256,7 +316,8 @@ def _submit_onsite(body, request, session, uid):
     db = request.app.state.db
     claims = decode_quote(request, body.quoteToken.get_secret_value(), uid)
     evidence = {key: claims[key] for key in ("vehicleId", "startDate", "returnDate", "totalPrice", "currency")}
-    evidence["qrDigest"] = qr_digest(request, body.qrCode.get_secret_value())
+    if body.qrCode is not None:
+        evidence["qrDigest"] = qr_digest(request, body.qrCode.get_secret_value())
     if str(body.returnDate) != claims["returnDate"]:
         raise Problem(409, "ONSITE_QUOTE_MISMATCH")
     r = db.table("MSP_RESERVATION")
@@ -269,11 +330,11 @@ def _submit_onsite(body, request, session, uid):
     stamp = int(now().replace(tzinfo=timezone.utc).timestamp())
     if not claims["iat"] <= stamp < claims["exp"] or claims["startDate"] != str(local_date(request, now())):
         raise Problem(409, "ONSITE_QUOTE_EXPIRED")
-    spot, item = resolve(request, session, body.qrCode.get_secret_value())
+    spot, item = selected_vehicle(request, session, body)
     if item["vehicle"]["vehicle_id"] != claims["vehicleId"]:
         raise Problem(409, "ONSITE_QUOTE_MISMATCH")
     lock_key(session, "nadri-model", spot["spot_master_id"] + ":" + item["rental"]["model_id"])
-    spot, item = resolve(request, session, body.qrCode.get_secret_value(), lock=True)
+    spot, item = selected_vehicle(request, session, body, lock=True)
     if item["vehicle"]["vehicle_id"] != claims["vehicleId"]:
         raise Problem(409, "ONSITE_QUOTE_MISMATCH")
     from app.account_deletion_scope import new_work_allowed

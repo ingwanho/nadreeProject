@@ -1,0 +1,56 @@
+{
+  "date": "2026-11-24",
+  "target": "Local Postman simulation, synthetic S3 bucket only",
+  "tests": "16 passed: 13 isolated media safety tests and 3 real SDK wire scenarios",
+  "establishes": [
+    "HEAD/GET/CopyObject with IfMatch/source VersionId pins",
+    "missing upload and unavailable storage error mapping"
+  ],
+  "does_not_establish": [
+    "actual AWS IAM/bucket/CORS",
+    "actual media decoding by ffprobe",
+    "production deployment"
+  ],
+  "requests": [
+    {
+      "method": "HEAD",
+      "path": "/nadree-synthetic-test/success/file.mp4",
+      "status": 200,
+      "conditional_get": false,
+      "version_pinned_copy": false,
+      "conditional_copy": false
+    },
+    {
+      "method": "GET",
+      "path": "/nadree-synthetic-test/success/file.mp4?versionId=source-version-1",
+      "status": 200,
+      "conditional_get": true,
+      "version_pinned_copy": false,
+      "conditional_copy": false
+    },
+    {
+      "method": "PUT",
+      "path": "/nadree-synthetic-test/handover-media/test/file.mp4",
+      "status": 200,
+      "conditional_get": false,
+      "version_pinned_copy": true,
+      "conditional_copy": true
+    },
+    {
+      "method": "HEAD",
+      "path": "/nadree-synthetic-test/missing/file.mp4",
+      "status": 404,
+      "conditional_get": false,
+      "version_pinned_copy": false,
+      "conditional_copy": false
+    },
+    {
+      "method": "HEAD",
+      "path": "/nadree-synthetic-test/unavailable/file.mp4",
+      "status": 503,
+      "conditional_get": false,
+      "version_pinned_copy": false,
+      "conditional_copy": false
+    }
+  ]
+}

@@ -59,7 +59,7 @@ def test_customer_availability_uses_the_nodes_canonical_name(named_root):
 
     response = ctx["client"].post("/api/v1/nadree/rental/availability", json={
         "startDate": start.isoformat(), "returnDate": (start + timedelta(days=2)).isoformat(),
-        "cc": 125, "deliveryRequested": False})
+        "minCc": 125, "maxCc": 125, "deliveryRequested": False})
 
     assert response.status_code == 200, response.text
     items = [item for item in response.json()["items"] if item["shopId"] == "root"]

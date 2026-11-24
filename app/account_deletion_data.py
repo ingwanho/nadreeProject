@@ -10,6 +10,7 @@ ANONYMOUS_ADMIN = str(uuid.uuid5(uuid.NAMESPACE_URL, "https://na-dree.com/nadree
 ADMIN_JSON_FIELDS = {"adminId", "changedBy", "changed_by", "createdBy", "approvedByAdminId",
                      "handedOverByAdminId", "receivedByAdminId", "receiptRecoveredByAdminId"}
 OWN_REFERENCES = {"MSP_VEHICLE_STATUS": "changed_by", "MSP_VEHICLE_QR_HISTORY": "changed_by",
+    "MSP_RENTAL_HANDOVER": "assigned_admin_id",
     "MSP_RESERVATION_HISTORY": "changed_by", "MSP_RENTAL_CONTRACT_HISTORY": "changed_by",
     "MSP_RENTAL_PAYMENT": "refund_requested_by_admin_id"}
 

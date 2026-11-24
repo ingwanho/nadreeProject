@@ -11,6 +11,8 @@ from app.chat import FirebaseChat, router as chat_router
 from app.chat_push_endpoint import GooglePushIdentity, router as chat_push_router
 from app.config import Settings
 from app.images import ImageURLs
+from app.handover import router as handover_router
+from app.handover_media import HandoverMedia
 from app.db import Database
 from app.errors import Problem, install_handlers
 from app.fcm import FcmSender
@@ -31,6 +33,7 @@ from app.customer_qr import router as customer_qr_router
 from app.pricing import router as pricing_router
 from app.readmodels import router as readmodels_router
 from app.rentals import router as rentals_router
+from app.rental_changes import router as rental_changes_router
 from app.vehicles import router as vehicles_router
 from app.responses import Error
 from app.account_deletions import router as account_deletions_router
@@ -46,6 +49,7 @@ OPENAPI_TAGS = [
     {"name": "W04 Pricing", "description": "Vehicle prices and rental pricing tiers"},
     {"name": "W05 Delivery", "description": "Delivery regions and fees"},
     {"name": "W06 Reservations and rentals", "description": "Reservations, rentals, handover, and returns. Passport routes remain disabled. Seeded reservations use `NRTEST-RES-*`; vehicles use `NRTEST-VEHICLE-*`."},
+    {"name": "Rental handover", "description": "Customer-first handover. Approval creates the priced preparation. Customer: start, save and submit form, upload video, complete signature. Assigned admin: required extra photo, optional passport/license photos and form review. Both sides must finish before rental start. Signature evidence is not stored."},
     {"name": "W07 Dashboard and calendar", "description": "Operational dashboard and calendar views"},
     {"name": "W08 PayPal webhook", "description": "PayPal payments, refunds, and webhooks"},
     {"name": "Nadree customer users", "description": "Nadree customer UID sign-in, profiles, and tokens. Sign-in requires both a Firebase ID Token and the UID in the request body."},
@@ -80,7 +84,7 @@ See `docs/nadree-api-test-handoff-2026-10-01.md` in the repository for the full 
 
 
 def create_app(settings=None, db=None, limiter=None, mailer=None, fcm=None, locations=None, customer_auth=None,
-               passport_storage=None, deletion_store=None, images=None):
+               passport_storage=None, deletion_store=None, images=None, handover_media=None):
     settings = settings or Settings()
     if settings.env == "production" and (len(settings.jwt_secret.get_secret_value().encode()) < 32
                                          or not settings.database_url.get_secret_value()
@@ -106,15 +110,11 @@ def create_app(settings=None, db=None, limiter=None, mailer=None, fcm=None, loca
         close_images = getattr(app.state.images, "close", None)
         if close_images is not None:
             close_images()
+        application.state.handover_media.close()
 
     application = FastAPI(
         title="Nadree API",
-        description=OPENAPI_DESCRIPTION + (
-            "\n\n**TEMPORARY TEST IMAGE FIELD SWAP ENABLED.** Responses currently put the display "
-            "URL in ...ImageKey and the stored object key in ...ImageUrl. Field names and request "
-            "bodies are unchanged. Static examples show the normal layout. Restore "
-            "NADREE_IMAGE_RESPONSE_TEST_SWAP=false and restart after frontend testing."
-            if getattr(settings, "image_response_test_swap", False) else ""),
+        description=OPENAPI_DESCRIPTION,
         version="0.1.0",
         openapi_url="/openapi.json",
         docs_url="/docs",
@@ -136,6 +136,7 @@ def create_app(settings=None, db=None, limiter=None, mailer=None, fcm=None, loca
         )
     application.state.settings = settings
     application.state.images = images or ImageURLs(settings)
+    application.state.handover_media = handover_media or HandoverMedia(settings)
     application.state.db = db or Database(settings.database_url.get_secret_value())
     application.state.limiter = limiter or RateLimiter(settings.redis_url.get_secret_value())
     application.state.mailer = mailer or PasswordMailer(settings)
@@ -172,6 +173,8 @@ def create_app(settings=None, db=None, limiter=None, mailer=None, fcm=None, loca
         require_schema(application.state.db)
         from app.onsite_requests import require_schema as require_request_schema
         require_request_schema(application.state.db)
+        from app.handover import require_schema as require_handover_schema
+        require_handover_schema(application.state.db)
         if not getattr(application.state.fcm, "configured", True):
             limitations.append("FCM_NOT_CONFIGURED")
         if settings.env == "production" and not application.state.customer_auth.configured:
@@ -199,6 +202,8 @@ def create_app(settings=None, db=None, limiter=None, mailer=None, fcm=None, loca
     application.include_router(customer_rentals_router)
     application.include_router(customer_qr_router)
     application.include_router(customer_users_router)
+    application.include_router(handover_router)
+    application.include_router(rental_changes_router)
 
     def custom_openapi():
         if application.openapi_schema:

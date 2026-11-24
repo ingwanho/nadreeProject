@@ -1,0 +1,30 @@
+purpose:
+  stands_in_for: S3 HeadObject, GetObject and CopyObject on a synthetic private bucket.
+  unblocks: Local verification of source-version pinning and storage failure handling; does not verify AWS IAM or media decoding.
+assumptions:
+  - id: source-pinning
+    status: supported
+    claim: The S3 contract supports IfMatch on downloads and CopySourceIfMatch plus a source VersionId on copy.
+    reason: These are documented S3 SDK request fields; the stand-in checks their presence but does not establish deployed bucket configuration.
+    verification: '2026-11-24 real boto3 HTTP run passed: HEAD, IfMatch+VersionId GET, version-pinned conditional COPY; missing upload 404 and unavailable storage 503 mapped to application errors. Three wire scenarios plus thirteen policy/inspection/stub cases passed. File decoding and IAM were not tested by the stand-in.'
+    source: https://docs.aws.amazon.com/boto3/latest/reference/services/s3/client/copy_object.html
+    updated_at: '2026-11-24'
+  - id: executable-media-validation
+    status: unknown
+    claim: The deployed ffprobe can inspect actual customer MP4 and photo files.
+    reason: ffprobe is absent in this local environment; subprocess results were isolated test doubles.
+    verification: Run actual valid and invalid files after installing ffprobe on the server.
+    source: https://ffmpeg.org/ffprobe.html
+    updated_at: '2026-11-24'
+  - id: live-storage
+    status: unknown
+    claim: The deployed EC2 role can upload, inspect, copy and read the new handover prefixes.
+    reason: No live bucket or IAM configuration was changed or tested.
+    verification: Pending server application; provider mock search was skipped because the installed CLI lacks status and no shared workspace was consulted.
+    source: app/handover_media.py; deployment/s3-handover-policy.json
+    updated_at: '2026-11-24'
+fingerprints:
+  - id: local-handover-implementation
+    date: '2026-11-24'
+    commit: f974fc2 plus uncommitted handover changes
+    cli: 1.74.0

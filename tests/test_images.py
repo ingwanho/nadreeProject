@@ -168,7 +168,7 @@ def test_customer_public_availability_preserves_key_and_model_url_through_respon
     tomorrow = date.today() + timedelta(days=1)
     response = ctx["client"].post("/api/v1/nadree/rental/availability", json={
         "startDate": tomorrow.isoformat(), "returnDate": (tomorrow + timedelta(days=3)).isoformat(),
-        "cc": 125, "deliveryRequested": False})
+        "minCc": 125, "maxCc": 125, "deliveryRequested": False})
     assert response.status_code == 200, response.text
     assert len(response.json()["items"]) == 1
     model = response.json()["items"][0]["model"]

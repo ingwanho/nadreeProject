@@ -31,8 +31,11 @@ def outcome(key, state, *, code=None):
 
 def fingerprint(body):
     # Neither the QR original nor the signed quote is persisted in this table.
-    value = {"qrCode": body.qrCode.get_secret_value(), "returnDate": str(body.returnDate),
-             "quoteToken": body.quoteToken.get_secret_value()}
+    value = {"returnDate": str(body.returnDate), "quoteToken": body.quoteToken.get_secret_value()}
+    if body.qrCode is not None:
+        value["qrCode"] = body.qrCode.get_secret_value()
+    else:
+        value["vehicleId"] = body.vehicleId
     return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 

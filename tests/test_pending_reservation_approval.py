@@ -11,6 +11,16 @@ from app.security import now, sign_user_access
 from test_nadri_flow import prepare_rental_schema
 
 
+def legacy_booking(ctx, ident):
+    """Represent a booking made before the handover-v2 deployment."""
+    table = ctx["db"].table("MSP_RESERVATION")
+    with ctx["engine"].begin() as connection:
+        criteria = dict(connection.scalar(select(table.c.required_criteria_json).where(table.c.reservation_id == ident)) or {})
+        criteria.pop("handoverFlowVersion", None)
+        criteria["customerReceiptRequired"] = True
+        connection.execute(table.update().where(table.c.reservation_id == ident).values(required_criteria_json=criteria))
+
+
 @pytest.fixture
 def pending_bookings(setup):
     tables = prepare_rental_schema(setup)
@@ -34,7 +44,7 @@ def pending_bookings(setup):
     # Only PayPal verification is mocked; inventory, solver, transactions and
     # approval writes use the real API implementation and isolated database.
     setup["app"].state.paypal.verify_merchant = lambda merchant: None
-    def request_booking(index, offset=0, expected=200):
+    def request_booking(index, offset=0, expected=200, *, legacy=True):
         start = date.today() + timedelta(days=7 + offset)
         response = setup["client"].post("/api/v1/nadree/rental/request", headers={
             "Authorization": "Bearer " + sign_user_access(setup["settings"], "pending-user-" + str(index))},
@@ -42,6 +52,8 @@ def pending_bookings(setup):
                   "returnDate": str(start + timedelta(days=3)), "totalPrice": 30,
                   "currency": "USD", "deliveryRequested": False})
         assert response.status_code == expected, response.text
+        if legacy and response.status_code == 200:
+            legacy_booking(setup, response.json()["reservationId"])
         return response.json()
     return tables, request_booking
 

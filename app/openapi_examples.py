@@ -287,13 +287,13 @@ OPENAPI_EXAMPLES = {
     "ReceiptRecovery": {"qrCode": "NDR-Ab12Cd34", "vehicleReturned": True, "reason": "Confirmed physical recovery of the vehicle and keys"},
     "Repair": {"vehicleNumber": "DK-TEST-302", "date": "2026-10-03", "reason": "Scheduled maintenance"},
     "Move": {"vehicleNumber": "DK-TEST-301", "spotCode": TEST_SPOT["spotCode"]},
-    "BookingAction": {"bookedNo": "BONRTEST-RES-REQ-001", "action": "APPROVE"},
+    "BookingAction": {"bookedNo": "BONRTEST-RES-REQ-001", "action": "APPROVE", "finalPrice": 75},
     "BookingLocationCorrection": {"bookedNo": "BONRTEST-RES-APP-001", "changeType": "CORRECTION", "target": "PICKUP",
         "previousLocation": TEST_SPOT["location"],
         "correctedLocation": {**TEST_SPOT["location"], "latitude": -8.65001},
         "reason": "Corrected the map pin for the same shop entrance"},
     "ReservationCancel": {"reservationId": "NRTEST-RES-REQ-001", "reason": "Test cancellation"},
-    "RentApprove": {"qrCode": "NDR-Ab12Cd34", "bookedNo": "BONRTEST-RES-APP-001", "receiptRequired": True},
+    "RentApprove": {"qrCode": "NDR-Ab12Cd34", "bookedNo": "BONRTEST-RES-APP-001", "handoverId": "00000000-0000-4000-8000-000000000301"},
     "PassportUpload": {
         "bookedNo": "BONRTEST-RES-HAND-001",
         "contentType": "image/jpeg",
@@ -314,7 +314,7 @@ OPENAPI_EXAMPLES = {
     "NadriLogin": {"UID": "NRTEST-USER-001", "fcmToken": "<real-device-fcm-token>"},
     "NadriProfile": {"NAME": "Nadree Test Customer", "Age": 30, "GENDER": "M", "NATIONALITY": "KR"},
     "NadriAvailability": {
-        "startDate": "2026-10-10", "returnDate": "2026-10-13", "cc": 125,
+        "startDate": "2026-11-25", "returnDate": "2026-11-28", "minCc": 0, "maxCc": 125,
         "deliveryRequested": True, "pickupLocation": "Canggu Test Area, Bali",
         "returnLocation": "Canggu Test Area, Bali",
     },
@@ -856,4 +856,76 @@ OPENAPI_STATUS_EXAMPLES.update({
         404: {"notFinalEvidenceOfNonAcceptance": {"status": "fail", "errorCode": "DELETION_REQUEST_UNAVAILABLE"}},
     },
     ("POST", "/nadreego/admin/account-deletion-requests/{deletion_id}/reconfirm"): {202: {"sameRequest": _DELETION_WAITING}},
+})
+
+
+# Customer-first handover examples. IDs are synthetic and require approved test data.
+_TEST_HANDOVER_ID = "00000000-0000-4000-8000-000000000301"
+_HANDOVER_FORM = {
+    "spotName": "Nadree Test Branch", "customerName": "Test Customer", "vehicleNo": "TEST-125",
+    "modelName": "Vario 125", "passportNumber": "TEST-PASSPORT", "driverLicenseNumber": None,
+    "accommodationLocation": "Test Hotel, Kuta", "helmetCount": 0,
+    "startDate": "2026-11-25", "returnDate": "2026-11-28", "snsInfo": {"instagram": "test_customer"},
+}
+_HANDOVER_ITEM = {
+    "handoverId": _TEST_HANDOVER_ID, "reservationId": "NRTEST-RES-APP-001", "rentalContractId": None,
+    "spotMasterId": TEST_SPOT["spotMasterId"], "vehicleId": "NRTEST-VEHICLE-125-001",
+    "finalPrice": 75, "currency": "USD", "customerStatus": "SUBMITTED", "adminStatus": "REVIEWING",
+    "signatureStatus": "NOT_STARTED", "handoverStatus": "IN_PROGRESS", "assignedAdminId": "test-admin",
+    "canReviewForm": True, "canStartRental": False,
+    "startBlockedReasons": ["ADMIN_REVIEW_NOT_COMPLETED", "VIDEO_NOT_READY", "SIGNATURE_NOT_COMPLETED"],
+    "form": _HANDOVER_FORM, "pendingChange": None,
+    "media": {"vehicleVideo": {"required": True, "status": "NOT_UPLOADED"},
+              "passportPhoto": {"required": False, "status": "SKIPPED"},
+              "driverLicensePhoto": {"required": False, "status": "SKIPPED"},
+              "extraPhoto": {"required": True, "status": "READY", "contentType": "image/jpeg", "sizeBytes": 1048576}},
+}
+OPENAPI_EXAMPLES.update({
+    "StartHandover": {"clientRequestId": "00000000-0000-4000-8000-000000000401"},
+    "EmptyCommand": {},
+    "FormPatch": {"passportNumber": "TEST-PASSPORT", "accommodationLocation": "Test Hotel, Kuta",
+                  "helmetCount": 0, "snsInfo": {"instagram": "test_customer"}},
+    "ClaimHandover": {"trigger": "REVIEW_WITHOUT_PHOTOS"},
+    "ReviewHandover": {"action": "CONFIRM", "skipPhotoKinds": ["PASSPORT_PHOTO", "DRIVER_LICENSE_PHOTO"]},
+    "RespondHandover": {"decision": "ACCEPT"},
+    "PrepareMedia": {"clientFileId": "00000000-0000-4000-8000-000000000501", "kind": "VEHICLE_VIDEO",
+                     "contentType": "video/mp4", "sizeBytes": 1048576},
+    "UntrackedRent": {"vehicleNumber": "TEST-125", "action": "START", "endDate": "2026-11-28"},
+    "ReplaceVehicle": {"vehicleId": "NRTEST-VEHICLE-125-002", "expectedVehicleId": "NRTEST-VEHICLE-125-001",
+                       "expectedUpdatedAt": "2026-11-24T12:00:00+08:00", "reason": "Vehicle replacement"},
+    "HandoverResult": {"status": "success", "item": _HANDOVER_ITEM},
+    "HandoverList": {"status": "success", "items": [{key: value for key, value in _HANDOVER_ITEM.items()
+        if key in {"handoverId", "reservationId", "vehicleId", "customerStatus", "adminStatus", "signatureStatus",
+        "handoverStatus", "assignedAdminId", "canReviewForm", "canStartRental", "startBlockedReasons"}}],
+        "page": 1, "pageSize": 20, "totalCount": 1, "hasNext": False},
+    "HandoverMediaResult": {"status": "success", "handoverId": _TEST_HANDOVER_ID, "items": [{
+        "assetId": "00000000-0000-4000-8000-000000000501", "kind": "VEHICLE_VIDEO", "contentType": "video/mp4",
+        "durationSeconds": 9.5, "url": "https://example.invalid/private-signed-video", "expiresAt": "2026-11-25T12:15:00+08:00"}]},
+    "HandoverUploadResult": {"status": "success", "upload": {"uploadId": "00000000-0000-4000-8000-000000000501",
+        "kind": "VEHICLE_VIDEO", "method": "POST", "url": "https://example.invalid/s3-upload",
+        "fields": {"key": "handover-upload-tmp/test/upload/file.mp4", "Content-Type": "video/mp4", "policy": "SERVER_GENERATED"},
+        "expiresAt": "2026-11-25T12:15:00+08:00"}},
+    "AccommodationHistory": {"status": "success", "items": [{"accommodationLocation": "Test Hotel, Kuta",
+        "lastUsedAt": "2026-11-25T12:00:00+08:00"}], "page": 1, "pageSize": 20, "totalCount": 1, "hasNext": False},
+})
+
+OPENAPI_RESPONSE_EXAMPLES.update({
+    ("POST", "/nadreego/vehicle/qr/availability"): {"status": "success", "canRegister": False,
+        "assignment": "OTHER_SHOP", "reasonCode": "QR_ALREADY_ISSUED"},
+    ("POST", "/nadreego/vehicle/untracked-rent"): {"status": True, "errorCode": None, "message": "success",
+        "currentState": "UNTRACKED_RENT", "changedAt": "2026-11-25T12:00:00+08:00", "changedBy": "test-admin",
+        "data": {"vehicleId": "NRTEST-VEHICLE-125-001", "vehicleStatus": "UNTRACKED_RENT", "untrackedRentUntil": "2026-11-28"}},
+    ("GET", "/nadreego/booking/{booked_no}/replacement-vehicles"): {"status": "success", "items": [],
+        "page": 1, "pageSize": 20, "totalCount": 0, "hasNext": False,
+        "assignedVehicleId": "NRTEST-VEHICLE-125-001", "reservationUpdatedAt": "2026-11-24T12:00:00+08:00"},
+    ("PATCH", "/nadreego/booking/{booked_no}/vehicle"): {"status": "success", "bookedNo": "BONRTEST-RES-APP-001",
+        "reservationId": "NRTEST-RES-APP-001", "vehicleId": "NRTEST-VEHICLE-125-002", "handoverId": _TEST_HANDOVER_ID,
+        "handoverRestartRequired": True, "finalPrice": 75, "reservationUpdatedAt": "2026-11-24T12:00:00+08:00"},
+    ("GET", "/api/v1/nadree/rental/onsite/vehicles"): {"status": "success", "items": [],
+        "page": 1, "pageSize": 20, "totalCount": 0, "hasNext": False},
+    ("POST", "/nadreego/rent/approve"): {"status": True, "errorCode": None, "message": "success",
+        "currentState": "ON_RENT", "changedAt": "2026-11-25T12:00:00+08:00", "changedBy": "test-admin",
+        "data": {"bookedNo": "BONRTEST-RES-APP-001", "rentalContractId": "NRTEST-CONTRACT-001",
+            "handoverId": _TEST_HANDOVER_ID, "handoverStatus": "STARTED", "contractStatus": "ON_RENT",
+            "vehicleStatus": "ON_RENT", "plannedEndDate": "2026-11-28", "finalPrice": 75, "currency": "USD"}},
 })

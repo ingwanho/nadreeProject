@@ -45,6 +45,47 @@ def test_receipt_schema_has_no_new_payment_or_qr_tables():
     assert "customer_qr" not in metadata.tables["MSP_VEHICLE_QR"].c
 
 
+def test_handover_mysql_schema_has_one_price_and_unique_active_preparation():
+    from sqlalchemy.schema import CreateTable
+    from app.rental_schema import metadata
+    handover = metadata.tables["MSP_RENTAL_HANDOVER"]
+    ddl = str(CreateTable(handover).compile(dialect=mysql.dialect()))
+    assert "GENERATED ALWAYS AS" in ddl and "STORED" in ddl
+    assert "UNIQUE (active_reservation_id)" in ddl
+    assert "UNIQUE (uid_token, client_request_id)" in ddl
+    assert "final_price" in handover.c and "signature_status" in handover.c
+    assert "final_price" not in metadata.tables["MSP_RENTAL_CONTRACT"].c
+    assert "passport_img_key" not in metadata.tables["MSP_RENTAL_USER"].c
+    assert "display_snapshot_json" not in handover.c and "pending_change_id" not in handover.c
+
+
+def test_handover_ddl_matches_parent_column_collations():
+    from app.migrate import handover_create_sql
+    class Parents:
+        def get_columns(self, table):
+            return [{"name": "reservation_id" if table == "MSP_RESERVATION" else "uid_token",
+                     "type": mysql.VARCHAR(50 if table == "MSP_RESERVATION" else 36)}]
+        def get_table_options(self, table):
+            return {"mysql_default charset": "utf8mb4", "mysql_collate": "utf8mb4_unicode_ci"}
+    sql = handover_create_sql(Parents(), mysql_references=True)
+    assert "reservation_id VARCHAR(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci" in sql
+    assert "uid_token VARCHAR(36) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci" in sql
+    assert "handover_id VARCHAR(36) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin" in sql
+
+
+def test_migration_will_not_discard_legacy_passport_references(setup):
+    with setup["engine"].begin() as conn:
+        conn.execute(text("CREATE TABLE MSP_RENTAL_USER (uid_token VARCHAR(36) PRIMARY KEY, passport_img_key VARCHAR(500))"))
+        conn.execute(text("INSERT INTO MSP_RENTAL_USER VALUES ('synthetic-user', 'private/legacy.jpg')"))
+    with pytest.raises(ValueError, match="[Pp]assport|passport"):
+        migration_plan(setup["db"])
+    with setup["engine"].begin() as conn:
+        conn.execute(text("UPDATE MSP_RENTAL_USER SET passport_img_key = NULL"))
+    plan = {label: sql for label, sql, _ in migration_plan(setup["db"])}
+    assert "DROP COLUMN passport_img_key" in plan["drop retired MSP_RENTAL_USER.passport_img_key"]
+    assert "passport_img_key" in {c["name"] for c in inspect(setup["engine"]).get_columns("MSP_RENTAL_USER")}
+
+
 def test_onsite_request_migration_is_read_only_and_idempotent(setup):
     from app.rental_schema import metadata
     plan = migration_plan(setup["db"])
@@ -231,7 +272,10 @@ def test_existing_rental_user_gets_refresh_token_table_plan(setup):
     plan = migration_plan(setup["db"])
     labels = {label for label, _, _ in plan}
     assert "add MSP_RENTAL_USER.user_access_revoked_at" in labels
-    assert "add MSP_RENTAL_USER.passport_img_key" in labels
+    assert "add MSP_RENTAL_USER.passport_img_key" not in labels
+    assert "add MSP_RENTAL_USER.passport_number_enc" in labels
+    assert "add MSP_RENTAL_USER.driver_license_number_enc" in labels
+    assert "add MSP_RENTAL_USER.sns_info" in labels
     assert "create MSP_RENTAL_USER_REFRESH_TOKEN (nadri user sessions)" in labels
 
 

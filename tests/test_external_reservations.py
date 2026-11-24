@@ -56,6 +56,8 @@ def row(ctx, ident):
 
 
 def approve(ctx, ident):
+    from test_pending_reservation_approval import legacy_booking
+    legacy_booking(ctx, ident)
     response = ctx["client"].post("/nadreego/booking/action", headers=ctx["admin"],
         json={"bookedNo": "BO" + ident, "action": "APPROVE"})
     assert response.status_code == 200, response.text

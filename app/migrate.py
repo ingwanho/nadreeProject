@@ -2,7 +2,7 @@ import argparse
 import re
 from pathlib import Path
 
-from sqlalchemy import Column, VARCHAR, inspect, select, text
+from sqlalchemy import Column, MetaData, VARCHAR, inspect, select, text
 from sqlalchemy.dialects import mysql
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.schema import CreateColumn, CreateIndex, CreateTable
@@ -31,6 +31,26 @@ PERFORMANCE_INDEXES = {
 }
 
 
+def handover_create_sql(inspector, *, mysql_references=False):
+    """Match the actual shared parent ID collations, not the DB's current default."""
+    from app.rental_schema import metadata
+    copied = MetaData()
+    for name in ("MSP_RESERVATION", "MSP_RENTAL_USER", "MSP_RENTAL_HANDOVER"):
+        metadata.tables[name].to_metadata(copied)
+    handover = copied.tables["MSP_RENTAL_HANDOVER"]
+    if mysql_references:
+        for target, parent, column in (("reservation_id", "MSP_RESERVATION", "reservation_id"),
+                                       ("uid_token", "MSP_RENTAL_USER", "uid_token")):
+            parent_type = next(c["type"] for c in inspector.get_columns(parent) if c["name"] == column)
+            options = inspector.get_table_options(parent)
+            collation = getattr(parent_type, "collation", None) or options.get("mysql_collate")
+            charset = getattr(parent_type, "charset", None) or options.get("mysql_charset") or options.get("mysql_default charset")
+            if not collation:
+                raise ValueError(parent + "." + column + " collation must be verified before handover migration")
+            handover.c[target].type = mysql.VARCHAR(parent_type.length, charset=charset, collation=collation)
+    return str(CreateTable(handover).compile(dialect=mysql.dialect()))
+
+
 def migration_plan(db):
     inspector = inspect(db.engine)
     tables = set(inspector.get_table_names())
@@ -42,6 +62,21 @@ def migration_plan(db):
         raise ValueError("Existing service tables missing: " + ", ".join(sorted(missing_tables)))
     operations = []
     from app.rental_schema import metadata as rental_metadata
+    if {"MSP_RESERVATION", "MSP_RENTAL_USER"}.issubset(tables):
+        handover = rental_metadata.tables["MSP_RENTAL_HANDOVER"]
+        if handover.name not in tables:
+            operations.append(("create " + handover.name, handover_create_sql(inspector,
+                mysql_references=db.engine.dialect.name == "mysql"), {}))
+            for index in sorted(handover.indexes, key=lambda item: item.name):
+                operations.append(("index " + index.name, str(CreateIndex(index).compile(dialect=mysql.dialect())), {}))
+        else:
+            columns = {row["name"] for row in inspector.get_columns(handover.name)}
+            if set(handover.c.keys()) - columns:
+                raise ValueError("MSP_RENTAL_HANDOVER has an incompatible definition; manual migration required")
+            unique = {tuple(row["column_names"]) for row in inspector.get_unique_constraints(handover.name)}
+            unique.update(tuple(row["column_names"]) for row in inspector.get_indexes(handover.name) if row["unique"])
+            if not {("active_reservation_id",), ("uid_token", "client_request_id")}.issubset(unique):
+                raise ValueError("MSP_RENTAL_HANDOVER missing active/request uniqueness; manual review required")
     name = "MSP_RENTAL_ONSITE_REQUEST"
     table = rental_metadata.tables[name]
     if name not in tables:
@@ -199,6 +234,43 @@ def migration_plan(db):
             if column not in columns:
                 operations.append(("add MSP_RENTAL_CONTRACT." + column,
                     "ALTER TABLE MSP_RENTAL_CONTRACT ADD COLUMN " + column + " JSON DEFAULT NULL", {}))
+        if "handover_id" not in columns:
+            operations.append(("add MSP_RENTAL_CONTRACT.handover_id",
+                "ALTER TABLE MSP_RENTAL_CONTRACT ADD COLUMN handover_id VARCHAR(36) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin DEFAULT NULL", {}))
+        unique = {tuple(row["column_names"]) for row in inspector.get_unique_constraints("MSP_RENTAL_CONTRACT")}
+        unique.update(tuple(row["column_names"]) for row in inspector.get_indexes("MSP_RENTAL_CONTRACT") if row["unique"])
+        if ("handover_id",) not in unique:
+            operations.append(("unique MSP_RENTAL_CONTRACT.handover_id",
+                "CREATE UNIQUE INDEX uq_contract_handover ON MSP_RENTAL_CONTRACT (handover_id)", {}))
+        if not any(tuple(fk["constrained_columns"]) == ("handover_id",) for fk in inspector.get_foreign_keys("MSP_RENTAL_CONTRACT")):
+            operations.append(("foreign key MSP_RENTAL_CONTRACT.handover_id",
+                "ALTER TABLE MSP_RENTAL_CONTRACT ADD CONSTRAINT fk_contract_handover FOREIGN KEY (handover_id) "
+                "REFERENCES MSP_RENTAL_HANDOVER (handover_id)", {}))
+    if "MSP_VEHICLE_STATUS" in tables:
+        columns = {row["name"] for row in inspector.get_columns("MSP_VEHICLE_STATUS")}
+        if "untracked_rent_until" not in columns:
+            operations.append(("add MSP_VEHICLE_STATUS.untracked_rent_until",
+                "ALTER TABLE MSP_VEHICLE_STATUS ADD COLUMN untracked_rent_until DATE DEFAULT NULL", {}))
+        checks = inspector.get_check_constraints("MSP_VEHICLE_STATUS")
+        state_checks = [c for c in checks if re.search(r"\bstatus\b", c.get("sqltext", ""), re.I)
+                        and "AVAILABLE" in c.get("sqltext", "")]
+        for check in state_checks:
+            if "UNTRACKED_RENT" not in check["sqltext"]:
+                name = check.get("name") or ""
+                if not re.fullmatch(r"[A-Za-z0-9_]+", name) or not re.search(r"['\"]DISABLED['\"]", check["sqltext"]):
+                    raise ValueError("Vehicle status constraint requires manual review")
+                expanded = re.sub(r"(['\"])DISABLED\1", "'DISABLED','UNTRACKED_RENT'", check["sqltext"])
+                operations.append(("expand MSP_VEHICLE_STATUS.status", f"ALTER TABLE MSP_VEHICLE_STATUS DROP CHECK `{name}`, "
+                    f"ADD CONSTRAINT `{name}` CHECK ({expanded})", {}))
+        if not state_checks:
+            operations.append(("constraint MSP_VEHICLE_STATUS.status",
+                "ALTER TABLE MSP_VEHICLE_STATUS ADD CONSTRAINT ck_vehicle_status CHECK "
+                "(status IN ('AVAILABLE','ON_RENT','MAINTENANCE','DISABLED','UNTRACKED_RENT'))", {}))
+        if not any(c.get("name") == "ck_untracked_rent_until" for c in checks):
+            operations.append(("constraint MSP_VEHICLE_STATUS.untracked_rent_until",
+                "ALTER TABLE MSP_VEHICLE_STATUS ADD CONSTRAINT ck_untracked_rent_until CHECK "
+                "((status = 'UNTRACKED_RENT' AND untracked_rent_until IS NOT NULL) OR "
+                "(status != 'UNTRACKED_RENT' AND untracked_rent_until IS NULL))", {}))
     if "MSP_PAYPAL_WEBHOOK_EVENT" in tables:
         webhook_unique = {tuple(item["column_names"]) for item in inspector.get_unique_constraints("MSP_PAYPAL_WEBHOOK_EVENT")}
         webhook_unique.update(tuple(item["column_names"]) for item in inspector.get_indexes("MSP_PAYPAL_WEBHOOK_EVENT") if item["unique"])
@@ -211,9 +283,16 @@ def migration_plan(db):
         if "user_access_revoked_at" not in user_columns:
             operations.append(("add MSP_RENTAL_USER.user_access_revoked_at",
                 "ALTER TABLE MSP_RENTAL_USER ADD COLUMN user_access_revoked_at DATETIME DEFAULT NULL", {}))
-        if "passport_img_key" not in user_columns:
-            operations.append(("add MSP_RENTAL_USER.passport_img_key",
-                "ALTER TABLE MSP_RENTAL_USER ADD COLUMN passport_img_key VARCHAR(500) DEFAULT NULL", {}))
+        for column in ("passport_number_enc", "driver_license_number_enc", "sns_info"):
+            if column not in user_columns:
+                operations.append(("add MSP_RENTAL_USER." + column,
+                    "ALTER TABLE MSP_RENTAL_USER ADD COLUMN " + column + " TEXT DEFAULT NULL", {}))
+        if "passport_img_key" in user_columns:
+            with db.engine.connect() as connection:
+                if connection.execute(text("SELECT 1 FROM MSP_RENTAL_USER WHERE passport_img_key IS NOT NULL LIMIT 1")).first():
+                    raise ValueError("Existing passport image references require backup/retention review before column removal")
+            operations.append(("drop retired MSP_RENTAL_USER.passport_img_key",
+                "ALTER TABLE MSP_RENTAL_USER DROP COLUMN passport_img_key", {}))
         if "MSP_RENTAL_USER_REFRESH_TOKEN" not in tables:
             sql = (Path(__file__).resolve().parent.parent / "migrations" / "008_rental_user_refresh_token.sql").read_text()
             operations.append(("create MSP_RENTAL_USER_REFRESH_TOKEN (nadri user sessions)", sql, {}))

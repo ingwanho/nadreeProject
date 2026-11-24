@@ -10,7 +10,7 @@ def seed(setup):
     metadata.create_all(setup["engine"])
     with setup["engine"].begin() as conn:
         conn.execute(metadata.tables["MSP_RENTAL_USER"].insert().values(
-            uid_token="inbox-customer", name="Test customer", nationality="KR", passport_img_key="private-secret"))
+            uid_token="inbox-customer", name="Test customer", nationality="KR", passport_number_enc="private-secret"))
         conn.execute(metadata.tables["MSP_RESERVATION"].insert().values(
             reservation_id="inbox-booking", uid_token="inbox-customer", spot_master_id="root", model_id="model",
             start_datetime=now() + timedelta(days=3), end_datetime=now() + timedelta(days=5),

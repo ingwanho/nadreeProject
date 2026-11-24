@@ -250,6 +250,16 @@ def booking_handover_status(request, session, root, reservation, *, payments=Non
     """Read-only action eligibility using the same guards as the locked write API."""
     if not reservation or reservation["reservation_status"] != "APPROVED":
         return {"canHandOver": False, "handoverBlockedReason": "RESERVATION_NOT_APPROVED"}
+    from app.handover import current, is_v2, summary
+    if is_v2(reservation):
+        h = current(request, session, reservation["reservation_id"], include_canceled=False)
+        from app.security import principal
+        admin_id = principal(request, session).admin["admin_id"]
+        if not h:
+            return {"canHandOver": False, "handoverBlockedReason": "HANDOVER_REQUIRED"}
+        status = summary(h, admin_id=admin_id)
+        if not status["canStartRental"]:
+            return {"canHandOver": False, "handoverBlockedReason": "HANDOVER_NOT_READY"}
     try:
         cache = cache if cache is not None else {}
         model_id = reservation["model_id"]
@@ -305,6 +315,21 @@ def contract_history(request, session, ident, previous, new, actor, event):
 def booking_action(body: BookingAction, request: Request, background_tasks: BackgroundTasks, session: Session = DB):
     actor, root = context(request, session, write=True, settlement=body.action in ("CANCEL", "REJECT"))
     r = booking(request, session, root, body.bookedNo)
+    from app.handover import current, is_v2, prepare
+    new_flow = is_v2(r)
+    if new_flow and body.action == "APPROVE":
+        if body.finalPrice is None:
+            raise Problem(422, "INVALID_INPUT")
+        currency = ((r.get("required_criteria_json") or {}).get("quote") or {}).get("currency")
+        if currency != "USD":
+            raise Problem(409, "CURRENCY_NOT_SUPPORTED")
+        if r["reservation_status"] == "APPROVED":
+            h = current(request, session, r["reservation_id"], include_canceled=False)
+            if not h or h["final_price"] != body.finalPrice:
+                raise Problem(409, "FINAL_PRICE_ALREADY_CONFIRMED")
+            return action_result(request, actor, "APPROVED", dict(bookedNo=body.bookedNo,
+                reservationStatus="APPROVED", handoverId=h["handover_id"], handoverStatus=h["handover_status"],
+                finalPrice=h["final_price"], currency=currency, **payment_flags(request.app.state.settings, r)))
     if is_onsite(r) and r["reservation_status"] in ("REQUESTED", "APPROVED") and r.get("hold_expires_at") and now() >= r["hold_expires_at"]:
         raise Problem(409, "ONSITE_REQUEST_EXPIRED")
     expected = "APPROVED" if body.action == "CANCEL" else "REQUESTED"
@@ -363,6 +388,7 @@ def booking_action(body: BookingAction, request: Request, background_tasks: Back
         event = "CANCELLED" if body.action == "CANCEL" else "REJECTED"
     table = request.app.state.db.table("MSP_RESERVATION")
     session.execute(update(table).where(table.c.reservation_id == r["reservation_id"]).values(**values))
+    prepared = prepare(request, session, {**r, **values}, body.finalPrice) if new_flow and body.action == "APPROVE" else None
     reservation_history(request, session, r, values, event, actor.admin["admin_id"], body.reason)
     if body.action in ("APPROVE", "REJECT"):
         queue_reservation_decision(request.app.state.db, session, r["uid_token"],
@@ -373,6 +399,9 @@ def booking_action(body: BookingAction, request: Request, background_tasks: Back
     data = dict(bookedNo=body.bookedNo, reservationStatus=values["reservation_status"],
                 vehicleAssignmentStatus=values["vehicle_assignment_status"],
                 **payment_flags(request.app.state.settings, r))
+    if prepared:
+        data.update(handoverId=prepared["handover_id"], handoverStatus=prepared["handover_status"],
+                    finalPrice=prepared["final_price"], currency="USD")
     if payment_method(r) == EXTERNAL:
         data.update(paymentDeadline=None, canPay=False, canCapture=False)
     data.update(booking_handover_status(request, session, root, {**r, **values}))
@@ -385,9 +414,15 @@ def booking_action(body: BookingAction, request: Request, background_tasks: Back
     return action_result(request, actor, values["reservation_status"], data)
 
 
-@router.post("/nadreego/rent/approve", description="receiptRequired=true is mandatory. Completing the administrator's handover step records HANDOVER_PENDING. Only a successful customer receive request changes the reservation and rental to HANDED_OVER/ON_RENT. Immediate rental activation cannot be enabled through configuration. EXTERNAL reservations do not require online payment; existing PAYPAL reservations require a valid completed, captured payment without a refund. The owning shop, Bali handover date, QR, vehicle, model, price, and inventory are validated.")
+@router.post("/nadreego/rent/approve", description="New reservations require bookedNo and handoverId. Only the assigned admin can start after customer form, verified video, signature completion and admin review are complete. This call creates the rental contract once. Direct admin walk-in creation is disabled. Legacy reservations retain the customer receive flow. EXTERNAL does not require online payment; PAYPAL requires captured payment. Shop, Bali start date, QR, vehicle, model, price and inventory are revalidated.")
 def approve_rent(body: RentApprove, request: Request, session: Session = DB):
     actor, root = context(request, session, write=True)
+    if not body.bookedNo:
+        raise Problem(409, "CUSTOMER_RENTAL_REQUEST_REQUIRED")
+    from app.handover import is_v2, start_rental
+    reservation = booking(request, session, root, body.bookedNo)
+    if is_v2(reservation):
+        return start_rental(request, session, actor, root, reservation, body)
     if body.receiptRequired is not True:
         raise Problem(409, "CLIENT_UPDATE_REQUIRED")
     qr = verify_qr(request, session, root, body.qrCode.get_secret_value(), lock=True)
@@ -437,7 +472,7 @@ def approve_rent(body: RentApprove, request: Request, session: Session = DB):
         **payment_flags(request.app.state.settings, r), **receipt_view(request, r)))
 
 
-def start_contract(request, session, root, item, vehicles, contracts, uid_token, end_date, *, reservation):
+def start_contract(request, session, root, item, vehicles, contracts, uid_token, end_date, *, reservation, handover_id=None, actor_id=None):
     """Atomically start the contract only after validated customer confirmation."""
     db, r, at = request.app.state.db, reservation, now()
     vehicle_id = item["vehicle"]["vehicle_id"]
@@ -449,23 +484,23 @@ def start_contract(request, session, root, item, vehicles, contracts, uid_token,
     criteria = r.get("required_criteria_json") or {}
     pickup = criteria.get("pickupLocationSnapshot")
     return_location = criteria.get("returnLocationSnapshot")
-    session.execute(t.insert().values(rental_contract_id=ident, reservation_id=r["reservation_id"],
+    session.execute(t.insert().values(rental_contract_id=ident, reservation_id=r["reservation_id"], handover_id=handover_id,
         vehicle_id=vehicle_id, uid_token=uid_token, sensor_id=item["sensors"][0]["sensor_id"] if item["sensors"] else None,
         pickup_spot_master_id=root["spot_master_id"], actual_start_time=at, planned_end_date=end_date,
         pickup_location_snapshot=pickup, return_location_snapshot=return_location,
         contract_status="ON_RENT", created_at=at, updated_at=at))
     session.execute(update(state).where(state.c.vehicle_id == vehicle_id).values(status="ON_RENT",
-        maintenance_until=None, status_reason=None, status_changed_at=at, changed_by=None, updated_at=at))
+        maintenance_until=None, untracked_rent_until=None, status_reason=None, status_changed_at=at, changed_by=None, updated_at=at))
     reservation = db.table("MSP_RESERVATION")
     values = dict(reservation_status="HANDED_OVER", assigned_vehicle_id=vehicle_id,
                   vehicle_assignment_status="LOCKED", vehicle_assigned_at=at, updated_at=at)
     session.execute(update(reservation).where(reservation.c.reservation_id == r["reservation_id"]).values(**values))
-    reservation_history(request, session, r, values, "HANDED_OVER", uid_token, customer=True)
+    reservation_history(request, session, r, values, "HANDED_OVER", actor_id or uid_token, customer=actor_id is None)
     if payment_method(r) != EXTERNAL:
         pt = db.table("MSP_RENTAL_PAYMENT")
         session.execute(update(pt).where(pt.c.reservation_id == r["reservation_id"], pt.c.rental_contract_id.is_(None))
             .values(rental_contract_id=ident, updated_at=at))
-    contract_history(request, session, ident, None, "ON_RENT", None, "STARTED")
+    contract_history(request, session, ident, None, "ON_RENT", actor_id, "STARTED")
     return dict(bookedNo="BO" + r["reservation_id"],
         rentalContractId=ident, contractStatus="ON_RENT", vehicleStatus="ON_RENT", plannedEndDate=end_date,
         pickupLocationSnapshot=pickup, returnLocationSnapshot=return_location,
@@ -547,7 +582,7 @@ def return_vehicle(body: Qr, request: Request, session: Session = DB):
     session.execute(update(t).where(t.c.rental_contract_id == contract["rental_contract_id"]).values(
         contract_status="RETURNED", actual_end_time=at, return_spot_master_id=root["spot_master_id"], updated_at=at))
     session.execute(update(state).where(state.c.vehicle_id == qr["vehicle_id"]).values(status="AVAILABLE",
-        maintenance_until=None, status_reason=None, status_changed_at=at, changed_by=actor.admin["admin_id"], updated_at=at))
+        maintenance_until=None, untracked_rent_until=None, status_reason=None, status_changed_at=at, changed_by=actor.admin["admin_id"], updated_at=at))
     if r:
         reservation = db.table("MSP_RESERVATION")
         values = dict(reservation_status="RETURNED", vehicle_assignment_status="RELEASED", updated_at=at)

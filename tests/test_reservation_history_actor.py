@@ -57,12 +57,12 @@ def check_customer_and_admin_history(setup, signin, tables, terminal_action):
     headers = {"Authorization": "Bearer " + sign_user_access(setup["settings"], "history-customer")}
     start = date.today() + timedelta(days=7)
     period = {"startDate": str(start), "returnDate": str(start + timedelta(days=2)),
-              "cc": 125, "deliveryRequested": False}
+              "minCc": 125, "maxCc": 125, "deliveryRequested": False}
     available = client.post("/api/v1/nadree/rental/availability", json=period)
     assert available.status_code == 200, available.text
     item = next(v for v in available.json()["items"] if v["shopId"] == "root")
     option = item["price"]["pricingTiers"][0]
-    body = {k: v for k, v in period.items() if k != "cc"}
+    body = {k: v for k, v in period.items() if k not in ("minCc", "maxCc")}
     body.update(spotMasterId="root", modelId="history-model", totalPrice=option["totalPrice"],
                 currency="USD", priceOptionId=option["priceOptionId"])
     created = client.post("/api/v1/nadree/rental/request", headers=headers, json=body)

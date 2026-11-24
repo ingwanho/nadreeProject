@@ -90,7 +90,10 @@ def test_sensor_code_is_not_vehicle_qr(client, signin, equipment, qr):
 def test_qr_scope_and_auth(client, signin, equipment):
     assert register(client, signin()).status_code == 200
     assert lookup(client, {}).status_code == 401
-    assert lookup(client, signin("outsider")).status_code == 404
+    foreign = lookup(client, signin("outsider"))
+    assert foreign.status_code == 409
+    assert foreign.json()["errorCode"] == "QR_ALREADY_ISSUED"
+    assert "vehicleId" not in foreign.json()
     assert lookup(client, signin("general")).status_code == 200
 
 

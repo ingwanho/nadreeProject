@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from app.availability import apply_assignments, compute_assignment
 from app.db import require_columns, transaction
 from app.errors import Problem
+from app.handover_inputs import UntrackedRent
 from app.headers import bearer
 from app.images import image_fields
 from app.pricing import daily_price, load_tiers, tier_view
@@ -44,6 +45,11 @@ def available_actions(request, item, contracts):
     if any(c["vehicle_id"] == ident and is_open(c) for c in contracts):
         return ["PRICE_CHANGE"] + (["LOCATION"] if len(item["sensors"]) == 1 else [])
     result = ["PRICE_CHANGE", "SPOT_CHANGE"]
+    state = effective_state(request, item, contracts)
+    if state == "AVAILABLE":
+        result.append("UNTRACKED_RENT_START")
+    elif state == "UNTRACKED_RENT":
+        result.append("UNTRACKED_RENT_END")
     if effective_state(request, item, contracts) in ("AVAILABLE", "MAINTENANCE"):
         result.append("REPAIR")
     result.append("QR_DELETE" if item["qr"] else "QR_LINK")
@@ -66,7 +72,55 @@ def vehicle_view(request, item, contracts):
         plateNumberFull=rv["plate_number_full"], modelId=rv["model_id"], brand=model.get("brand"),
         modelName=model.get("model_name"), cc=model.get("cc"), vehicleType=model.get("vehicle_type"),
         **image_fields(request.app.state.settings, "vehicle", image_key, image_url),
-        vehicleStatus=effective_state(request, item, contracts))
+        vehicleStatus=effective_state(request, item, contracts),
+        untrackedRentUntil=(item.get("state") or {}).get("untracked_rent_until"))
+
+
+@router.post("/nadreego/vehicle/qr/availability", summary="Check current global QR registration without exposing another shop's vehicle")
+def qr_availability(body: Qr, request: Request, session: Session = DB):
+    _, root = context(request, session)
+    qr, membership = request.app.state.db.table("MSP_VEHICLE_QR"), request.app.state.db.table("MSP_VEHICLE_SPOT_HISTORY")
+    row = session.execute(select(qr).where(qr.c.qr_code_hash == qr_digest(request, body.qrCode.get_secret_value()))).mappings().first()
+    assignment = "UNASSIGNED"
+    if row:
+        spots = set(session.scalars(select(membership.c.spot_master_id).where(
+            membership.c.vehicle_id == row["vehicle_id"], membership.c.released_at.is_(None))))
+        assignment = "OWN_SHOP" if spots == {root["spot_master_id"]} else "OTHER_SHOP"
+    return {"status": "success", "canRegister": row is None, "assignment": assignment,
+            "reasonCode": "QR_ALREADY_ISSUED" if row else None}
+
+
+@router.post("/nadreego/vehicle/untracked-rent", summary="Block a vehicle through an end date without a customer, contract or rental history")
+def untracked_rent(body: UntrackedRent, request: Request, session: Session = DB):
+    actor, root = context(request, session, write=True)
+    all_vehicles = fleet(request, session, root, lock=True)
+    item = by_number(all_vehicles, body.vehicleNumber)
+    require_no_hold(item)
+    ident = item["vehicle"]["vehicle_id"]
+    vehicles = {key: value for key, value in all_vehicles.items() if value["rental"]["model_id"] == item["rental"]["model_id"]}
+    contracts = contracts_for(request, session, list(vehicles))
+    expire_maintenance(request, session, vehicles, contracts)
+    at = now()
+    if body.action == "START":
+        if body.endDate < local_date(request, at):
+            raise Problem(422, "INVALID_INPUT")
+        if effective_state(request, item, contracts) != "AVAILABLE":
+            raise Problem(409, "VEHICLE_UNAVAILABLE")
+        end = day_end(request, body.endDate)
+        r = request.app.state.db.table("MSP_RESERVATION")
+        if session.execute(select(r.c.reservation_id).where(r.c.assigned_vehicle_id == ident,
+            r.c.reservation_status.in_(("REQUESTED", "APPROVED")), r.c.start_datetime < end, r.c.end_datetime >= at)).first():
+            raise Problem(409, "VEHICLE_UNAVAILABLE")
+        compute_assignment(request, session, root, vehicles, contracts, maintenance=(ident, at, end))
+        status, until = "UNTRACKED_RENT", body.endDate
+    else:
+        if item["state"]["status"] != "UNTRACKED_RENT":
+            raise Problem(409, "VEHICLE_UNAVAILABLE")
+        status, until = "AVAILABLE", None
+    t = request.app.state.db.table("MSP_VEHICLE_STATUS")
+    session.execute(update(t).where(t.c.vehicle_id == ident).values(status=status, untracked_rent_until=until,
+        maintenance_until=None, status_changed_at=at, status_reason=None, changed_by=actor.admin["admin_id"], updated_at=at))
+    return action_result(request, actor, status, {"vehicleId": ident, "vehicleStatus": status, "untrackedRentUntil": until})
 
 
 def available_sensor(request, session, root, sensor_id):
@@ -164,6 +218,8 @@ def link_qr(body: QrLink, request: Request, session: Session = DB):
 @router.post("/nadreego/vehicle/qr/validate", summary="Look up vehicle details and an optional sensor by QR",
              description="Send the original QR value as qrCode. The server computes HMAC-SHA256 with the existing key and compares it with MSP_VEHICLE_QR.qr_code_hash; it does not look up sensor_code. Responses distinguish QR_ONLY from QR_WITH_SENSOR. QR_ONLY vehicles also support lookup and changes. Business APIs revalidate permissions and current state before applying changes. Possible errors include QR_NOT_FOUND, QR_INACTIVE, QR_EXPIRED, and SENSOR_STATE_INCONSISTENT when multiple active sensors are linked.")
 def validate_qr(body: Qr, request: Request, session: Session = DB):
+    if qr_availability(body, request, session)["assignment"] == "OTHER_SHOP":
+        raise Problem(409, "QR_ALREADY_ISSUED")
     actor, root = context(request, session)
     limiter = request.app.state.limiter
     limiter.check("qr-admin:" + actor.admin["admin_id"], limit=60, seconds=60)

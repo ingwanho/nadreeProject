@@ -8,6 +8,116 @@ class Status(BaseModel):
     status: Literal["success"] = "success"
 
 
+class HandoverForm(BaseModel):
+    spotName: str | None
+    customerName: str | None
+    vehicleNo: str | None
+    modelName: str | None
+    passportNumber: str | None
+    driverLicenseNumber: str | None
+    accommodationLocation: str | None
+    helmetCount: int | None
+    startDate: str
+    returnDate: str
+    snsInfo: dict[str, str] | None
+
+
+class HandoverProgress(BaseModel):
+    customerStatus: Literal["NOT_STARTED", "DRAFT", "SUBMITTED", "CHANGE_PENDING", "CONFIRMED", "REJECTED"]
+    adminStatus: Literal["UNASSIGNED", "REVIEWING", "CHANGES_PROPOSED", "CONFIRMED"]
+    signatureStatus: Literal["NOT_STARTED", "COMPLETED"]
+    handoverStatus: Literal["NOT_STARTED", "IN_PROGRESS", "WAITING_CUSTOMER", "READY", "STARTED", "CANCELED"]
+    assignedAdminId: str | None
+    canReviewForm: bool
+    canStartRental: bool
+    startBlockedReasons: list[str]
+
+
+class HandoverMediaState(BaseModel):
+    required: bool
+    status: Literal["NOT_UPLOADED", "UPLOADING", "READY", "SKIPPED"]
+    contentType: str | None = None
+    sizeBytes: int | None = None
+    durationSeconds: float | None = None
+
+
+class HandoverItem(HandoverProgress):
+    handoverId: str
+    reservationId: str
+    rentalContractId: str | None
+    spotMasterId: str
+    vehicleId: str
+    finalPrice: int
+    currency: str | None
+    form: HandoverForm | None
+    pendingChange: dict[str, Any] | None
+    restartHandoverId: str | None = None
+    media: dict[str, HandoverMediaState]
+
+
+class HandoverResult(Status):
+    item: HandoverItem
+
+
+class HandoverListItem(HandoverProgress):
+    handoverId: str
+    reservationId: str
+    vehicleId: str
+
+
+class HandoverList(Status):
+    items: list[HandoverListItem]
+    page: int
+    pageSize: int
+    totalCount: int
+    hasNext: bool
+
+
+class PreparedHandoverUpload(BaseModel):
+    uploadId: str
+    kind: str
+    method: Literal["POST"]
+    url: str
+    fields: dict[str, str]
+    expiresAt: str
+
+
+class CompletedHandoverUpload(BaseModel):
+    uploadId: str
+    status: Literal["READY"]
+
+
+class HandoverUploadResult(Status):
+    upload: PreparedHandoverUpload | CompletedHandoverUpload
+
+
+class HandoverMediaAsset(BaseModel):
+    assetId: str
+    kind: str
+    contentType: str
+    durationSeconds: float | None
+    url: str
+    expiresAt: str
+
+
+class HandoverMediaResult(Status):
+    handoverId: str
+    items: list[HandoverMediaAsset]
+
+
+class AccommodationHistoryItem(BaseModel):
+    accommodationLocation: str
+    lastUsedAt: str
+
+
+class AccommodationHistory(Status):
+    items: list[AccommodationHistoryItem]
+    page: int
+    pageSize: int
+    totalCount: int
+    hasNext: bool
+
+
 class AdminAccountDeletion(Status):
     deleted: Literal[True] = True
     scope: Literal["SELF", "SUBTREE"]
@@ -108,6 +218,9 @@ class CustomerProfile(BaseModel):
     age: int | None = None
     gender: str | None = None
     nationality: str | None = None
+    passportNumber: str | None = None
+    driverLicenseNumber: str | None = None
+    snsInfo: dict[str, str] | None = None
 
 
 class CustomerLocation(BaseModel):
@@ -198,6 +311,14 @@ class ReceiptInfo(BaseModel):
 
 
 class CustomerRecord(ReceiptInfo):
+    vehicleId: str | None = None
+    vehicleNo: str | None = None
+    handoverId: str | None = None
+    finalPrice: int | None = None
+    currency: str | None = None
+    form: dict[str, Any] | None = None
+    handover: dict[str, Any] | None = None
+    media: dict[str, Any] | None = None
     paymentMethod: Literal["EXTERNAL", "PAYPAL"] | None = None
     onlinePaymentEnabled: bool = False
     paymentStatus: str | None = None
@@ -331,7 +452,8 @@ class CustomerQrLookup(Status, ReceiptInfo):
     reservationId: str | None
     reservationStatus: str | None
     vehicleMatch: Literal["ASSIGNED", "MODEL_PENDING"] | None
-    availableActions: list[Literal["ONSITE_QUOTE", "WAIT_APPROVAL", "WAIT_HANDOVER", "CONFIRM_RECEIPT"]]
+    handover: dict[str, Any] | None = None
+    availableActions: list[Literal["ONSITE_QUOTE", "WAIT_APPROVAL", "WAIT_HANDOVER", "CONFIRM_RECEIPT", "START_HANDOVER", "CONTINUE_HANDOVER"]]
 
 
 class CustomerOnsiteQuote(Status):

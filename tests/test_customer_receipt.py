@@ -177,7 +177,7 @@ def test_onsite_requests_expire_without_a_physical_hold(receipt):
     assert count(ctx, "MSP_RENTAL_CONTRACT") == 0
 
 
-def test_receipt_is_always_available_and_manual_walkin_waits_for_customer(receipt):
+def test_legacy_receipt_available_but_new_admin_walkin_requires_customer_request(receipt):
     ctx = receipt
     response = ctx["client"].post(BASE + "/qr/lookup", headers=ctx["headers"], json={"qrCode": next(iter(ctx["qrs"].values()))})
     assert response.status_code == 200 and response.json()["availableActions"] == ["ONSITE_QUOTE"]
@@ -186,8 +186,8 @@ def test_receipt_is_always_available_and_manual_walkin_waits_for_customer(receip
     end = local_date(SimpleNamespace(app=ctx["app"]), now()) + timedelta(days=1)
     response = ctx["client"].post("/nadreego/rent/approve", headers=ctx["admin"], json={
         "uidToken": "pending-user-0", "plannedEndDate": str(end), "qrCode": next(iter(ctx["qrs"].values())), "receiptRequired": True})
-    assert response.status_code == 200, response.text
-    assert response.json()["data"]["reservationStatus"] == "HANDOVER_PENDING"
+    assert response.status_code == 409, response.text
+    assert response.json()["errorCode"] == "CUSTOMER_RENTAL_REQUEST_REQUIRED"
     assert count(ctx, "MSP_RENTAL_CONTRACT") == 0
 
 

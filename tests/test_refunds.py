@@ -61,7 +61,7 @@ def test_nadri_profile_uses_gender_and_nationality_codes():
 
 
 def test_nadri_delivery_return_location_is_optional():
-    availability = NadriAvailability(startDate=date(2026, 10, 1), returnDate=date(2026, 10, 4), cc=125,
+    availability = NadriAvailability(startDate=date(2026, 10, 1), returnDate=date(2026, 10, 4), minCc=125, maxCc=125,
                                       deliveryRequested=True, pickupLocation="Jl. Raya Kuta No. 10")
     assert availability.returnLocation is None
 
@@ -71,13 +71,13 @@ def test_nadri_delivery_return_location_is_optional():
     assert request.returnLocation is None
 
     with pytest.raises(ValidationError, match="pickup location required"):
-        NadriAvailability(startDate=date(2026, 10, 1), returnDate=date(2026, 10, 4), cc=125,
+        NadriAvailability(startDate=date(2026, 10, 1), returnDate=date(2026, 10, 4), minCc=125, maxCc=125,
                            deliveryRequested=True)
 
 
 def test_customer_rental_period_is_limited_to_thirty_days():
     with pytest.raises(ValidationError):
-        NadriAvailability(startDate=date(2026, 10, 1), returnDate=date(2026, 11, 1), cc=125,
+        NadriAvailability(startDate=date(2026, 10, 1), returnDate=date(2026, 11, 1), minCc=125, maxCc=125,
                           deliveryRequested=False)
     with pytest.raises(ValidationError):
         NadriRentalRequest(spotMasterId="spot-1", modelId="model-1", startDate=date(2026, 10, 1),

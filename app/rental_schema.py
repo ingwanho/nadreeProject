@@ -1,11 +1,12 @@
 """Approved rental extensions. Runtime uses reflection, never create_all."""
-from sqlalchemy import (BigInteger, CheckConstraint, Column as C, Date, DateTime,
+from sqlalchemy import (BigInteger, CheckConstraint, Column as C, Computed, Date, DateTime, ForeignKey,
                         Index, Integer, JSON, MetaData, Numeric, String, Table,
                         Text, UniqueConstraint, text)
-from sqlalchemy.dialects.mysql import LONGTEXT
+from sqlalchemy.dialects.mysql import LONGTEXT, VARCHAR
 
 metadata = MetaData()
 ID = BigInteger().with_variant(Integer, "sqlite")
+HANDOVER_ID = String(36).with_variant(VARCHAR(36, charset="utf8mb4", collation="utf8mb4_bin"), "mysql")
 
 
 def timestamps():
@@ -32,7 +33,8 @@ Table("MSP_RENTAL_USER", metadata,
       C("name", String(100)), C("gender", String(20)),
       C("age", Integer), C("nationality", String(50)),
       C("fcm_token", String(512), index=True), C("fcm_token_updated_at", DateTime),
-      C("user_access_revoked_at", DateTime), C("passport_img_key", String(500)), *timestamps())
+      C("user_access_revoked_at", DateTime), C("passport_number_enc", Text),
+      C("driver_license_number_enc", Text), C("sns_info", Text), *timestamps())
 Table("MSP_RENTAL_USER_REFRESH_TOKEN", metadata,
       C("token_id", String(36), primary_key=True), C("uid_token", String(36), nullable=False, index=True),
       C("token_hash", String(200), nullable=False), C("issued_at", DateTime, nullable=False),
@@ -55,9 +57,11 @@ Table("MSP_RENTAL_VEHICLE", metadata,
           name="ck_rental_vehicle_price"))
 Table("MSP_VEHICLE_STATUS", metadata,
       C("vehicle_id", String(36), primary_key=True), C("status", String(20), nullable=False, server_default="AVAILABLE"),
-      C("maintenance_until", Date), C("status_reason", String(200)), C("status_changed_at", DateTime, nullable=False),
+      C("maintenance_until", Date), C("untracked_rent_until", Date), C("status_reason", String(200)), C("status_changed_at", DateTime, nullable=False),
       C("changed_by", String(36)), *timestamps(),
-      CheckConstraint("status IN ('AVAILABLE','ON_RENT','MAINTENANCE','DISABLED')", name="ck_vehicle_status"),
+      CheckConstraint("status IN ('AVAILABLE','ON_RENT','MAINTENANCE','DISABLED','UNTRACKED_RENT')", name="ck_vehicle_status"),
+      CheckConstraint("(status = 'UNTRACKED_RENT' AND untracked_rent_until IS NOT NULL) OR "
+                      "(status != 'UNTRACKED_RENT' AND untracked_rent_until IS NULL)", name="ck_untracked_rent_until"),
       CheckConstraint("status != 'MAINTENANCE' OR maintenance_until IS NOT NULL", name="ck_maintenance_until"))
 Table("MSP_VEHICLE_QR", metadata,
       C("vehicle_id", String(36), primary_key=True), C("qr_id", String(36), nullable=False, unique=True),
@@ -110,8 +114,36 @@ Table("MSP_RESERVATION_HISTORY", metadata,
       C("previous_assignment_status", String(20)), C("new_assignment_status", String(20)),
       C("reason", String(200)), C("details", JSON), C("changed_by", String(36)), C("created_at", DateTime, nullable=False),
       Index("ix_reservation_history_latest", "reservation_id", "created_at", "history_id"))
+Table("MSP_RENTAL_HANDOVER", metadata,
+      C("handover_id", HANDOVER_ID, primary_key=True),
+      C("reservation_id", String(50), ForeignKey("MSP_RESERVATION.reservation_id"), nullable=False, index=True),
+      C("active_reservation_id", String(50), Computed(
+          "CASE WHEN handover_status != 'CANCELED' THEN reservation_id ELSE NULL END", persisted=True), unique=True),
+      C("uid_token", String(36), ForeignKey("MSP_RENTAL_USER.uid_token"), nullable=False, index=True),
+      C("spot_master_id", String(36), nullable=False), C("vehicle_id", String(36), nullable=False),
+      C("assigned_admin_id", String(36)), C("client_request_id", String(64)),
+      C("customer_status", String(20), nullable=False, server_default="NOT_STARTED"),
+      C("admin_status", String(20), nullable=False, server_default="UNASSIGNED"),
+      C("handover_status", String(20), nullable=False, server_default="NOT_STARTED"),
+      C("signature_status", String(20), nullable=False, server_default="NOT_STARTED"),
+      C("final_price", Integer, nullable=False),
+      C("passport_number_enc", Text), C("driver_license_number_enc", Text), C("accommodation_location_enc", Text),
+      C("helmet_count", Integer), C("start_date", Date, nullable=False), C("return_date", Date, nullable=False),
+      C("pending_changes_enc", Text), C("media_state_json", JSON),
+      C("video_key", String(500)), C("passport_photo_key", String(500)),
+      C("driver_license_photo_key", String(500)), C("extra_photo_key", String(500)),
+      C("customer_started_at", DateTime), C("submitted_at", DateTime), C("admin_confirmed_at", DateTime),
+      C("started_at", DateTime), C("canceled_at", DateTime), C("cancel_reason", String(200)), *timestamps(),
+      UniqueConstraint("uid_token", "client_request_id", name="uq_handover_customer_request"),
+      Index("idx_handover_shop_state", "spot_master_id", "handover_status"),
+      CheckConstraint("final_price >= 0 AND (helmet_count IS NULL OR helmet_count >= 0)", name="ck_handover_values"),
+      CheckConstraint("handover_status IN ('NOT_STARTED','IN_PROGRESS','WAITING_CUSTOMER','READY','STARTED','CANCELED')", name="ck_handover_status"),
+      CheckConstraint("customer_status IN ('NOT_STARTED','DRAFT','SUBMITTED','CHANGE_PENDING','CONFIRMED','REJECTED')", name="ck_handover_customer_status"),
+      CheckConstraint("admin_status IN ('UNASSIGNED','REVIEWING','CHANGES_PROPOSED','CONFIRMED')", name="ck_handover_admin_status"),
+      CheckConstraint("signature_status IN ('NOT_STARTED','COMPLETED')", name="ck_handover_signature_status"))
 Table("MSP_RENTAL_CONTRACT", metadata,
       C("rental_contract_id", String(50), primary_key=True), C("reservation_id", String(50), unique=True),
+      C("handover_id", HANDOVER_ID, ForeignKey("MSP_RENTAL_HANDOVER.handover_id"), unique=True),
       C("vehicle_id", String(36), nullable=False, index=True), C("uid_token", String(36), nullable=False, index=True),
       C("sensor_id", String(36)), C("pickup_spot_master_id", String(36), nullable=False, index=True),
       C("return_spot_master_id", String(36)), C("actual_start_time", DateTime), C("actual_end_time", DateTime),

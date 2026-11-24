@@ -72,7 +72,7 @@ def test_unassigned_reservation_and_model_availability_keep_model_photo(customer
     start = date.today() + timedelta(days=7)
     response = ctx["client"].post(BASE + "/availability", json={
         "startDate": str(start), "returnDate": str(start + timedelta(days=3)),
-        "cc": 125, "deliveryRequested": False})
+        "minCc": 125, "maxCc": 125, "deliveryRequested": False})
     assert response.status_code == 200, response.text
     assert_image(response.json()["items"][0]["model"], MODEL_KEY)
 

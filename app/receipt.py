@@ -93,6 +93,8 @@ def expire_receipts(db, settings, at=None):
             if not pending:
                 values.update(vehicle_assignment_status="RELEASED", assigned_vehicle_id=None, vehicle_assigned_at=None)
             session.execute(update(table).where(table.c.reservation_id == row["reservation_id"]).values(**values))
+            from app.handover import expire_for_reservation
+            expire_for_reservation(db, session, row, at)
             session.execute(history.insert().values(reservation_id=row["reservation_id"], event_type="EXPIRED",
                 previous_reservation_status=row["reservation_status"], new_reservation_status="EXPIRED",
                 previous_vehicle_id=row["assigned_vehicle_id"], new_vehicle_id=row["assigned_vehicle_id"] if pending else None,

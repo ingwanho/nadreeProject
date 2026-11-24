@@ -1,0 +1,8 @@
+simulation: handover-media
+routing: path
+mocks:
+  - name: s3-handover
+    routeKey: s3
+    origin:
+      - nadree-synthetic-s3.invalid
+    path: postman/mocks/s3-handover/config.yaml

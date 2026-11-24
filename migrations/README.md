@@ -1,5 +1,10 @@
 # Nadree DB 변경 안내
 
+## 2026-11-24 인계 개정 — 서버 미적용
+
+신규 인계1테이블·사용자3컬럼·계약 handover_id·차량 untracked_rent_until 및 관련 제약을 app.migrate에서 검사/적용한다. 구 사용자 passport_img_key는 non-NULL 참조가 남아 있으면 삭제를 거절한다. [적용서](../docs/handover-server-apply-2026-11-24.md)의 백업·계획·실행·재계획 절차를 따른다. [013 SQL](013_handover.sql)은 비교용 부분 DDL이며 실제 CHECK/콜레이션을 반영하는 app.migrate와 중복 실행하지 않는다.
+
+
 ## 2026-11-06 관리자 개인정보 요청 — 1컬럼, 서버 적용 완료
 
 신규 SQL 테이블 없이 `MSP_SPOT_RENT.deletion_request_id VARCHAR(80) NULL`만 추가한다. 대표 삭제 대기 중 신규 예약/가입 유입을 같은 지점 잠금 아래 차단하는 포인터이며 작업은 기존 FCM Firestore에 보관한다. `app.migrate`로 계획/적용/재계획한다. [012_account_deletion_gate.sql](012_account_deletion_gate.sql)은 같은 ALTER의 검토용이라 중복 실행하지 않는다. 컬럼 적용 후 API 재시작·배치 설치가 필요하며 [전체 적용서](../docs/admin-privacy-server-apply-2026-11-06.md)를 따른다. 완료 최소 기록은 30일, 미완료는 보존한다. 여권 라우트 등록 중단은 스키마 변경·이미지 삭제를 포함하지 않는다.

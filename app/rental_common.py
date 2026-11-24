@@ -150,9 +150,10 @@ def effective_state(request, item, contracts, at=None):
     state = item["state"]
     if state is None:
         return "DISABLED"
-    if state["status"] == "MAINTENANCE" and state["maintenance_until"] is not None:
+    period_column = "untracked_rent_until" if state["status"] == "UNTRACKED_RENT" else "maintenance_until"
+    if state["status"] in ("MAINTENANCE", "UNTRACKED_RENT") and state.get(period_column) is not None:
         open_contracts = [c for c in contracts if c["vehicle_id"] == item["vehicle"]["vehicle_id"] and is_open(c)]
-        if day_end(request, state["maintenance_until"]) <= at and not open_contracts:
+        if day_end(request, state[period_column]) <= at and not open_contracts:
             return "AVAILABLE"
     return state["status"]
 
@@ -160,10 +161,10 @@ def effective_state(request, item, contracts, at=None):
 def expire_maintenance(request, session, vehicles, contracts):
     t = request.app.state.db.table("MSP_VEHICLE_STATUS")
     for ident, item in vehicles.items():
-        if item["state"] and item["state"]["status"] == "MAINTENANCE" and effective_state(request, item, contracts) == "AVAILABLE":
-            values = dict(status="AVAILABLE", maintenance_until=None, changed_by=None,
+        if item["state"] and item["state"]["status"] in ("MAINTENANCE", "UNTRACKED_RENT") and effective_state(request, item, contracts) == "AVAILABLE":
+            values = dict(status="AVAILABLE", maintenance_until=None, untracked_rent_until=None, changed_by=None,
                           status_reason="Maintenance period ended", status_changed_at=now(), updated_at=now())
-            session.execute(update(t).where(t.c.vehicle_id == ident, t.c.status == "MAINTENANCE").values(**values))
+            session.execute(update(t).where(t.c.vehicle_id == ident, t.c.status == item["state"]["status"]).values(**values))
             item["state"].update(values)
 
 

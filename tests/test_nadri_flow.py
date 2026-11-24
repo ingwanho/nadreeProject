@@ -156,7 +156,7 @@ def test_nadri_reservation_payment_checkout_and_return(setup, signin, monkeypatc
     assert login.status_code == 200, login.text
     customer_headers = {"Authorization": "Bearer " + login.json()["accessToken"]}
     availability = client.post("/api/v1/nadree/rental/availability", headers=customer_headers, json={
-        "startDate": start.isoformat(), "returnDate": end.isoformat(), "cc": 125, "deliveryRequested": False})
+        "startDate": start.isoformat(), "returnDate": end.isoformat(), "minCc": 125, "maxCc": 125, "deliveryRequested": False})
     assert availability.status_code == 200, availability.text
     assert availability.json()["items"], availability.text
     assert availability.json()["items"][0]["shopId"] == "root"
@@ -168,6 +168,9 @@ def test_nadri_reservation_payment_checkout_and_return(setup, signin, monkeypatc
     request = client.post("/api/v1/nadree/rental/request", headers=customer_headers, json=request_body)
     assert request.status_code == 200, request.text
     reservation_id = request.json()["reservationId"]
+    # This regression retains the deployed PayPal/customer-receipt protocol.
+    from test_pending_reservation_approval import legacy_booking
+    legacy_booking(setup, reservation_id)
     assert request.json()["bookingId"] == reservation_id
     assert request.json()["shopId"] == "root"
     duplicate = client.post("/api/v1/nadree/rental/request", headers=customer_headers, json=request_body)

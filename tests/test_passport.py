@@ -15,7 +15,7 @@ def test_passport_routes_are_not_registered_and_leave_existing_data_untouched(se
     existing.write_bytes(b"private existing image")
     users = setup["db"].table("MSP_RENTAL_USER")
     with setup["engine"].begin() as conn:
-        conn.execute(users.insert().values(uid_token="passport-owner", passport_img_key="existing.jpg"))
+        conn.execute(users.insert().values(uid_token="passport-owner", passport_number_enc="private-existing-value"))
     headers = signin() if authenticated else {}
     for response in (setup["client"].put("/nadreego/rent/passport", headers=headers, json={}),
                      setup["client"].get("/nadreego/rent/passport/BOexisting", headers=headers)):
@@ -23,4 +23,4 @@ def test_passport_routes_are_not_registered_and_leave_existing_data_untouched(se
     assert existing.read_bytes() == b"private existing image"
     assert len(list(tmp_path.iterdir())) == 1
     with setup["engine"].connect() as conn:
-        assert conn.scalar(select(users.c.passport_img_key)) == "existing.jpg"
+        assert conn.scalar(select(users.c.passport_number_enc)) == "private-existing-value"

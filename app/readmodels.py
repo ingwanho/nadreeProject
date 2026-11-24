@@ -29,6 +29,7 @@ def reservation_view(request, r, item):
         return None
     model = item["model"] if item else None
     return dict(reservationId=r["reservation_id"], startDatetime=iso(request, r["start_datetime"]),
+        updatedAt=iso(request, r["updated_at"]),
         **payment_flags(request.app.state.settings, r),
         selectedPriceOption=(r.get("required_criteria_json") or {}).get("selected"),
         pricingTiers=((r.get("required_criteria_json") or {}).get("quote") or {}).get("pricingTiers", []),
@@ -110,6 +111,7 @@ def fleet_details(request, session, root, vehicles):
             priceType=item["rental"]["price_type"], priceInfo=item["rental"]["premium_daily_price"], dailyPrice=daily_price(item, tiers),
             vehicleStatus=state, currentBooking=current_booking, currentRental=current_rental,
             maintenance=dict(maintenanceUntil=item["state"]["maintenance_until"], reason=item["state"]["status_reason"]) if state == "MAINTENANCE" else None,
+            untrackedRent=dict(endDate=item["state"]["untracked_rent_until"]) if state == "UNTRACKED_RENT" else None,
             availableActions=available_actions(request, item, contracts)))
     return items
 
@@ -174,7 +176,7 @@ def masked_address(value):
     return " ".join(value.split()[:2]) + " ***"
 
 
-def operation_details(request, session, root, records):
+def operation_details(request, session, root, records, *, detailed=False, admin_id=None):
     if not records:
         return []
     db = request.app.state.db
@@ -258,7 +260,9 @@ def operation_details(request, session, root, records):
                 spotDeliveryServiceType=spot_rent["delivery_service_type"] if spot_rent else "NONE",
                 startDeliveryFee=r["start_delivery_fee_snapshot"], returnDeliveryFee=r["return_delivery_fee_snapshot"],
                 deliveryTotalFee=r["delivery_total_fee_snapshot"])
-        result.append(dict(bookedNo=rec["booked_no"], reservationId=rid, vehicleId=vid,
+        from app.handover import detail_fields
+        form_fields = detail_fields(request, session, r, c, detailed=detailed, admin_id=admin_id)
+        result.append(dict(bookedNo=rec["booked_no"], reservationId=rid,
             recordType=rec["record_type"], reservationStatus=rec["reservation_status"],
             **receipt_view(request, r, c),
             **payment_flags(request.app.state.settings, r), **handover,
@@ -266,18 +270,19 @@ def operation_details(request, session, root, records):
             gender=user["gender"], age=user["age"], nationality=user["nationality"]) if user else {}, reservation=reservation, rental=rental_view(request, c),
             vehicle=vehicle, payment=payment_view, delivery=delivery, latestHistory=history_view,
             availableActions=record_actions(request, r, c, len([s for s in sensors if s["vehicle_id"] == vid]) == 1,
-                                            can_hand_over=handover["canHandOver"])))
+                                            can_hand_over=handover["canHandOver"]), **form_fields))
     return result
 
 
 @router.post("/nadreego/booking/select")
 def operations(body: Operations, request: Request, session: Session = DB):
-    _, root = context(request, session)
+    actor, root = context(request, session)
     base, source, where = filtered_operations(request, root, body)
     total = session.scalar(select(func.count()).select_from(source).where(where))
     records = session.execute(select(base).select_from(source).where(where).order_by(base.c.begin.is_(None),
         base.c.begin.desc(), base.c.booked_no).offset((body.page - 1) * body.pageSize).limit(body.pageSize)).mappings().all()
-    return page_result(operation_details(request, session, root, records), body.page, body.pageSize, total)
+    return page_result(operation_details(request, session, root, records, detailed=bool(body.bookedNo),
+        admin_id=actor.admin["admin_id"]), body.page, body.pageSize, total)
 
 
 def calendar_vehicle_page(request, session, spot, body, keyword):
@@ -359,7 +364,7 @@ def calendar(body: Calendar, request: Request, session: Session = DB):
     def add_event(ident, key, kind, rid, cid, start, finish, end_type, state, assignment, blocking, reassign, actions, updated, opened=False, payment_info=None):
         if ident not in selected or start is None or start >= end or (finish is not None and finish <= begin and not opened):
             return
-        events[ident].append(dict(eventId=key, eventType=kind, bookedNo=key if kind != "MAINTENANCE" else None,
+        events[ident].append(dict(eventId=key, eventType=kind, bookedNo=key if kind not in ("MAINTENANCE", "UNTRACKED_RENT") else None,
             reservationId=rid, rentalContractId=cid, startAt=iso(request, start), endAt=iso(request, finish), endAtType=end_type,
             status=state, assignmentStatus=assignment, isBlocking=blocking, canReassign=reassign,
             availableActions=actions, updatedAt=iso(request, updated), **(payment_info or {})))
@@ -429,6 +434,13 @@ def calendar(body: Calendar, request: Request, session: Session = DB):
                 add_event(ident, "MAINTENANCE:" + ident + ":" + iso(request, s["status_changed_at"]), "MAINTENANCE", None, None,
                     s["status_changed_at"], day_end(request, s["maintenance_until"]), "PLANNED", "MAINTENANCE", None,
                     True, False, ["REPAIR"], s["updated_at"])
+        if state == "UNTRACKED_RENT":
+            if s.get("untracked_rent_until") is None:
+                warning("RENTAL_STATE_INCONSISTENT", ident)
+            else:
+                add_event(ident, "UNTRACKED_RENT:" + ident, "UNTRACKED_RENT", None, None,
+                    s["status_changed_at"], day_end(request, s["untracked_rent_until"]), "PLANNED", "UNTRACKED_RENT", None,
+                    True, False, ["END_UNTRACKED_RENT"], s["updated_at"])
         view = vehicle_view(request, item, contracts)
         events[ident].sort(key=lambda e: (e["startAt"], e["eventId"]))
         output.append({key: view[key] for key in ["vehicleId", "vehicleNo", "modelId", "modelName", "vehicleImageKey", "vehicleImageUrl", "vehicleStatus"]} | {"events": events[ident]})
@@ -456,6 +468,8 @@ def dashboard(request: Request, session: Session = DB):
         s = item["state"]
         if s and s["status"] == "MAINTENANCE" and s["maintenance_until"] is not None and s["maintenance_until"] >= today:
             work.append(dict(vehicleId=ident, recordType="MAINTENANCE", maintenanceUntil=s["maintenance_until"]))
+        if s and s["status"] == "UNTRACKED_RENT" and s["untracked_rent_until"] is not None and s["untracked_rent_until"] >= today:
+            work.append(dict(vehicleId=ident, recordType="UNTRACKED_RENT", untrackedRentUntil=s["untracked_rent_until"]))
     return dict(status="success", group=dict(spotMasterId=root["spot_master_id"], spotCode=root["unit_code"], name=unit_name(root)),
         name=actor.admin["admin_name"], totalVehicles=len(vehicles), totalReservations=counts.get("APPROVED", 0),
         pending=counts.get("REQUESTED", 0), awaitingReceipt=counts.get(PENDING, 0), chat=0, todayWork=work)
