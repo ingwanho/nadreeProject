@@ -37,7 +37,7 @@ class MediaDouble:
 @pytest.fixture
 def handover(external, monkeypatch):
     ctx = external
-    ctx["settings"].field_encrypt_key = SecretStr(Fernet.generate_key().decode())
+    ctx["settings"].handover_encrypt_key = SecretStr(Fernet.generate_key().decode())
     ctx["app"].state.handover_media = MediaDouble()
     rid = ctx["request_booking"](0, legacy=False)["reservationId"]
     response = ctx["client"].post("/nadreego/booking/action", headers=ctx["admin"], json={

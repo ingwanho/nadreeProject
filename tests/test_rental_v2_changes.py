@@ -44,8 +44,10 @@ def test_untracked_period_future_booking_and_early_release(external):
     with ctx["engine"].connect() as connection:
         number = connection.scalar(select(vehicles.c.plate_number_full).where(vehicles.c.vehicle_id == chosen))
     end = today + timedelta(days=2)
+    key = str(uuid.uuid4())
     result = ctx["client"].post("/nadreego/vehicle/untracked-rent", headers=ctx["admin"],
-        json={"vehicleNumber": number, "action": "START", "endDate": str(end)})
+        json={"vehicleNumber": number, "action": "START", "endDate": str(end), "qrCode": ctx["qrs"][chosen],
+              "clientRequestId": key, "expectedStateVersion": 0})
     assert result.status_code == 200, result.text
     def available(start):
         response = ctx["client"].post(BASE + "/availability", json={"startDate": str(start),
@@ -58,15 +60,17 @@ def test_untracked_period_future_booking_and_early_release(external):
         params={"shopId": "root", "returnDate": str(end)})
     assert listing.status_code == 200 and not listing.json()["items"]
     assert ctx["client"].post("/nadreego/vehicle/untracked-rent", headers=ctx["admin"],
-        json={"vehicleNumber": number, "action": "END"}).status_code == 200
+        json={"vehicleNumber": number, "action": "END", "qrCode": ctx["qrs"][chosen],
+              "untrackedRentId": key, "vehicleReturned": True}).status_code == 200
     assert available(end)
     assert ctx["client"].post("/nadreego/vehicle/untracked-rent", headers=ctx["admin"],
-        json={"vehicleNumber": number, "action": "START", "endDate": str(end)}).status_code == 200
-    assert expire_maintenance(ctx["db"], ctx["settings"], at=midnight(req, end + timedelta(days=1))) == 1
+        json={"vehicleNumber": number, "action": "START", "endDate": str(end), "qrCode": ctx["qrs"][chosen],
+              "clientRequestId": str(uuid.uuid4()), "expectedStateVersion": 2}).status_code == 200
+    assert expire_maintenance(ctx["db"], ctx["settings"], at=midnight(req, end + timedelta(days=1))) == 0
     with ctx["engine"].connect() as connection:
         state = ctx["tables"]["MSP_VEHICLE_STATUS"]
         row = connection.execute(select(state).where(state.c.vehicle_id == chosen)).mappings().one()
-        assert row["status"] == "AVAILABLE" and row["untracked_rent_until"] is None
+        assert row["status"] == "UNTRACKED_RENT" and row["untracked_rent_until"] == end
         for name in ("MSP_RESERVATION", "MSP_RENTAL_CONTRACT", "MSP_RENTAL_HANDOVER"):
             assert connection.scalar(select(func.count()).select_from(ctx["db"].table(name))) == 0
 
@@ -83,7 +87,7 @@ def test_vehicle_id_onsite_selection_and_outcome_retry(external):
     assert first.status_code == 200, first.text
     again = ctx["client"].post(BASE + "/onsite/requests", headers=ctx["headers"], json=request)
     assert again.status_code == 200 and again.json()["item"]["reservationId"] == first.json()["item"]["reservationId"]
-    assert first.json()["item"]["requestType"] == "ONSITE"
+    assert first.json()["item"]["requestType"] == "WALK_IN"
 
 
 def test_global_qr_verdict_without_foreign_vehicle_details(external, signin):

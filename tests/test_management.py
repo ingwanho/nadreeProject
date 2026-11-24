@@ -8,8 +8,8 @@ from app.security import GENERAL, PRIMARY, now
 
 @pytest.fixture(autouse=True)
 def rental_tables(setup):
-    from app.rental_schema import metadata
-    metadata.create_all(setup["engine"])
+    from test_nadri_flow import prepare_rental_schema
+    prepare_rental_schema(setup)
 
 
 def count(setup, name):

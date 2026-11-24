@@ -15,10 +15,10 @@ from app.handover_inputs import (ClaimHandover, EmptyCommand, FormPatch, Prepare
 from app.handover_media import MIME_EXTENSIONS, PHOTO_LIMIT
 from app.headers import bearer
 from app.rental_common import context, iso, local_date
-from app.rental_profile import NUMBER_FIELDS, decrypt, read_sns, sync_personal
+from app.rental_profile import NUMBER_FIELDS, decrypt, encrypt, read_sns, sync_personal
 from app.responses import (AccommodationHistory, HandoverList, HandoverMediaResult,
                            HandoverResult, HandoverUploadResult)
-from app.security import encrypted_phone, now, user_principal
+from app.security import now, user_principal
 from app.spot_hierarchy import unit_name
 
 router = APIRouter(tags=["Rental handover"], dependencies=[bearer])
@@ -27,6 +27,7 @@ SLOTS = {"VEHICLE_VIDEO": ("vehicleVideo", "video_key"), "PASSPORT_PHOTO": ("pas
          "DRIVER_LICENSE_PHOTO": ("driverLicensePhoto", "driver_license_photo_key"), "EXTRA_PHOTO": ("extraPhoto", "extra_photo_key")}
 FORM_COLUMNS = {**NUMBER_FIELDS, "accommodationLocation": "accommodation_location_enc", "helmetCount": "helmet_count"}
 CLOSED = ("STARTED", "CANCELED")
+
 
 
 def is_v2(reservation):
@@ -41,7 +42,7 @@ def require_schema(db):
     from app.rental_schema import metadata
     checks = {"MSP_RENTAL_HANDOVER": set(metadata.tables["MSP_RENTAL_HANDOVER"].c.keys()),
         "MSP_RENTAL_USER": {"passport_number_enc", "driver_license_number_enc", "sns_info"},
-        "MSP_RENTAL_CONTRACT": {"handover_id"}, "MSP_VEHICLE_STATUS": {"untracked_rent_until"}}
+        "MSP_RENTAL_CONTRACT": {"handover_id"}, "MSP_VEHICLE_STATUS": {"untracked_rent_until", "operation_id", "state_version"}}
     try:
         if any(not fields.issubset(db.table(name).c.keys()) for name, fields in checks.items()):
             raise Problem(503, "HANDOVER_SCHEMA_UPDATE_REQUIRED")
@@ -133,6 +134,9 @@ def _load(request, session, ident, *, admin=False, write=False):
             master = request.app.state.db.table("MSP_SPOT_MASTER")
             session.execute(select(master.c.spot_master_id).where(
                 master.c.spot_master_id == initial["spot_master_id"]).with_for_update()).first()
+    if write:
+        from app.booking_lifecycle import reconcile
+        reconcile(request.app.state.db, request.app.state.settings, session, now(), spot_id=initial["spot_master_id"])
     reservation_row(request, session, initial["reservation_id"], lock=write)
     query = select(h).where(h.c.handover_id == ident)
     row = session.execute(query.with_for_update() if write else query).mappings().one()
@@ -203,7 +207,9 @@ def recalculate(request, session, row):
 def summary(row, *, admin_id=None):
     reasons = blocked(row)
     return {"customerStatus": row["customer_status"], "adminStatus": row["admin_status"],
-        "signatureStatus": row["signature_status"], "handoverStatus": row["handover_status"],
+        "signatureStatus": row["signature_status"], "signatureCompletedAt": (row["signature_completed_at"].isoformat() + "Z" if row.get("signature_completed_at") else None), "handoverStatus": row["handover_status"],
+        "signatureActorUid": row["uid_token"] if row["signature_status"] == "COMPLETED" else None,
+        "signatureHandoverId": row["handover_id"],
         "assignedAdminId": row.get("assigned_admin_id"),
         "canReviewForm": bool(admin_id and admin_id == row.get("assigned_admin_id") and row.get("submitted_at")
             and row["admin_status"] == "REVIEWING" and row["handover_status"] not in CLOSED and photos_ready(row)),
@@ -242,7 +248,8 @@ def form_view(request, session, row):
         "vehicleNo": (extra or {}).get("plate_number_full") or (vehicle or {}).get("plate_number"),
         "modelName": (model or {}).get("model_name"), **result,
         "startDate": row["start_date"].isoformat(), "returnDate": row["return_date"].isoformat(),
-        "snsInfo": read_sns(user.get("sns_info"))}
+        "snsInfo": json.loads(decrypt(request.app.state.settings, row["sns_snapshot_enc"]))
+            if row.get("sns_snapshot_enc") else read_sns(user.get("sns_info"))}
 
 
 def resource(request, session, row, *, admin_id=None):
@@ -380,6 +387,9 @@ def start(reservation_id: str, body: StartHandover, request: Request, session=DB
     if not h:
         raise Problem(409, "HANDOVER_REQUIRED")
     h, _ = _load(request, session, h["handover_id"], write=True)
+    # _load may expire the booking under the shop lock; never reopen its handover.
+    if reservation_row(request, session, reservation_id)["reservation_status"] != "APPROVED":
+        raise Problem(409, "RESERVATION_NOT_APPROVED")
     prior = session.scalar(select(table(request).c.handover_id).where(table(request).c.uid_token == user.uid_token,
         table(request).c.client_request_id == body.clientRequestId))
     if prior and prior != h["handover_id"]:
@@ -393,7 +403,6 @@ def start(reservation_id: str, body: StartHandover, request: Request, session=DB
         save(request, session, h, client_request_id=body.clientRequestId, customer_started_at=now(),
              customer_status="DRAFT", handover_status="IN_PROGRESS", passport_number_enc=profile.get("passport_number_enc"),
              driver_license_number_enc=profile.get("driver_license_number_enc"))
-        notify(request, session, h, "HANDOVER_STARTED", all_admins=True)
     return {"status": "success", "item": resource(request, session, h)}
 
 
@@ -432,7 +441,7 @@ def update_form(handover_id: str, body: FormPatch, request: Request, session=DB)
     if h["customer_status"] != "DRAFT":
         raise Problem(409, "HANDOVER_CLOSED")
     fields = body.model_dump(exclude_unset=True)
-    values = {FORM_COLUMNS[key]: value if key == "helmetCount" else encrypted_phone(request.app.state.settings, value)
+    values = {FORM_COLUMNS[key]: value if key == "helmetCount" else encrypt(request.app.state.settings, value)
               for key, value in fields.items() if key in FORM_COLUMNS}
     sync_personal(request, session, h["uid_token"], fields)
     save(request, session, h, **values)
@@ -446,8 +455,10 @@ def submit_form(handover_id: str, body: EmptyCommand, request: Request, session=
     if h.get("submitted_at") is None:
         if not h.get("passport_number_enc") or not h.get("accommodation_location_enc") or h.get("helmet_count") is None:
             raise Problem(422, "INVALID_INPUT")
-        save(request, session, h, customer_status="SUBMITTED", submitted_at=now())
-        notify(request, session, h, "HANDOVER_FORM_SUBMITTED")
+        users = request.app.state.db.table("MSP_RENTAL_USER")
+        sns = session.scalar(select(users.c.sns_info).where(users.c.uid_token == h["uid_token"]).with_for_update())
+        save(request, session, h, customer_status="SUBMITTED", submitted_at=now(),
+             sns_snapshot_enc=encrypt(request.app.state.settings, json.dumps(read_sns(sns))))
     return {"status": "success", "item": resource(request, session, h)}
 
 
@@ -462,9 +473,8 @@ def complete_signature(handover_id: str, body: EmptyCommand, request: Request, s
             raise Problem(409, "HANDOVER_CHANGE_PENDING")
         if ((h.get("media_state_json") or {}).get("VEHICLE_VIDEO") or {}).get("status") != "READY":
             raise Problem(409, "VIDEO_NOT_READY")
-        save(request, session, h, signature_status="COMPLETED", customer_status="CONFIRMED")
+        save(request, session, h, signature_status="COMPLETED", signature_completed_at=now(), customer_status="CONFIRMED")
         recalculate(request, session, h)
-        notify(request, session, h, "HANDOVER_CUSTOMER_COMPLETED")
     return {"status": "success", "item": resource(request, session, h)}
 
 
@@ -510,7 +520,7 @@ def review(handover_id: str, body: ReviewHandover, request: Request, session=DB)
             raise Problem(409, "HANDOVER_CHANGE_STALE")
         before = form_view(request, session, h)
         value = {"changes": fields, "before": {key: before[key] for key in fields}, "reason": body.reason, "decision": None}
-        save(request, session, h, pending_changes_enc=encrypted_phone(request.app.state.settings, json.dumps(value)),
+        save(request, session, h, pending_changes_enc=encrypt(request.app.state.settings, json.dumps(value)),
              customer_status="CHANGE_PENDING", admin_status="CHANGES_PROPOSED", handover_status="WAITING_CUSTOMER")
         notify(request, session, h, "HANDOVER_CHANGES_PROPOSED", customer=True)
     recalculate(request, session, h)
@@ -531,10 +541,12 @@ def respond(handover_id: str, body: RespondHandover, request: Request, session=D
     value["decision"] = body.decision
     if body.decision == "ACCEPT":
         fields = value["changes"]
-        updates = {FORM_COLUMNS[key]: val if key == "helmetCount" else encrypted_phone(request.app.state.settings, val)
+        updates = {FORM_COLUMNS[key]: val if key == "helmetCount" else encrypt(request.app.state.settings, val)
                    for key, val in fields.items() if key in FORM_COLUMNS}
         sync_personal(request, session, h["uid_token"], fields)
-        save(request, session, h, **updates, pending_changes_enc=encrypted_phone(request.app.state.settings, json.dumps(value)),
+        if "snsInfo" in fields:
+            updates["sns_snapshot_enc"] = encrypt(request.app.state.settings, json.dumps(fields["snsInfo"]))
+        save(request, session, h, **updates, pending_changes_enc=encrypt(request.app.state.settings, json.dumps(value)),
              admin_status="CONFIRMED", admin_confirmed_at=now(),
              customer_status="CONFIRMED" if h["signature_status"] == "COMPLETED" else "SUBMITTED")
         recalculate(request, session, h)
@@ -543,7 +555,7 @@ def respond(handover_id: str, body: RespondHandover, request: Request, session=D
              canceled_at=now(), cancel_reason="HANDOVER_CHANGE_REJECTED")
         replacement = prepare(request, session, reservation_row(request, session, h["reservation_id"]), h["final_price"])
         value["restartHandoverId"] = replacement["handover_id"]
-        save(request, session, h, pending_changes_enc=encrypted_phone(request.app.state.settings, json.dumps(value)))
+        save(request, session, h, pending_changes_enc=encrypt(request.app.state.settings, json.dumps(value)))
     notify(request, session, h, "HANDOVER_CHANGES_ACCEPTED" if body.decision == "ACCEPT" else "HANDOVER_CHANGES_REJECTED")
     return {"status": "success", "item": resource(request, session, h)}
 

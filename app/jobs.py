@@ -44,8 +44,7 @@ def expire_maintenance(db, settings, at=None):
     changed = 0
     with Session(db.engine) as session, session.begin():
         rows = session.execute(select(state).where(or_(
-            (state.c.status == "MAINTENANCE") & (state.c.maintenance_until < today),
-            (state.c.status == "UNTRACKED_RENT") & (state.c.untracked_rent_until < today))).with_for_update()).mappings().all()
+            (state.c.status == "MAINTENANCE") & (state.c.maintenance_until < today))).with_for_update()).mappings().all()
         for row in rows:
             open_rental = session.execute(select(contracts.c.rental_contract_id).where(
                 contracts.c.vehicle_id == row["vehicle_id"], contracts.c.contract_status.in_(OPEN_CONTRACTS),
@@ -53,8 +52,9 @@ def expire_maintenance(db, settings, at=None):
             if open_rental:
                 continue
             result = session.execute(update(state).where(state.c.vehicle_id == row["vehicle_id"],
-                state.c.status == row["status"])
-                .values(status="AVAILABLE", maintenance_until=None, untracked_rent_until=None, changed_by=None,
+                state.c.status == row["status"], state.c.maintenance_until == row["maintenance_until"],
+                state.c.state_version == row["state_version"])
+                .values(status="AVAILABLE", maintenance_until=None, untracked_rent_until=None, state_version=state.c.state_version + 1, changed_by=None,
                         status_reason="Maintenance period ended", status_changed_at=at, updated_at=at))
             changed += result.rowcount
     return changed
@@ -207,7 +207,7 @@ def rebuild_daily_inventory(db, settings, days=None, at=None):
                 blocked.update(row["vehicle_id"] for row in fleet_items
                               if row["status"] == "MAINTENANCE" and row["maintenance_until"] and row["maintenance_until"] >= target)
                 blocked.update(row["vehicle_id"] for row in fleet_items
-                              if row["status"] == "UNTRACKED_RENT" and row["untracked_rent_until"] and row["untracked_rent_until"] >= target)
+                              if row["status"] == "UNTRACKED_RENT" and row["untracked_rent_until"] and max(row["untracked_rent_until"], first) >= target)
                 for reservation in approved:
                     if reservation["spot_master_id"] != spot_id or reservation["model_id"] != model_id:
                         continue
@@ -263,7 +263,8 @@ def payment_maintenance(db, settings, fcm):
 
 def main():
     parser = argparse.ArgumentParser(description="Nadree rental maintenance jobs")
-    parser.add_argument("job", choices=("maintenance", "payments", "inventory", "receipts", "all"))
+    parser.add_argument("job", choices=("maintenance", "payments", "inventory", "receipts", "lifecycle", "all"))
+    parser.add_argument("--backfill-no-response", action="store_true")
     parser.add_argument("--days", type=int, default=None)
     args = parser.parse_args()
     settings = Settings()
@@ -272,7 +273,10 @@ def main():
         parser.error("NADREE_DATABASE_URL is required")
     fcm = FcmSender(settings)
     try:
-        if args.job == "maintenance":
+        if args.job == "lifecycle":
+            from app.rental_reminders import run
+            print(_run_locked(db, "lifecycle", lambda: run(db, settings, fcm, backfill=args.backfill_no_response)))
+        elif args.job == "maintenance":
             print({"maintenanceReleased": _run_locked(db, "maintenance", lambda: expire_maintenance(db, settings))})
         elif args.job == "payments":
             print(_run_locked(db, "payments", lambda: payment_maintenance(db, settings, fcm)))
@@ -282,7 +286,9 @@ def main():
         elif args.job == "inventory":
             print({"inventoryRows": _run_locked(db, "inventory", lambda: rebuild_daily_inventory(db, settings, args.days))})
         else:
+            from app.rental_reminders import run
             print({"maintenanceReleased": _run_locked(db, "maintenance", lambda: expire_maintenance(db, settings)),
+                   "lifecycle": _run_locked(db, "lifecycle", lambda: run(db, settings, fcm, backfill=args.backfill_no_response)),
                    "payments": _run_locked(db, "payments", lambda: payment_maintenance(db, settings, fcm)),
                    "inventoryRows": _run_locked(db, "inventory", lambda: rebuild_daily_inventory(db, settings, args.days))})
     finally:

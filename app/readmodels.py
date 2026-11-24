@@ -45,24 +45,24 @@ def reservation_view(request, r, item):
 def rental_view(request, c):
     return dict(rentalContractId=c["rental_contract_id"], actualStartTime=iso(request, c["actual_start_time"]),
         pickupLocationSnapshot=c.get("pickup_location_snapshot"), returnLocationSnapshot=c.get("return_location_snapshot"),
-        actualEndTime=iso(request, c["actual_end_time"]), contractStatus=c["contract_status"],
+        actualEndTime=iso(request, c["actual_end_time"]), contractStatus=("OVERDUE" if is_open(c)
+            and c["planned_end_date"] and c["planned_end_date"] < local_date(request, now()) else c["contract_status"]),
         plannedEndDate=c["planned_end_date"]) if c else None
 
 
 def record_actions(request, reservation, contract, sensor=False, *, can_hand_over=False):
+    from app.booking_lifecycle import projected, needs_recovery
+    reservation = projected(request.app.state.settings, reservation, now())
     if contract:
         if is_open(contract):
             return ["RETURN"] + (["LOCATION"] if sensor else [])
-        return []
-    if (is_onsite(reservation) and reservation["reservation_status"] in ("REQUESTED", "APPROVED")
-            and reservation.get("hold_expires_at") and now() >= reservation["hold_expires_at"]):
         return []
     if reservation["reservation_status"] == "REQUESTED":
         return ["APPROVE", "REJECT"]
     if reservation["reservation_status"] == "APPROVED":
         return (["RENT_APPROVE"] if can_hand_over else []) + ["CANCEL"]
     if reservation["reservation_status"] == PENDING or (
-            reservation["reservation_status"] == "EXPIRED" and reservation.get("handed_over_at")):
+            needs_recovery(request.app.state.settings, reservation, now())):
         return ["RECOVER_VEHICLE"]
     return []
 
@@ -74,6 +74,8 @@ def fleet_details(request, session, root, vehicles):
     r = db.table("MSP_RESERVATION")
     reservations = rows(session, r, r.c.spot_master_id == root["spot_master_id"], r.c.assigned_vehicle_id.in_(vehicles),
         r.c.reservation_status.in_(["REQUESTED", "APPROVED", PENDING, "HANDED_OVER", "EXPIRED"])) if vehicles else []
+    from app.booking_lifecycle import projected, needs_recovery
+    reservations = [projected(request.app.state.settings, b, now()) for b in reservations]
     tiers = load_tiers(request, session, root["spot_master_id"])
     items, handover_cache = [], {}
     for ident, item in vehicles.items():
@@ -82,7 +84,7 @@ def fleet_details(request, session, root, vehicles):
         contract = active[0] if len(active) == 1 else None
         bookings = [b for b in reservations if b["assigned_vehicle_id"] == ident and
                     (b["reservation_status"] != "EXPIRED" and (b["reservation_status"] == "HANDED_OVER" or reservation_end(request, b) > now())
-                     or b.get("handed_over_at") and (item["state"].get("status_reason") or "") == HOLD_PREFIX + b["reservation_id"])]
+                     or needs_recovery(request.app.state.settings, b, now()))]
         bookings.sort(key=lambda b: (b["reservation_id"] != (contract or {}).get("reservation_id"), b["reservation_status"] == "REQUESTED", b["start_datetime"]))
         booking = bookings[0] if bookings else None
         state = effective_state(request, item, contracts)
@@ -111,18 +113,23 @@ def fleet_details(request, session, root, vehicles):
             priceType=item["rental"]["price_type"], priceInfo=item["rental"]["premium_daily_price"], dailyPrice=daily_price(item, tiers),
             vehicleStatus=state, currentBooking=current_booking, currentRental=current_rental,
             maintenance=dict(maintenanceUntil=item["state"]["maintenance_until"], reason=item["state"]["status_reason"]) if state == "MAINTENANCE" else None,
-            untrackedRent=dict(endDate=item["state"]["untracked_rent_until"]) if state == "UNTRACKED_RENT" else None,
+            untrackedRent=dict(endDate=item["state"]["untracked_rent_until"],
+                untrackedRentId=item["state"].get("operation_id"), stateVersion=item["state"].get("state_version", 0),
+                rentalStatus="OVERDUE" if item["state"]["untracked_rent_until"] < local_date(request, now()) else "ON_RENT") if state == "UNTRACKED_RENT" else None,
             availableActions=available_actions(request, item, contracts)))
     return items
 
 
 def operation_query(request, root):
+    from app.booking_lifecycle import status_expression
     db = request.app.state.db
     r, c = db.table("MSP_RESERVATION"), db.table("MSP_RENTAL_CONTRACT")
     with_contract = c.c.rental_contract_id.is_not(None)
-    common = [c.c.rental_contract_id, c.c.contract_status, c.c.actual_end_time, c.c.planned_end_date]
+    effective_contract = case((and_(c.c.contract_status == "ON_RENT", c.c.actual_end_time.is_(None),
+        c.c.planned_end_date < local_date(request, now())), "OVERDUE"), else_=c.c.contract_status)
+    common = [c.c.rental_contract_id, effective_contract.label("contract_status"), c.c.actual_end_time, c.c.planned_end_date]
     booked = select((literal("BO") + r.c.reservation_id).label("booked_no"), r.c.reservation_id, *common,
-        r.c.reservation_status, case((with_contract, literal("RENTAL")), else_=literal("RESERVATION")).label("record_type"),
+        status_expression(request.app.state.settings, r, now()).label("reservation_status"), case((with_contract, literal("RENTAL")), else_=literal("RESERVATION")).label("record_type"),
         case((with_contract, c.c.vehicle_id), else_=r.c.assigned_vehicle_id).label("vehicle_id"),
         case((with_contract, c.c.uid_token), else_=r.c.uid_token).label("uid_token"),
         case((with_contract, c.c.actual_start_time), else_=r.c.start_datetime).label("begin"),
@@ -353,7 +360,8 @@ def calendar(body: Calendar, request: Request, session: Session = DB):
     elif not body.vehicleStatus:
         page_models = {vehicles[ident]["rental"]["model_id"] for ident in selected}
         conditions.append(or_(rt.c.assigned_vehicle_id.in_(selected), rt.c.model_id.in_(page_models)))
-    reservations = rows(session, rt, *conditions)
+    from app.booking_lifecycle import projected, needs_recovery
+    reservations = [projected(request.app.state.settings, row, at) for row in rows(session, rt, *conditions)]
     events, warnings = defaultdict(list), []
     handover_cache = {}
     by_reservation = {c["reservation_id"]: c for c in contracts if c["reservation_id"]}
@@ -371,9 +379,9 @@ def calendar(body: Calendar, request: Request, session: Session = DB):
 
     for r in reservations:
         key, ident = "BO" + r["reservation_id"], r["assigned_vehicle_id"]
-        held = ident in vehicles and ((vehicles[ident]["state"] or {}).get("status_reason") or "") == HOLD_PREFIX + r["reservation_id"]
+        held = ident in vehicles and needs_recovery(request.app.state.settings, r, at)
         if held:
-            add_event(ident, key, "RESERVATION", r["reservation_id"], None, r["handed_over_at"], None,
+            add_event(ident, key, "RESERVATION", r["reservation_id"], None, r.get("handed_over_at") or r["start_datetime"], None,
                 "OPEN", r["reservation_status"], "LOCKED", True, False,
                 record_actions(request, r, None) if spot["spot_master_id"] == root["spot_master_id"] else [],
                 r["updated_at"], opened=True, payment_info={**payment_flags(request.app.state.settings, r),
@@ -414,8 +422,9 @@ def calendar(body: Calendar, request: Request, session: Session = DB):
         if c["contract_status"] == "RETURNED" and actual is None:
             warning("RENTAL_STATE_INCONSISTENT", ident, key)
         opened = is_open(c) and (finish is None or finish <= at or c["contract_status"] == "OVERDUE")
+        contract_status = "OVERDUE" if is_open(c) and c["planned_end_date"] and c["planned_end_date"] < local_date(request, at) else c["contract_status"]
         add_event(ident, key, "RENTAL", c["reservation_id"], c["rental_contract_id"], c["actual_start_time"], finish,
-            "ACTUAL" if actual else "PLANNED" if finish else "UNKNOWN", c["contract_status"], "RELEASED" if actual else "LOCKED", True, False,
+            "ACTUAL" if actual else "PLANNED" if finish else "UNKNOWN", contract_status, "RELEASED" if actual else "LOCKED", True, False,
             record_actions(request, None, c, len(vehicles[ident]["sensors"]) == 1), c["updated_at"], opened=opened,
             payment_info=payment_flags(request.app.state.settings,
                 next((r for r in reservations if r["reservation_id"] == c["reservation_id"]), None)))
@@ -438,9 +447,11 @@ def calendar(body: Calendar, request: Request, session: Session = DB):
             if s.get("untracked_rent_until") is None:
                 warning("RENTAL_STATE_INCONSISTENT", ident)
             else:
+                overdue = s["untracked_rent_until"] < local_date(request, at)
                 add_event(ident, "UNTRACKED_RENT:" + ident, "UNTRACKED_RENT", None, None,
                     s["status_changed_at"], day_end(request, s["untracked_rent_until"]), "PLANNED", "UNTRACKED_RENT", None,
-                    True, False, ["END_UNTRACKED_RENT"], s["updated_at"])
+                    True, False, ["UNTRACKED_RENT_END"], s["updated_at"], opened=overdue,
+                    payment_info={"rentalStatus": "OVERDUE" if overdue else "ON_RENT", "untrackedRentId": s.get("operation_id")})
         view = vehicle_view(request, item, contracts)
         events[ident].sort(key=lambda e: (e["startAt"], e["eventId"]))
         output.append({key: view[key] for key in ["vehicleId", "vehicleNo", "modelId", "modelName", "vehicleImageKey", "vehicleImageUrl", "vehicleStatus"]} | {"events": events[ident]})
@@ -453,8 +464,10 @@ def dashboard(request: Request, session: Session = DB):
     actor, root = context(request, session)
     db = request.app.state.db
     r = db.table("MSP_RESERVATION")
-    counts = dict(session.execute(select(r.c.reservation_status, func.count()).where(r.c.spot_master_id == root["spot_master_id"])
-        .group_by(r.c.reservation_status)).all())
+    from app.booking_lifecycle import status_expression
+    state = status_expression(request.app.state.settings, r, now())
+    counts = dict(session.execute(select(state, func.count()).where(r.c.spot_master_id == root["spot_master_id"])
+        .group_by(state)).all())
     today = local_date(request, now())
     base, source, where = filtered_operations(request, root, Operations(page=1, pageSize=100, startDate=today, endDate=today))
     vehicles = fleet(request, session, root)
@@ -468,8 +481,9 @@ def dashboard(request: Request, session: Session = DB):
         s = item["state"]
         if s and s["status"] == "MAINTENANCE" and s["maintenance_until"] is not None and s["maintenance_until"] >= today:
             work.append(dict(vehicleId=ident, recordType="MAINTENANCE", maintenanceUntil=s["maintenance_until"]))
-        if s and s["status"] == "UNTRACKED_RENT" and s["untracked_rent_until"] is not None and s["untracked_rent_until"] >= today:
-            work.append(dict(vehicleId=ident, recordType="UNTRACKED_RENT", untrackedRentUntil=s["untracked_rent_until"]))
+        if s and s["status"] == "UNTRACKED_RENT" and s["untracked_rent_until"] is not None:
+            work.append(dict(vehicleId=ident, recordType="UNTRACKED_RENT", untrackedRentUntil=s["untracked_rent_until"],
+                rentalStatus="OVERDUE" if s["untracked_rent_until"] < today else "ON_RENT", untrackedRentId=s.get("operation_id")))
     return dict(status="success", group=dict(spotMasterId=root["spot_master_id"], spotCode=root["unit_code"], name=unit_name(root)),
         name=actor.admin["admin_name"], totalVehicles=len(vehicles), totalReservations=counts.get("APPROVED", 0),
         pending=counts.get("REQUESTED", 0), awaitingReceipt=counts.get(PENDING, 0), chat=0, todayWork=work)

@@ -1,5 +1,5 @@
 [Unit]
-Description=Nadree maintenance and untracked rental expiry
+Description=Nadree maintenance expiry (customer-free rentals require physical return)
 After=network-online.target
 Wants=network-online.target
 

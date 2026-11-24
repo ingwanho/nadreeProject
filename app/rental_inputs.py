@@ -13,7 +13,7 @@ Plate = Annotated[str, Field(min_length=1, max_length=25, pattern=r"\S")]
 Spot = Annotated[str, Field(min_length=1, max_length=60)]
 ModelId = Annotated[str, Field(min_length=1, max_length=50)]
 VehicleState = Literal["AVAILABLE", "ON_RENT", "MAINTENANCE", "DISABLED", "UNTRACKED_RENT"]
-ReservationState = Literal["REQUESTED", "APPROVED", "HANDOVER_PENDING", "HANDED_OVER", "RETURNED", "REJECTED", "CANCELED", "EXPIRED"]
+ReservationState = Literal["REQUESTED", "APPROVED", "HANDOVER_PENDING", "HANDED_OVER", "RETURNED", "REJECTED", "CANCELED", "EXPIRED", "NO_RESPONSE"]
 RentalState = Literal["ON_RENT", "OVERDUE", "RETURNED", "CANCELED"]
 Reason = Annotated[str, Field(max_length=200)]
 Uid = Annotated[str, Field(min_length=1, max_length=36, pattern=r"^\S+$")]
@@ -125,6 +125,14 @@ class Qr(Body):
 class Repair(VehicleNumber):
     date: Date
     reason: Reason | None = None
+    qrCode: SecretStr = Field(min_length=1, max_length=4096)
+    clientRequestId: Annotated[str, Field(min_length=16, max_length=64, pattern=r"^[a-z0-9_-]+$")]
+    expectedStateVersion: Annotated[int, Field(strict=True, ge=0)]
+
+
+class VehicleReturn(Qr):
+    untrackedRentId: Annotated[str, Field(min_length=16, max_length=64)] | None = None
+    vehicleReturned: Literal[True] | None = None
 
 
 class Move(VehicleNumber):
@@ -181,7 +189,7 @@ class NadriAvailability(Body):
     def dates(self):
         if self.maxCc is not None and self.maxCc < self.minCc:
             raise ValueError("maxCc must be at least minCc")
-        if self.returnDate <= self.startDate or (self.returnDate - self.startDate).days > 30:
+        if self.returnDate < self.startDate or (self.returnDate - self.startDate).days >= 30:
             raise ValueError("invalid rental date range")
         if self.deliveryRequested and not self.pickupLocation:
             raise ValueError("pickup location required")
@@ -210,7 +218,7 @@ class NadriRentalRequest(Body):
 
     @model_validator(mode="after")
     def dates_and_delivery(self):
-        if self.returnDate <= self.startDate or (self.returnDate - self.startDate).days > 30:
+        if self.returnDate < self.startDate or (self.returnDate - self.startDate).days >= 30:
             raise ValueError("invalid rental date range")
         if self.deliveryRequested and not self.pickupLocation:
             raise ValueError("pickup location required")

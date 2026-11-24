@@ -71,8 +71,13 @@ def migration_plan(db):
                 operations.append(("index " + index.name, str(CreateIndex(index).compile(dialect=mysql.dialect())), {}))
         else:
             columns = {row["name"] for row in inspector.get_columns(handover.name)}
-            if set(handover.c.keys()) - columns:
+            optional = {"sns_snapshot_enc": "TEXT DEFAULT NULL", "signature_completed_at": "DATETIME DEFAULT NULL"}
+            if set(handover.c.keys()) - columns - optional.keys():
                 raise ValueError("MSP_RENTAL_HANDOVER has an incompatible definition; manual migration required")
+            for column, definition in optional.items():
+                if column not in columns:
+                    operations.append(("add MSP_RENTAL_HANDOVER." + column,
+                        "ALTER TABLE MSP_RENTAL_HANDOVER ADD COLUMN " + column + " " + definition, {}))
             unique = {tuple(row["column_names"]) for row in inspector.get_unique_constraints(handover.name)}
             unique.update(tuple(row["column_names"]) for row in inspector.get_indexes(handover.name) if row["unique"])
             if not {("active_reservation_id",), ("uid_token", "client_request_id")}.issubset(unique):
@@ -211,18 +216,22 @@ def migration_plan(db):
         checks = [item for item in inspector.get_check_constraints(name)
                   if re.search(r"\breservation_status\b", item.get("sqltext", ""), re.I)]
         for check in checks:
-            if "HANDOVER_PENDING" in check["sqltext"]:
+            if "HANDOVER_PENDING" in check["sqltext"] and "NO_RESPONSE" in check["sqltext"]:
                 continue
             constraint = check.get("name") or ""
             if not re.fullmatch(r"[A-Za-z0-9_]+", constraint) or not re.search(r"['\"]APPROVED['\"]", check["sqltext"]):
                 raise ValueError("Reservation status constraint requires manual review")
-            expanded = re.sub(r"(['\"])APPROVED\1", "'APPROVED','HANDOVER_PENDING'", check["sqltext"])
+            expanded = check["sqltext"]
+            if "HANDOVER_PENDING" not in expanded:
+                expanded = re.sub(r"(['\"])APPROVED\1", "'APPROVED','HANDOVER_PENDING'", expanded)
+            if "NO_RESPONSE" not in expanded:
+                expanded = re.sub(r"(['\"])REQUESTED\1", "'REQUESTED','NO_RESPONSE'", expanded)
             operations.append(("expand MSP_RESERVATION.reservation_status",
                 f"ALTER TABLE MSP_RESERVATION DROP CHECK `{constraint}`, ADD CONSTRAINT `{constraint}` CHECK ({expanded})", {}))
         if not checks:
             operations.append(("constraint MSP_RESERVATION.reservation_status",
                 "ALTER TABLE MSP_RESERVATION ADD CONSTRAINT ck_reservation_status CHECK (reservation_status IN "
-                "('REQUESTED','APPROVED','HANDOVER_PENDING','HANDED_OVER','RETURNED','REJECTED','CANCELED','EXPIRED'))", {}))
+                "('REQUESTED','APPROVED','HANDOVER_PENDING','HANDED_OVER','RETURNED','REJECTED','CANCELED','EXPIRED','NO_RESPONSE'))", {}))
     if "MSP_RESERVATION_HISTORY" in tables:
         columns = {row["name"] for row in inspector.get_columns("MSP_RESERVATION_HISTORY")}
         if "details" not in columns:
@@ -248,6 +257,10 @@ def migration_plan(db):
                 "REFERENCES MSP_RENTAL_HANDOVER (handover_id)", {}))
     if "MSP_VEHICLE_STATUS" in tables:
         columns = {row["name"] for row in inspector.get_columns("MSP_VEHICLE_STATUS")}
+        for column, definition in {"operation_id": "VARCHAR(64) DEFAULT NULL", "state_version": "INT NOT NULL DEFAULT 0"}.items():
+            if column not in columns:
+                operations.append(("add MSP_VEHICLE_STATUS." + column,
+                    "ALTER TABLE MSP_VEHICLE_STATUS ADD COLUMN " + column + " " + definition, {}))
         if "untracked_rent_until" not in columns:
             operations.append(("add MSP_VEHICLE_STATUS.untracked_rent_until",
                 "ALTER TABLE MSP_VEHICLE_STATUS ADD COLUMN untracked_rent_until DATE DEFAULT NULL", {}))

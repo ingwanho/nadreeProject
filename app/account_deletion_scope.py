@@ -165,7 +165,8 @@ def outstanding(db, session, snapshot, *, external_confirmed=False):
         payments.c.rental_contract_id.in_(contract_ids))).with_for_update()).mappings().all()
     result["pendingReservations"] = sum(row["reservation_status"] in ("REQUESTED", "APPROVED") for row in rows)
     result["pendingRecovery"] = sum(row["reservation_status"] == "HANDOVER_PENDING" or
-        row["reservation_status"] == "EXPIRED" and row.get("handed_over_at") is not None
+        row["reservation_status"] == "EXPIRED" and (row.get("handed_over_at") is not None or
+            (row.get("required_criteria_json") or {}).get("vehicleRecoveryRequired"))
         and row.get("assigned_vehicle_id") is not None for row in rows)
     result["activeRentals"] = sum(row["contract_status"] in ("ON_RENT", "OVERDUE") or
         row.get("actual_start_time") is not None and row.get("actual_end_time") is None for row in rentals)

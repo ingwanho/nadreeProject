@@ -187,6 +187,10 @@ class FcmSender:
             columns.append(active)
         current = []
         with db.engine.connect() as connection:
+            if notification.get("reminderGuard"):
+                from app.rental_reminders import still_current
+                if not still_current(db, connection, notification["reminderGuard"], _utc_now()):
+                    return dict(notification, recipients=[])
             for item in notification.get("recipients", []):
                 row = connection.execute(select(*columns).where(key == item["id"])).mappings().first()
                 if not row or not row["fcm_token"] or row["fcm_token"] != item["token"]:

@@ -45,6 +45,28 @@ def test_receipt_schema_has_no_new_payment_or_qr_tables():
     assert "customer_qr" not in metadata.tables["MSP_VEHICLE_QR"].c
 
 
+def test_feedback_migration_adds_only_nullable_evidence_and_current_state_metadata(setup):
+    from test_nadri_flow import prepare_rental_schema
+    from app.rental_schema import metadata
+    prepare_rental_schema(setup)
+    additions = {"MSP_RENTAL_HANDOVER": ("sns_snapshot_enc", "signature_completed_at"),
+                 "MSP_VEHICLE_STATUS": ("operation_id", "state_version")}
+    with setup["engine"].begin() as connection:
+        for table, columns in additions.items():
+            for column in columns:
+                connection.execute(text(f"ALTER TABLE {table} DROP COLUMN {column}"))
+    operations = migration_plan(setup["db"])
+    expected = {"add " + table + "." + column for table, columns in additions.items() for column in columns}
+    assert expected.issubset({label for label, _, _ in operations})
+    assert metadata.tables["MSP_RENTAL_CONTRACT"].c.uid_token.nullable is False
+    assert not any("uid_token" in sql and "ALTER TABLE MSP_RENTAL_CONTRACT" in sql for _, sql, _ in operations)
+    with setup["engine"].begin() as connection:
+        for label, sql, params in operations:
+            if label in expected:
+                connection.execute(text(sql), params)
+    assert not expected.intersection({label for label, _, _ in migration_plan(setup["db"])})
+
+
 def test_handover_mysql_schema_has_one_price_and_unique_active_preparation():
     from sqlalchemy.schema import CreateTable
     from app.rental_schema import metadata

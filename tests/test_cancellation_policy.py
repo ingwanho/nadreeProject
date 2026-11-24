@@ -14,6 +14,7 @@ def cancellation(setup, monkeypatch):
     at = datetime(2026, 10, 8, 15, 59, 59)
     monkeypatch.setattr("app.customer_rentals.now", lambda: at)
     monkeypatch.setattr("app.rentals.now", lambda: at)
+    monkeypatch.setattr("app.rental_common.now", lambda: at)
     calls = []
 
     class PayPal:

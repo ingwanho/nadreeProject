@@ -1,0 +1,10 @@
+[Unit]
+Description=Reconcile Bali rental days and 09:00 reminders every minute
+
+[Timer]
+OnCalendar=*-*-* *:*:00
+Persistent=true
+Unit=nadree-rental-lifecycle.service
+
+[Install]
+WantedBy=timers.target

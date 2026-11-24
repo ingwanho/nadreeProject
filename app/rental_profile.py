@@ -8,7 +8,7 @@ from sqlalchemy import select, update
 
 from app.db import require_columns
 from app.errors import Problem
-from app.security import encrypted_phone, now
+from app.security import now
 
 DocumentNumber = Annotated[str, Field(strict=True, min_length=1, max_length=100, pattern=r"\S")]
 SnsInfo = dict[Annotated[str, Field(min_length=1, max_length=50)],
@@ -20,11 +20,20 @@ def decrypt(settings, value):
     if value is None:
         return None
     try:
-        return Fernet(settings.field_encrypt_key.get_secret_value().encode()).decrypt(value.encode()).decode()
+        return Fernet(settings.handover_encrypt_key.get_secret_value().encode()).decrypt(value.encode()).decode()
     except (ValueError, TypeError):
         raise Problem(503, "PII_ENCRYPTION_NOT_CONFIGURED") from None
     except (InvalidToken, UnicodeError):
         raise Problem(503, "PII_DECRYPTION_FAILED") from None
+
+
+def encrypt(settings, value):
+    if value is None:
+        return None
+    try:
+        return Fernet(settings.handover_encrypt_key.get_secret_value().encode()).encrypt(value.encode()).decode()
+    except (ValueError, TypeError):
+        raise Problem(503, "PII_ENCRYPTION_NOT_CONFIGURED") from None
 
 
 def encode_sns(value):
@@ -53,7 +62,7 @@ def personal_view(settings, user):
 
 def sync_personal(request, session, uid, fields):
     """Only explicitly supplied fields are updated; caller owns the transaction."""
-    values = {column: encrypted_phone(request.app.state.settings, fields[key])
+    values = {column: encrypt(request.app.state.settings, fields[key])
               for key, column in NUMBER_FIELDS.items() if key in fields}
     if "snsInfo" in fields:
         values["sns_info"] = encode_sns(fields["snsInfo"])

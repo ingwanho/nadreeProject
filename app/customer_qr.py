@@ -185,7 +185,7 @@ def lookup(body: Lookup, request: Request, session=DB):
 
 def plan(request, session, spot, item, return_date):
     today = local_date(request, now())
-    if not today < return_date <= today + timedelta(days=30):
+    if not today <= return_date <= today + timedelta(days=29):
         raise Problem(422, "INVALID_ONSITE_PERIOD")
     tiers = load_tiers(request, session, spot["spot_master_id"])
     vehicles = fleet(request, session, spot, model_id=item["rental"]["model_id"])
@@ -251,9 +251,9 @@ def insert_reservation(request, session, spot, item, uid, return_date, *, key=No
     candidate.update(reservation_id=ident, uid_token=uid, spot_master_id=spot["spot_master_id"],
         reservation_status="APPROVED" if approved else "REQUESTED", vehicle_assignment_status="PROVISIONAL" if approved else "SOFT_HOLD",
         assigned_vehicle_id=item["vehicle"]["vehicle_id"] if approved else None, client_request_id=key,
-        hold_expires_at=day_end(request, local_date(request, at)), delivery_request_type="PICKUP",
+        hold_expires_at=day_end(request, return_date), delivery_request_type="PICKUP",
         created_at=at, updated_at=at)
-    candidate["required_criteria_json"].update(requestType="ONSITE", customerReceiptRequired=False, handoverFlowVersion=2,
+    candidate["required_criteria_json"].update(requestType="WALK_IN", customerReceiptRequired=False, handoverFlowVersion=2,
         onsiteVehicleId=item["vehicle"]["vehicle_id"], onsiteRequest=evidence,
         paymentMethod=EXTERNAL, quote=price,
         selected={"spotMasterId": spot["spot_master_id"], "modelId": item["rental"]["model_id"],
@@ -410,6 +410,8 @@ def receive(reservation_id: str, body: Qr, request: Request, session=DB):
         return nadree_reservation_detail(reservation_id, request, session)
     master = db.table("MSP_SPOT_MASTER")
     session.execute(select(master.c.spot_master_id).where(master.c.spot_master_id == initial["spot_master_id"]).with_for_update()).first()
+    from app.booking_lifecycle import reconcile
+    reconcile(db, request.app.state.settings, session, now(), spot_id=initial["spot_master_id"])
     spot = _spot(request, session, initial["spot_master_id"])
     qr = verify_qr(request, session, spot, body.qrCode.get_secret_value(), lock=True)
     reservation = dict(session.execute(select(r).where(r.c.reservation_id == reservation_id).with_for_update()).mappings().one())
@@ -418,7 +420,7 @@ def receive(reservation_id: str, body: Qr, request: Request, session=DB):
     if reservation["reservation_status"] in ("HANDED_OVER", "RETURNED") and reservation.get("handed_over_at"):
         return nadree_reservation_detail(reservation_id, request, session)
     if (reservation["reservation_status"] in (PENDING, "EXPIRED") and reservation.get("handed_over_at")
-            and (not reservation.get("receipt_deadline_at") or now() >= reservation["receipt_deadline_at"])):
+            and now() >= day_end(request, local_date(request, reservation["end_datetime"]))):
         raise Problem(409, "RECEIPT_DEADLINE_EXPIRED")
     if reservation["reservation_status"] != PENDING:
         raise Problem(409, "NOT_AWAITING_RECEIPT")

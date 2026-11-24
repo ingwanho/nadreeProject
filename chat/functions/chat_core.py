@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 from google.cloud import firestore
 from google.cloud.firestore_v1.base_query import FieldFilter
 
-TERMINAL = {"CANCELLED", "CANCELED", "REJECTED", "EXPIRED", "RETURNED"}
+TERMINAL = {"CANCELLED", "CANCELED", "REJECTED", "EXPIRED", "NO_RESPONSE", "RETURNED"}
 
 
 class ChatError(Exception):

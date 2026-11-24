@@ -65,8 +65,8 @@ def test_onsite_request_quote_idempotence_and_qr_case_preservation(receipt):
     assert created.status_code == 200, created.text
     item = created.json()["item"]
     ident = item["reservationId"]
-    assert item["requestType"] == "ONSITE" and item["reservationStatus"] == "REQUESTED"
-    assert item["payment"] is None and item["price"]["finalTotal"] == 10
+    assert item["requestType"] == "WALK_IN" and item["reservationStatus"] == "REQUESTED"
+    assert item["payment"] is None and item["price"]["finalTotal"] == 20
     assert submit(ctx, body, quote, key).json()["item"]["reservationId"] == ident
     changed_qr = submit(ctx, {**body, "qrCode": body["qrCode"].upper()}, quote, key)
     assert changed_qr.json()["errorCode"] == "REQUEST_KEY_REUSED"

@@ -1,5 +1,5 @@
 """Customer receipt policy; a physical handover hold survives reservation expiry."""
-from sqlalchemy import and_, or_, select, update
+from sqlalchemy import select, update
 
 from app.errors import Problem
 from app.rental_common import day_end, iso, local_date
@@ -15,7 +15,7 @@ def require_schema(db):
 
 
 def is_onsite(reservation):
-    return ((reservation or {}).get("required_criteria_json") or {}).get("requestType") == "ONSITE"
+    return ((reservation or {}).get("required_criteria_json") or {}).get("requestType") in ("ONSITE", "WALK_IN")
 
 
 def hold_reason(reservation_id):
@@ -23,22 +23,25 @@ def hold_reason(reservation_id):
 
 
 def require_no_hold(item):
-    if ((item.get("state") or {}).get("status_reason") or "").startswith(HOLD_PREFIX):
+    if item.get("recoveryReservationIds") or ((item.get("state") or {}).get("status_reason") or "").startswith(HOLD_PREFIX):
         raise Problem(409, "VEHICLE_RECEIPT_HOLD")
 
 
 def view(request, reservation, contract=None):
     reservation = reservation or {}
-    deadline = reservation.get("receipt_deadline_at")
+    deadline = day_end(request, local_date(request, reservation["end_datetime"])) if reservation.get("end_datetime") else reservation.get("receipt_deadline_at")
     pending = reservation.get("reservation_status") == PENDING
     can_receive = bool(pending and deadline and now() < deadline)
-    required = bool(reservation)
+    required = bool(reservation) and (reservation.get("required_criteria_json") or {}).get("handoverFlowVersion") != 2
     if reservation.get("reservation_status") in ("HANDED_OVER", "RETURNED") and not reservation.get("handed_over_at"):
         required = False
-    needs_recovery = bool(reservation.get("handed_over_at") and
-        (reservation.get("reservation_status") == "EXPIRED" or pending and deadline and now() >= deadline))
-    return {"requestType": "ONSITE" if is_onsite(reservation) else "ADVANCE",
-            "requestDeadline": iso(request, reservation.get("hold_expires_at")) if is_onsite(reservation) else None,
+    from app.booking_lifecycle import needs_recovery as recovery_required
+    needs_recovery = recovery_required(request.app.state.settings, reservation, now())
+    return {"requestType": "WALK_IN" if is_onsite(reservation) else "ADVANCE",
+            "requestDeadline": iso(request, deadline) if is_onsite(reservation) else None,
+            "latePickupWarning": bool(reservation.get("reservation_status") in ("REQUESTED", "APPROVED", PENDING)
+                and reservation.get("start_datetime") and local_date(request, reservation["start_datetime"]) < local_date(request, now())
+                and deadline and now() < deadline),
             "customerReceiptRequired": required,
             "handedOverAt": iso(request, reservation.get("handed_over_at")),
             "receiptDeadline": iso(request, deadline),
@@ -53,7 +56,7 @@ def prepare(request, session, reservation, vehicle_id, admin_id):
     require_schema(db)
     table, state = db.table("MSP_RESERVATION"), db.table("MSP_VEHICLE_STATUS")
     at = now()
-    deadline = day_end(request, local_date(request, at))
+    deadline = day_end(request, local_date(request, reservation["end_datetime"]))
     criteria = dict(reservation.get("required_criteria_json") or {}, customerReceiptRequired=True)
     qr = db.table("MSP_VEHICLE_QR")
     criteria["receiptQrDigest"] = session.scalar(select(qr.c.qr_code_hash).where(qr.c.vehicle_id == vehicle_id))
@@ -63,7 +66,7 @@ def prepare(request, session, reservation, vehicle_id, admin_id):
                   required_criteria_json=criteria, updated_at=at)
     session.execute(update(table).where(table.c.reservation_id == reservation["reservation_id"]).values(**values))
     session.execute(update(state).where(state.c.vehicle_id == vehicle_id).values(
-        status="DISABLED", status_reason=hold_reason(reservation["reservation_id"]),
+        status="DISABLED", state_version=state.c.state_version + 1, operation_id=None, status_reason=hold_reason(reservation["reservation_id"]),
         status_changed_at=at, changed_by=admin_id, updated_at=at))
     from app.availability import reservation_history
     from app.fcm import queue_receipt_required
@@ -73,38 +76,13 @@ def prepare(request, session, reservation, vehicle_id, admin_id):
 
 
 def expire_receipts(db, settings, at=None):
-    """No provider calls or automatic release of a physically handed-over vehicle."""
+    """Catch up date transitions under the same shop lock as API writes."""
     from sqlalchemy.orm import Session
+    from app.booking_lifecycle import reconcile
     at = at or now()
-    require_schema(db)
-    table, history = db.table("MSP_RESERVATION"), db.table("MSP_RESERVATION_HISTORY")
     count = 0
     with Session(db.engine) as session, session.begin():
-        records = session.execute(select(table).where(or_(
-            and_(table.c.reservation_status == PENDING, table.c.receipt_deadline_at <= at),
-            and_(table.c.reservation_status.in_(("REQUESTED", "APPROVED")), table.c.hold_expires_at <= at)))
-                                  .with_for_update()).mappings().all()
-        for row in records:
-            pending = row["reservation_status"] == PENDING
-            deadline = row["receipt_deadline_at"] if pending else row["hold_expires_at"] if is_onsite(row) else None
-            if not deadline or at < deadline:
-                continue
-            values = {"reservation_status": "EXPIRED", "updated_at": at}
-            if not pending:
-                values.update(vehicle_assignment_status="RELEASED", assigned_vehicle_id=None, vehicle_assigned_at=None)
-            session.execute(update(table).where(table.c.reservation_id == row["reservation_id"]).values(**values))
-            from app.handover import expire_for_reservation
-            expire_for_reservation(db, session, row, at)
-            session.execute(history.insert().values(reservation_id=row["reservation_id"], event_type="EXPIRED",
-                previous_reservation_status=row["reservation_status"], new_reservation_status="EXPIRED",
-                previous_vehicle_id=row["assigned_vehicle_id"], new_vehicle_id=row["assigned_vehicle_id"] if pending else None,
-                previous_assignment_status=row["vehicle_assignment_status"],
-                new_assignment_status=row["vehicle_assignment_status"] if pending else "RELEASED",
-                changed_by=None, reason="Receipt deadline exceeded" if pending else "Onsite request day ended",
-                details={"actorType": "SYSTEM", "vehicleRecoveryRequired": pending}, created_at=at))
-            from app.notifications import record_notification
-            record_notification(db, session, row["spot_master_id"], "RESERVATION_EXPIRED", "RESERVATION",
-                                row["reservation_id"], "reservation:" + row["reservation_id"] + ":EXPIRED")
-            count += 1
-    # SQL is authoritative; existing reconciliation retries chat closure.
+        master = db.table("MSP_SPOT_MASTER")
+        for ident in session.scalars(select(master.c.spot_master_id).order_by(master.c.spot_master_id).with_for_update()):
+            count += reconcile(db, settings, session, at, spot_id=ident)
     return count

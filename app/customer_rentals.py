@@ -88,14 +88,15 @@ def _local_period(request, start_date, return_date):
 
 
 def _days(start_date, return_date):
-    return (return_date - start_date).days
+    return (return_date - start_date).days + 1
 
 
 def _active_spots(request, session):
     db = _db(request)
     master, contracts = db.table("MSP_SPOT_MASTER"), db.table("MSP_CONTRACT")
     result = []
-    for row in session.execute(select(master).where(master.c.is_active == 1)).mappings():
+    from app.spot_hierarchy import active_predicate
+    for row in session.execute(select(master).where(active_predicate(master))).mappings():
         row = dict(row)
         contract = session.execute(select(contracts).where(contracts.c.contract_id == row["contract_id"])).mappings().first()
         today = local_date(request, now())
@@ -121,7 +122,9 @@ def _spot(request, session, spot_id, *, active=True):
     if not row:
         raise Problem(404, "SPOT_NOT_FOUND")
     row = dict(row)
-    if active and row.get("is_active") != 1:
+    from app.spot_hierarchy import active_predicate
+    if active and not session.scalar(select(master.c.spot_master_id).where(
+            master.c.spot_master_id == spot_id, active_predicate(master))):
         raise Problem(409, "SPOT_UNAVAILABLE")
     contract = session.execute(select(db.table("MSP_CONTRACT")).where(
         db.table("MSP_CONTRACT").c.contract_id == row["contract_id"])).mappings().first()
@@ -376,6 +379,8 @@ def _record_vehicle_id(reservation, contract):
 
 
 def _record_view(request, reservation, contract, payment, spot, model, *, session=None, vehicle_images=None, vehicle_numbers=None, detailed=False):
+    from app.booking_lifecycle import projected
+    reservation = projected(request.app.state.settings, reservation, now())
     if not spot:
         return None
     criteria = (reservation or {}).get("required_criteria_json") or {}
@@ -386,6 +391,8 @@ def _record_view(request, reservation, contract, payment, spot, model, *, sessio
     end_value = (contract or {}).get("actual_end_time") or (reservation or {}).get("end_datetime")
     return_date = (contract or {}).get("planned_end_date") or (local_date(request, end_value) if end_value else None)
     status = (contract or {}).get("contract_status")
+    if contract and status in ("ON_RENT", "OVERDUE") and not contract.get("actual_end_time") and return_date and return_date < local_date(request, now()):
+        status = "OVERDUE"
     reservation_status = (reservation or {}).get("reservation_status")
     pstatus = payment.get("payment_status") if payment else None
     flags = payment_flags(request.app.state.settings, reservation)
@@ -413,7 +420,7 @@ def _record_view(request, reservation, contract, payment, spot, model, *, sessio
     price_total = _number((payment or {}).get("total_price"))
     total_from = _number(quote.get("totalFrom", quote.get("calculatedTotalFrom", price_total)))
     total_to = _number(quote.get("totalTo", quote.get("calculatedTotalTo", price_total)))
-    rental_days = ((return_date - start_date).days if start_date and isinstance(return_date, date) else None)
+    rental_days = ((return_date - start_date).days + 1 if start_date and isinstance(return_date, date) else None)
     price = {
         "currency": quote.get("currency") or (payment or {}).get("currency") or request.app.state.settings.rental_currency,
         "rentalDays": quote.get("rentalDays", rental_days),
@@ -492,13 +499,14 @@ def _record_view(request, reservation, contract, payment, spot, model, *, sessio
 def _customer_records(request, session, uid, *, completed=False, page=1, size=20):
     db = _db(request)
     rt, ct = db.table("MSP_RESERVATION"), db.table("MSP_RENTAL_CONTRACT")
-    reservations = [dict(row) for row in session.execute(select(rt).where(rt.c.uid_token == uid)).mappings()]
+    from app.booking_lifecycle import projected
+    reservations = [projected(request.app.state.settings, row, now()) for row in session.execute(select(rt).where(rt.c.uid_token == uid)).mappings()]
     contracts = [dict(row) for row in session.execute(select(ct).where(ct.c.uid_token == uid)).mappings()]
     if completed:
         contracts = [c for c in contracts if c["contract_status"] == "RETURNED" and c["actual_end_time"] is not None]
         linked_ids = {c.get("reservation_id") for c in contracts if c.get("reservation_id")}
         reservations = [r for r in reservations if r["reservation_id"] in linked_ids or
-                        r["reservation_status"] in ("CANCELED", "REJECTED", "EXPIRED", "RETURNED")]
+                        r["reservation_status"] in ("CANCELED", "REJECTED", "EXPIRED", "RETURNED", "NO_RESPONSE")]
     else:
         reservations = [r for r in reservations if r["reservation_status"] in ("REQUESTED", "APPROVED", "HANDOVER_PENDING", "HANDED_OVER")]
         contracts = [c for c in contracts if c["contract_status"] in ("ON_RENT", "OVERDUE") and c["actual_end_time"] is None]
@@ -815,11 +823,24 @@ def nadree_request(body: NadriRentalRequest, request: Request, session: Session 
             "spot": item["spot"], "model": item["model"], "price": quote}
 
 
-def _reservation_for_payment(request, session, user, reservation_id):
+def _owned_locked_reservation(request, session, user, reservation_id):
     table = _db(request).table("MSP_RESERVATION")
+    shop = session.scalar(select(table.c.spot_master_id).where(table.c.reservation_id == reservation_id,
+        table.c.uid_token == user.uid_token))
+    if not shop:
+        raise Problem(404, "RESERVATION_NOT_FOUND")
+    master = _db(request).table("MSP_SPOT_MASTER")
+    session.execute(select(master.c.spot_master_id).where(master.c.spot_master_id == shop).with_for_update()).first()
+    from app.booking_lifecycle import reconcile
+    reconcile(_db(request), request.app.state.settings, session, now(), spot_id=shop)
     row = session.execute(select(table).where(table.c.reservation_id == reservation_id, table.c.uid_token == user.uid_token).with_for_update()).mappings().first()
     if not row:
         raise Problem(404, "RESERVATION_NOT_FOUND")
+    return dict(row)
+
+
+def _reservation_for_payment(request, session, user, reservation_id):
+    row = _owned_locked_reservation(request, session, user, reservation_id)
     require_checkout(request.app.state.settings, row)
     if row["reservation_status"] != "APPROVED":
         raise Problem(409, "RESERVATION_NOT_APPROVED_FOR_PAYMENT")
@@ -1247,14 +1268,10 @@ def cancel_request(body: ReservationCancel, request: Request, background_tasks: 
     user = user_principal(request, session)
     db = request.app.state.db
     reservation_table = db.table("MSP_RESERVATION")
-    reservation = session.execute(select(reservation_table).where(
-        reservation_table.c.reservation_id == body.reservationId,
-        reservation_table.c.uid_token == user.uid_token).with_for_update()).mappings().first()
-    if not reservation:
-        raise Problem(404, "RESERVATION_NOT_FOUND")
+    reservation = _owned_locked_reservation(request, session, user, body.reservationId)
     if reservation["reservation_status"] not in ("REQUESTED", "APPROVED"):
         raise Problem(409, "RESERVATION_STATE_INVALID")
-    if is_onsite(reservation) and reservation.get("hold_expires_at") and now() >= reservation["hold_expires_at"]:
+    if is_onsite(reservation) and now() >= day_end(request, local_date(request, reservation["end_datetime"])):
         raise Problem(409, "ONSITE_REQUEST_EXPIRED")
     rental_day = local_date(request, now()) >= local_date(request, reservation["start_datetime"])
     contract_table = db.table("MSP_RENTAL_CONTRACT")

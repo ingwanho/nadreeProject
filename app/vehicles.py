@@ -12,9 +12,9 @@ from app.headers import bearer
 from app.images import image_fields
 from app.pricing import daily_price, load_tiers, tier_view
 from app.rental_common import (action_result, by_number, context, contracts_for, day_end, effective_state,
-    expire_maintenance, fleet, is_open, local_date, lock_key, page_result, qr_digest, resolve_spot, rows, verify_qr)
+    expire_maintenance, fleet, is_open, iso, local_date, lock_key, page_result, qr_digest, resolve_spot, rows, verify_qr)
 from app.rental_inputs import Detach, Move, Page, Qr, QrLink, Repair, VehicleCreate, VehicleNumber
-from app.responses import Status
+from app.responses import Status, VehicleHistory
 from app.receipt import HOLD_PREFIX, require_no_hold
 from app.security import now
 
@@ -39,11 +39,13 @@ def issue_qr(request, session, vehicle_id, digest, actor):
 
 
 def available_actions(request, item, contracts):
-    if ((item.get("state") or {}).get("status_reason") or "").startswith(HOLD_PREFIX):
+    if item.get("recoveryReservationIds") or ((item.get("state") or {}).get("status_reason") or "").startswith(HOLD_PREFIX):
         return []
     ident = item["vehicle"]["vehicle_id"]
     if any(c["vehicle_id"] == ident and is_open(c) for c in contracts):
         return ["PRICE_CHANGE"] + (["LOCATION"] if len(item["sensors"]) == 1 else [])
+    if effective_state(request, item, contracts) == "UNTRACKED_RENT":
+        return ["PRICE_CHANGE", "UNTRACKED_RENT_END"] + (["LOCATION"] if len(item["sensors"]) == 1 else [])
     result = ["PRICE_CHANGE", "SPOT_CHANGE"]
     state = effective_state(request, item, contracts)
     if state == "AVAILABLE":
@@ -73,7 +75,12 @@ def vehicle_view(request, item, contracts):
         modelName=model.get("model_name"), cc=model.get("cc"), vehicleType=model.get("vehicle_type"),
         **image_fields(request.app.state.settings, "vehicle", image_key, image_url),
         vehicleStatus=effective_state(request, item, contracts),
-        untrackedRentUntil=(item.get("state") or {}).get("untracked_rent_until"))
+        untrackedRentUntil=(item.get("state") or {}).get("untracked_rent_until"),
+        untrackedRentId=(item.get("state") or {}).get("operation_id") if (item.get("state") or {}).get("status") == "UNTRACKED_RENT" else None,
+        stateVersion=(item.get("state") or {}).get("state_version", 0),
+        maintenanceUntil=(item.get("state") or {}).get("maintenance_until"),
+        rentalStatus=("OVERDUE" if item["state"]["untracked_rent_until"] < local_date(request, now()) else "ON_RENT")
+            if (item.get("state") or {}).get("status") == "UNTRACKED_RENT" else None)
 
 
 @router.post("/nadreego/vehicle/qr/availability", summary="Check current global QR registration without exposing another shop's vehicle")
@@ -90,18 +97,62 @@ def qr_availability(body: Qr, request: Request, session: Session = DB):
             "reasonCode": "QR_ALREADY_ISSUED" if row else None}
 
 
-@router.post("/nadreego/vehicle/untracked-rent", summary="Block a vehicle through an end date without a customer, contract or rental history")
+def recent_rentals(request, session, root, vehicle_id):
+    from app.readmodels import operation_query
+    base = operation_query(request, root)
+    history = request.app.state.db.table("MSP_RESERVATION_HISTORY")
+    reservations = request.app.state.db.table("MSP_RESERVATION")
+    walkins = select(reservations.c.reservation_id).where(
+        reservations.c.required_criteria_json["onsiteVehicleId"].as_string() == vehicle_id)
+    previous = select(history.c.reservation_id).where(or_(
+        history.c.previous_vehicle_id == vehicle_id, history.c.new_vehicle_id == vehicle_id))
+    records = session.execute(select(base).where(or_(base.c.vehicle_id == vehicle_id, base.c.reservation_id.in_(walkins),
+        base.c.reservation_id.in_(previous))).order_by(base.c.begin.desc(), base.c.booked_no.desc()).limit(3)).mappings()
+    return [{"bookedNo": r["booked_no"], "reservationId": r["reservation_id"], "vehicleId": r["vehicle_id"],
+        "rentalContractId": r["rental_contract_id"], "recordType": r["record_type"],
+        "reservationStatus": r["reservation_status"], "rentalStatus": r["contract_status"],
+        "startDatetime": iso(request, r["begin"]), "plannedEndDate": r["planned_end_date"] or
+            (local_date(request, r["reservation_end"]) if r["reservation_end"] else None),
+        "actualEndTime": iso(request, r["actual_end_time"]),
+        "vehicleAssociation": "CURRENT" if r["vehicle_id"] == vehicle_id else "PREVIOUS_ASSIGNMENT"}
+        for r in records]
+
+
+@router.get("/nadreego/vehicle/{vehicle_id}/rental-history", response_model=VehicleHistory,
+    summary="Get at most three rental records, including former assignments",
+    description="Current shop's direct vehicles only; foreign objects return 404. Includes future reservations and canceled records linked by assignment history. Ordered by rental/reservation start descending, then bookedNo descending. Customer-free rentals have no history.")
+def vehicle_history(vehicle_id: str, request: Request, session: Session = DB):
+    _, root = context(request, session)
+    if vehicle_id not in fleet(request, session, root, vehicle_ids=[vehicle_id]):
+        raise Problem(404, "VEHICLE_NOT_FOUND")
+    return {"status": "success", "vehicleId": vehicle_id,
+            "items": recent_rentals(request, session, root, vehicle_id)}
+
+
+@router.post("/nadreego/vehicle/untracked-rent", summary="Start or physically return a customer-free rental; no rental history is created")
 def untracked_rent(body: UntrackedRent, request: Request, session: Session = DB):
     actor, root = context(request, session, write=True)
     all_vehicles = fleet(request, session, root, lock=True)
     item = by_number(all_vehicles, body.vehicleNumber)
-    require_no_hold(item)
     ident = item["vehicle"]["vehicle_id"]
+    qr = verify_qr(request, session, root, body.qrCode.get_secret_value(), lock=True)
+    if qr["vehicle_id"] != ident:
+        raise Problem(409, "RESERVATION_VEHICLE_MISMATCH")
     vehicles = {key: value for key, value in all_vehicles.items() if value["rental"]["model_id"] == item["rental"]["model_id"]}
     contracts = contracts_for(request, session, list(vehicles))
     expire_maintenance(request, session, vehicles, contracts)
+    state = item["state"]
+    version, operation = state.get("state_version", 0), state.get("operation_id")
     at = now()
     if body.action == "START":
+        require_no_hold(item)
+        if operation == body.clientRequestId:
+            if state["status"] == "UNTRACKED_RENT" and state["untracked_rent_until"] != body.endDate:
+                raise Problem(409, "REQUEST_KEY_REUSED")
+            return action_result(request, actor, state["status"], {"vehicleId": ident, "vehicleStatus": state["status"],
+                "untrackedRentId": operation, "untrackedRentUntil": state["untracked_rent_until"], "stateVersion": version})
+        if version != body.expectedStateVersion:
+            raise Problem(409, "VEHICLE_STATE_CHANGED")
         if body.endDate < local_date(request, at):
             raise Problem(422, "INVALID_INPUT")
         if effective_state(request, item, contracts) != "AVAILABLE":
@@ -112,15 +163,24 @@ def untracked_rent(body: UntrackedRent, request: Request, session: Session = DB)
             r.c.reservation_status.in_(("REQUESTED", "APPROVED")), r.c.start_datetime < end, r.c.end_datetime >= at)).first():
             raise Problem(409, "VEHICLE_UNAVAILABLE")
         compute_assignment(request, session, root, vehicles, contracts, maintenance=(ident, at, end))
-        status, until = "UNTRACKED_RENT", body.endDate
+        status, until, operation = "UNTRACKED_RENT", body.endDate, body.clientRequestId
     else:
-        if item["state"]["status"] != "UNTRACKED_RENT":
-            raise Problem(409, "VEHICLE_UNAVAILABLE")
+        if operation != body.untrackedRentId:
+            raise Problem(409, "UNTRACKED_RENT_CHANGED")
+        if state["status"] == "AVAILABLE":
+            return action_result(request, actor, "AVAILABLE", {"vehicleId": ident, "vehicleStatus": "AVAILABLE",
+                "untrackedRentId": operation, "untrackedRentUntil": None, "stateVersion": version})
+        if state["status"] != "UNTRACKED_RENT":
+            raise Problem(409, "UNTRACKED_RENT_CHANGED")
         status, until = "AVAILABLE", None
     t = request.app.state.db.table("MSP_VEHICLE_STATUS")
     session.execute(update(t).where(t.c.vehicle_id == ident).values(status=status, untracked_rent_until=until,
-        maintenance_until=None, status_changed_at=at, status_reason=None, changed_by=actor.admin["admin_id"], updated_at=at))
-    return action_result(request, actor, status, {"vehicleId": ident, "vehicleStatus": status, "untrackedRentUntil": until})
+        operation_id=operation, state_version=version + 1, maintenance_until=None,
+        status_changed_at=at, status_reason=None, changed_by=actor.admin["admin_id"], updated_at=at))
+    state.update(status=status, untracked_rent_until=until, state_version=version + 1)
+    return action_result(request, actor, status, {"vehicleId": ident,
+        "vehicleStatus": effective_state(request, item, contracts), "untrackedRentId": operation,
+        "untrackedRentUntil": until, "stateVersion": version + 1})
 
 
 def available_sensor(request, session, root, sensor_id):
@@ -197,7 +257,7 @@ def link_qr(body: QrLink, request: Request, session: Session = DB):
     item = by_number(fleet(request, session, root, lock=True), body.vehicleNumber)
     require_no_hold(item)
     ident = item["vehicle"]["vehicle_id"]
-    if any(is_open(c) for c in contracts_for(request, session, [ident])):
+    if (item.get("state") or {}).get("status") == "UNTRACKED_RENT" or any(is_open(c) for c in contracts_for(request, session, [ident])):
         raise Problem(409, "VEHICLE_ALREADY_ON_RENT")
     digest = qr_digest(request, body.qrToken.get_secret_value())
     lock_key(session, "qr", digest)
@@ -240,7 +300,8 @@ def validate_qr(body: Qr, request: Request, session: Session = DB):
     return dict(status=True, errorCode=None, data=dict(vehicleId=qr["vehicle_id"], qrId=qr["qr_id"], qrStatus="ACTIVE",
         equipmentType="QR_WITH_SENSOR" if sensor else "QR_ONLY", sensorId=sensor["sensor_id"] if sensor else None,
         sensorStatus="LINKED" if sensor else "NOT_LINKED", vehicle=vehicle_view(request, item, contracts),
-        currentBooking=detail["currentBooking"], currentRental=detail["currentRental"], availableActions=actions))
+        currentBooking=detail["currentBooking"], currentRental=detail["currentRental"], availableActions=actions,
+        recentRentals=recent_rentals(request, session, root, qr["vehicle_id"])))
 
 
 @router.post("/nadreego/sensor/delete", response_model=Status,
@@ -250,7 +311,7 @@ def detach(body: Detach, request: Request, session: Session = DB):
     item = by_number(fleet(request, session, root, lock=True), body.vehicleNumber)
     require_no_hold(item)
     ident = item["vehicle"]["vehicle_id"]
-    if any(is_open(c) for c in contracts_for(request, session, [ident])):
+    if (item.get("state") or {}).get("status") == "UNTRACKED_RENT" or any(is_open(c) for c in contracts_for(request, session, [ident])):
         raise Problem(409, "VEHICLE_ALREADY_ON_RENT")
     db = request.app.state.db
     if body.division == "SENSOR":
@@ -287,6 +348,17 @@ def repair(body: Repair, request: Request, session: Session = DB):
     item = by_number(vehicles, body.vehicleNumber)
     require_no_hold(item)
     ident = item["vehicle"]["vehicle_id"]
+    qr = verify_qr(request, session, root, body.qrCode.get_secret_value(), lock=True)
+    if qr["vehicle_id"] != ident:
+        raise Problem(409, "RESERVATION_VEHICLE_MISMATCH")
+    if item["state"].get("operation_id") == body.clientRequestId:
+        if item["state"]["status"] == "MAINTENANCE" and (item["state"]["maintenance_until"] != body.date or item["state"]["status_reason"] != body.reason):
+            raise Problem(409, "REQUEST_KEY_REUSED")
+        return action_result(request, actor, item["state"]["status"], {"vehicleId": ident,
+            "vehicleStatus": item["state"]["status"], "maintenanceUntil": item["state"]["maintenance_until"],
+            "stateVersion": item["state"].get("state_version", 0)})
+    if item["state"].get("state_version", 0) != body.expectedStateVersion:
+        raise Problem(409, "VEHICLE_STATE_CHANGED")
     vehicles = {k: v for k, v in vehicles.items() if v["rental"]["model_id"] == item["rental"]["model_id"]}
     contracts = contracts_for(request, session, list(vehicles))
     if any(c["vehicle_id"] == ident and is_open(c) for c in contracts):
@@ -301,8 +373,9 @@ def repair(body: Repair, request: Request, session: Session = DB):
     apply_assignments(request, session, assignments, reservations, actor.admin["admin_id"])
     t = request.app.state.db.table("MSP_VEHICLE_STATUS")
     session.execute(update(t).where(t.c.vehicle_id == ident).values(status="MAINTENANCE", maintenance_until=body.date,
+        operation_id=body.clientRequestId, state_version=t.c.state_version + 1,
         status_changed_at=begin, status_reason=body.reason, changed_by=actor.admin["admin_id"], updated_at=now()))
-    return action_result(request, actor, "MAINTENANCE", dict(vehicleId=ident, vehicleStatus="MAINTENANCE", maintenanceUntil=body.date))
+    return action_result(request, actor, "MAINTENANCE", dict(vehicleId=ident, vehicleStatus="MAINTENANCE", maintenanceUntil=body.date, stateVersion=item["state"].get("state_version", 0) + 1))
 
 
 @router.post("/nadreego/vehicle/spotChange")
@@ -314,7 +387,7 @@ def move(body: Move, request: Request, session: Session = DB):
     ident = item["vehicle"]["vehicle_id"]
     if target["spot_master_id"] == root["spot_master_id"]:
         return dict(status="success", spotMasterId=root["spot_master_id"])
-    if any(is_open(c) for c in contracts_for(request, session, [ident])):
+    if (item.get("state") or {}).get("status") == "UNTRACKED_RENT" or any(is_open(c) for c in contracts_for(request, session, [ident])):
         raise Problem(409, "VEHICLE_ALREADY_ON_RENT")
     db = request.app.state.db
     reservations = db.table("MSP_RESERVATION")

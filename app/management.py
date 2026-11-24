@@ -14,7 +14,7 @@ from app.headers import bearer
 from app.responses import AdminAccountDeletion, Admins, Applicants, CreatedSpot, Hierarchy, PrimaryResult, ShopProfile, ShopResult, Status, ShopPayPalMerchantResult
 from app.schemas import AdminId, RequestAction, Shop, ShopPayPalMerchant, SpotCreate
 from app.rental_common import context, editable_spot, lock_key, resolve_spot
-from app.spot_hierarchy import unit_name
+from app.spot_hierarchy import active_predicate, unit_name
 from app.security import (GENERAL, PRIMARY, SESSION_MARKER, active_spot, check_contract, in_subtree,
                           now, principal, roles)
 
@@ -335,7 +335,7 @@ def update_shop(body: Shop, request: Request, session: Session = DB):
 def hierarchy(request: Request, offset: int = Query(0, ge=0), limit: int = Query(50, ge=1, le=200),
               search: str = Query("", max_length=100), unit_type: str = Query("", max_length=20),
               is_active: int = Query(-1, ge=-1, le=1), has_manager: int = Query(-1, ge=-1, le=1),
-              session: Session = DB):
+              includeSelf: bool = Query(False), session: Session = DB):
     actor = principal(request, session)
     root = active_spot(request, session, actor)
     db = request.app.state.db
@@ -351,6 +351,9 @@ def hierarchy(request: Request, offset: int = Query(0, ge=0), limit: int = Query
     source = table.outerjoin(managers, table.c.spot_master_id == managers.c.spot_master_id)
     # A segment delimiter prevents ORG01 from matching ORG010.
     condition = (table.c.contract_id == root["contract_id"]) & (table.c.org_id == root["org_id"]) & table.c.unit_code.startswith(root["unit_code"] + "-", autoescape=True)
+    if includeSelf:
+        condition |= table.c.spot_master_id == root["spot_master_id"]
+    active = active_predicate(table)
     if search:
         own_name = table.c.unit_name if "unit_name" in table.c else table.c.spot_name
         condition &= or_(own_name.contains(search, autoescape=True), table.c.unit_code.contains(search, autoescape=True),
@@ -358,24 +361,31 @@ def hierarchy(request: Request, offset: int = Query(0, ge=0), limit: int = Query
     if unit_type:
         condition &= table.c.hierarchy_level == unit_type
     if is_active != -1:
-        condition &= table.c.is_active == is_active
+        condition &= active if is_active else ~active
     if has_manager != -1:
         condition &= managers.c.spot_master_id.is_not(None) if has_manager else managers.c.spot_master_id.is_(None)
     total = session.scalar(select(func.count()).select_from(source).where(condition))
-    rows = session.execute(select(table, managers.c.manager_name).select_from(source).where(condition).order_by(table.c.unit_code, table.c.spot_master_id)
+    rows = session.execute(select(table, managers.c.manager_name, active.label("effective_is_active")).select_from(source).where(condition).order_by(table.c.unit_code, table.c.spot_master_id)
                            .offset(offset).limit(limit)).mappings().all()
     keys = ["spot_master_id", "unit_code", "spot_name", "hierarchy_level", "org_name", "region_name", "is_active"]
     primary = PRIMARY in roles(session, db, actor.admin["admin_id"])
     company = session.execute(select(table.c.spot_master_id, table.c.unit_code).where(
         table.c.org_id == root["org_id"], table.c.contract_id == root["contract_id"])).all()
     parents = {item.unit_code: item.spot_master_id for item in company}
-    return {"items": [{**{k: row.get(k) for k in keys}, "spot_name": unit_name(row), "is_active": bool(row["is_active"]),
+    vehicles, rental, membership = (db.table(name) for name in ("MSP_VEHICLE", "MSP_RENTAL_VEHICLE", "MSP_VEHICLE_SPOT_HISTORY"))
+    counts = dict(session.execute(select(membership.c.spot_master_id, func.count(func.distinct(vehicles.c.vehicle_id)))
+        .join(vehicles, vehicles.c.vehicle_id == membership.c.vehicle_id)
+        .join(rental, rental.c.vehicle_id == vehicles.c.vehicle_id)
+        .where(membership.c.spot_master_id.in_([r["spot_master_id"] for r in rows]), membership.c.released_at.is_(None))
+        .group_by(membership.c.spot_master_id)).all())
+    return {"items": [{**{k: row.get(k) for k in keys}, "spot_name": unit_name(row), "is_active": bool(row["effective_is_active"]),
+                       "directVehicleCount": counts.get(row["spot_master_id"], 0),
                        "manager_name": row["manager_name"], "companyId": row["org_id"],
                        "parentSpotMasterId": parents.get(row["unit_code"].rsplit("-", 1)[0]),
-                       "canEditProfile": primary and bool(row["is_active"]),
-                       "canEditPricing": bool(row["is_active"]) and (primary or row["spot_master_id"] == root["spot_master_id"]),
-                       "canEditDelivery": bool(row["is_active"]) and (primary or row["spot_master_id"] == root["spot_master_id"]),
-                       "canCreateChild": primary and bool(row["is_active"]) and row["hierarchy_level"] in CHILD_LEVELS} for row in rows],
+                       "canEditProfile": primary and bool(row["effective_is_active"]),
+                       "canEditPricing": bool(row["effective_is_active"]) and (primary or row["spot_master_id"] == root["spot_master_id"]),
+                       "canEditDelivery": bool(row["effective_is_active"]) and (primary or row["spot_master_id"] == root["spot_master_id"]),
+                       "canCreateChild": primary and bool(row["effective_is_active"]) and row["hierarchy_level"] in CHILD_LEVELS} for row in rows],
             "total": total, "currentSpotMasterId": root["spot_master_id"], "companyId": root["org_id"],
             "isCompanyPrimary": primary and root["hierarchy_level"] == "org"}
 

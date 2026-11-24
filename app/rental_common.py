@@ -50,6 +50,9 @@ def iso(request, value):
 def context(request, session, *, write=False, representative=False, settlement=False):
     actor = principal(request, session)
     root = active_spot(request, session, actor, representative=representative, lock=write, settlement=settlement)
+    if write and request.url.path.startswith(("/nadreego/booking", "/nadreego/rent", "/nadreego/vehicle")):
+        from app.booking_lifecycle import reconcile
+        reconcile(request.app.state.db, request.app.state.settings, session, now(), spot_id=root["spot_master_id"])
     return actor, root
 
 
@@ -64,7 +67,9 @@ def resolve_spot(request, session, root, code=None, *, lock=False):
     query = select(t).outerjoin(rent, rent.c.spot_master_id == t.c.spot_master_id).where(
         or_(t.c.spot_master_id == code, t.c.unit_code == code, rent.c.legacy_spot_code == code))
     rows = session.execute(query.with_for_update() if lock else query).mappings().all()
-    if len(rows) != 1 or not rows[0]["is_active"] or not in_subtree(root, rows[0]):
+    from app.spot_hierarchy import active_predicate
+    if len(rows) != 1 or not in_subtree(root, rows[0]) or not session.scalar(select(t.c.spot_master_id).where(
+            t.c.spot_master_id == rows[0]["spot_master_id"], active_predicate(t))):
         raise Problem(404, "SPOT_NOT_FOUND")
     # The actor may belong to an open ancestor of the closing target. Check
     # the selected write target under its own lock, while preserving reads.
@@ -123,10 +128,17 @@ def fleet(request, session, spot, *, model_id=None, vehicle_ids=None, lock=False
         target.update({r["vehicle_id"]: r for r in rows(session, table, table.c.vehicle_id.in_(ids))})
     sensor = db.table("MSP_SENSOR")
     sensors = rows(session, sensor, sensor.c.vehicle_id.in_(ids), sensor.c.is_active == 1)
-    return {r["vehicle_id"]: {"vehicle": dict(r), "rental": extra[r["vehicle_id"]],
+    result = {r["vehicle_id"]: {"vehicle": dict(r), "rental": extra[r["vehicle_id"]],
         "model": model_rows.get(extra[r["vehicle_id"]]["model_id"]), "state": states.get(r["vehicle_id"]),
         "qr": qrs.get(r["vehicle_id"]), "sensors": [s for s in sensors if s["vehicle_id"] == r["vehicle_id"]]}
         for r in vehicles}
+    from app.booking_lifecycle import needs_recovery
+    booking = db.table("MSP_RESERVATION")
+    for r in rows(session, booking, booking.c.assigned_vehicle_id.in_(ids),
+                  booking.c.reservation_status.in_(("APPROVED", "HANDOVER_PENDING", "EXPIRED"))):
+        if needs_recovery(request.app.state.settings, r, now()):
+            result[r["assigned_vehicle_id"]].setdefault("recoveryReservationIds", []).append(r["reservation_id"])
+    return result
 
 
 def by_number(vehicles, number):
@@ -150,8 +162,10 @@ def effective_state(request, item, contracts, at=None):
     state = item["state"]
     if state is None:
         return "DISABLED"
+    if item.get("recoveryReservationIds") and not any(c["vehicle_id"] == item["vehicle"]["vehicle_id"] and is_open(c) for c in contracts):
+        return "DISABLED"
     period_column = "untracked_rent_until" if state["status"] == "UNTRACKED_RENT" else "maintenance_until"
-    if state["status"] in ("MAINTENANCE", "UNTRACKED_RENT") and state.get(period_column) is not None:
+    if state["status"] == "MAINTENANCE" and state.get(period_column) is not None:
         open_contracts = [c for c in contracts if c["vehicle_id"] == item["vehicle"]["vehicle_id"] and is_open(c)]
         if day_end(request, state[period_column]) <= at and not open_contracts:
             return "AVAILABLE"
@@ -161,8 +175,8 @@ def effective_state(request, item, contracts, at=None):
 def expire_maintenance(request, session, vehicles, contracts):
     t = request.app.state.db.table("MSP_VEHICLE_STATUS")
     for ident, item in vehicles.items():
-        if item["state"] and item["state"]["status"] in ("MAINTENANCE", "UNTRACKED_RENT") and effective_state(request, item, contracts) == "AVAILABLE":
-            values = dict(status="AVAILABLE", maintenance_until=None, untracked_rent_until=None, changed_by=None,
+        if item["state"] and item["state"]["status"] == "MAINTENANCE" and effective_state(request, item, contracts) == "AVAILABLE":
+            values = dict(status="AVAILABLE", maintenance_until=None, untracked_rent_until=None, changed_by=None, state_version=item["state"].get("state_version", 0) + 1,
                           status_reason="Maintenance period ended", status_changed_at=now(), updated_at=now())
             session.execute(update(t).where(t.c.vehicle_id == ident, t.c.status == item["state"]["status"]).values(**values))
             item["state"].update(values)

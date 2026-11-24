@@ -1,0 +1,12 @@
+[Unit]
+Description=Nadree Bali rental transitions and daily reminders
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ec2-user
+WorkingDirectory=/srv/nadree-api
+ExecStart=/srv/nadree-api/.venv/bin/python -m app.jobs lifecycle
+TimeoutStartSec=5min
+UMask=0077

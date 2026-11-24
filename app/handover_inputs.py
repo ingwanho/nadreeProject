@@ -2,7 +2,7 @@
 from datetime import date
 from typing import Annotated, Literal
 
-from pydantic import Field, model_validator
+from pydantic import Field, SecretStr, model_validator
 
 from app.rental_inputs import Address
 from app.rental_profile import DocumentNumber, SnsInfo
@@ -69,11 +69,20 @@ class UntrackedRent(Body):
     vehicleNumber: Annotated[str, Field(min_length=1, max_length=25, pattern=r"\S")]
     action: Literal["START", "END"]
     endDate: date | None = None
+    qrCode: SecretStr = Field(min_length=1, max_length=4096)
+    clientRequestId: RequestKey | None = None
+    expectedStateVersion: Annotated[int, Field(strict=True, ge=0)] | None = None
+    untrackedRentId: RequestKey | None = None
+    vehicleReturned: Literal[True] | None = None
 
     @model_validator(mode="after")
     def period(self):
         if self.action == "START" and self.endDate is None:
             raise ValueError("START requires endDate")
+        if self.action == "START" and (self.clientRequestId is None or self.expectedStateVersion is None):
+            raise ValueError("START requires clientRequestId and expectedStateVersion")
+        if self.action == "END" and (self.untrackedRentId is None or self.vehicleReturned is not True):
+            raise ValueError("END requires untrackedRentId and physical return confirmation")
         return self
 
 

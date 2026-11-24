@@ -53,6 +53,7 @@ def _business_transaction(request: Request, *, checkpoints):
             consistent_read = request.url.path in read_paths or request.method == "GET" and request.url.path.startswith("/nadreego/shop/")
             consistent_read |= request.method == "GET" and (
                 request.url.path.startswith("/nadreego/handovers") or
+                request.url.path.startswith("/nadreego/vehicle/") or
                 request.url.path.startswith("/api/v1/nadree/rental/handovers/"))
             if consistent_read and connection.dialect.name == "mysql":
                 connection.execution_options(isolation_level="REPEATABLE READ")

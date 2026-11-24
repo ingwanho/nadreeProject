@@ -259,7 +259,7 @@ def test_nadri_reservation_payment_checkout_and_return(setup, signin, monkeypatc
     assert completed_item["price"]["currency"] == "USD"
     assert completed_item["price"]["totalFrom"] == price
     assert completed_item["price"]["totalTo"] == price
-    assert completed_item["price"]["rentalDays"] == (end - start).days
+    assert completed_item["price"]["rentalDays"] == (end - start).days + 1
     assert completed_item["delivery"]["startDeliveryFee"] == 0
     if chat_enabled:
         assert ("block", reservation_id) in chat_events

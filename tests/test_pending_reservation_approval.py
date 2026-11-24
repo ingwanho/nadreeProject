@@ -49,7 +49,7 @@ def pending_bookings(setup):
         response = setup["client"].post("/api/v1/nadree/rental/request", headers={
             "Authorization": "Bearer " + sign_user_access(setup["settings"], "pending-user-" + str(index))},
             json={"spotMasterId": "root", "modelId": "pending-model", "startDate": str(start),
-                  "returnDate": str(start + timedelta(days=3)), "totalPrice": 30,
+                  "returnDate": str(start + timedelta(days=2)), "totalPrice": 30,
                   "currency": "USD", "deliveryRequested": False})
         assert response.status_code == expected, response.text
         if legacy and response.status_code == 200:

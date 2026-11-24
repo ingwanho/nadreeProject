@@ -28,6 +28,7 @@ class Settings(BaseSettings):
     # Deprecated compatibility input. Images always use the normal key/URL layout.
     image_response_test_swap: bool = False
     field_encrypt_key: SecretStr = SecretStr("")
+    handover_encrypt_key: SecretStr = SecretStr("")
     qr_hash_key: SecretStr = SecretStr("")
     availability_timeout_seconds: float = Field(default=2.0, gt=0, le=10)
     firestore_project: str = ""

@@ -8,6 +8,25 @@ class Status(BaseModel):
     status: Literal["success"] = "success"
 
 
+class VehicleHistoryRecord(BaseModel):
+    bookedNo: str
+    reservationId: str | None
+    rentalContractId: str | None
+    recordType: Literal["RESERVATION", "RENTAL"]
+    vehicleId: str | None
+    reservationStatus: str | None
+    rentalStatus: str | None
+    startDatetime: str | None
+    plannedEndDate: date | None
+    actualEndTime: str | None
+    vehicleAssociation: Literal["CURRENT", "PREVIOUS_ASSIGNMENT"]
+
+
+class VehicleHistory(Status):
+    vehicleId: str
+    items: list[VehicleHistoryRecord] = Field(max_length=3)
+
+
 class HandoverForm(BaseModel):
     spotName: str | None
     customerName: str | None
@@ -26,6 +45,9 @@ class HandoverProgress(BaseModel):
     customerStatus: Literal["NOT_STARTED", "DRAFT", "SUBMITTED", "CHANGE_PENDING", "CONFIRMED", "REJECTED"]
     adminStatus: Literal["UNASSIGNED", "REVIEWING", "CHANGES_PROPOSED", "CONFIRMED"]
     signatureStatus: Literal["NOT_STARTED", "COMPLETED"]
+    signatureCompletedAt: str | None = None
+    signatureActorUid: str | None = None
+    signatureHandoverId: str | None = None
     handoverStatus: Literal["NOT_STARTED", "IN_PROGRESS", "WAITING_CUSTOMER", "READY", "STARTED", "CANCELED"]
     assignedAdminId: str | None
     canReviewForm: bool
@@ -299,8 +321,9 @@ class CustomerDelivery(BaseModel):
 
 
 class ReceiptInfo(BaseModel):
+    latePickupWarning: bool = False
     requestDeadline: str | None = None
-    requestType: Literal["ADVANCE", "ONSITE"] = "ADVANCE"
+    requestType: Literal["ADVANCE", "WALK_IN"] = "ADVANCE"
     customerReceiptRequired: bool = False
     handedOverAt: str | None = None
     receiptDeadline: str | None = None
@@ -561,6 +584,7 @@ class HierarchyItem(BaseModel):
     manager_name: str | None
     companyId: str
     parentSpotMasterId: str | None
+    directVehicleCount: int = Field(ge=0)
     canEditProfile: bool
     canEditPricing: bool
     canEditDelivery: bool

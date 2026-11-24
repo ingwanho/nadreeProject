@@ -202,7 +202,10 @@ def active_spot(request, session, actor, representative=False, lock=False, settl
     from app.account_deletion_scope import gate, READ_POSTS
     closing = gate(db, session, root_id)
     limited_access = bool(closing and (settlement or request.method == "GET" or request.url.path in READ_POSTS))
-    if not spot["is_active"] and not limited_access:
+    from app.spot_hierarchy import active_predicate
+    effectively_active = session.scalar(select(table.c.spot_master_id).where(
+        table.c.spot_master_id == root_id, active_predicate(table)))
+    if not effectively_active and not limited_access:
         raise Problem(403, "SPOT_UNAVAILABLE")
     # Re-read after the shared spot lock, not from the token's old role claims.
     admin_table = db.table("MSP_ADMIN")

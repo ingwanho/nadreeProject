@@ -31,7 +31,7 @@ def _candidate(request, session, root, reservation, vehicles, contracts, ident):
     if not qr or qr["qr_status"] != "ACTIVE" or qr.get("expired_at") and qr["expired_at"] <= now():
         raise Problem(409, "VEHICLE_UNAVAILABLE")
     criteria = dict(reservation.get("required_criteria_json") or {})
-    if criteria.get("requestType") == "ONSITE":
+    if criteria.get("requestType") in ("ONSITE", "WALK_IN"):
         criteria["onsiteVehicleId"] = ident
     candidate = dict(reservation, assigned_vehicle_id=ident, vehicle_assignment_status="LOCKED", required_criteria_json=criteria)
     assignments, records = compute_assignment(request, session, root, vehicles, contracts, candidate=candidate,
