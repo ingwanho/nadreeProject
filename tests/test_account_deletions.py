@@ -494,7 +494,7 @@ def test_mysql_reservation_racing_with_primary_deletion_is_blocked_or_included(p
         return ctx["client"].post("/api/v1/nadree/rental/request", headers={
             "Authorization": "Bearer " + sign_user_access(ctx["settings"], "pending-user-0")},
             json={"spotMasterId": "root", "modelId": "pending-model", "startDate": str(start),
-                  "returnDate": str(start + timedelta(days=3)), "totalPrice": 30,
+                  "returnDate": str(start + timedelta(days=3)), "totalPrice": 40,
                   "currency": "USD", "deliveryRequested": False})
 
     with ThreadPoolExecutor(max_workers=2) as workers:
