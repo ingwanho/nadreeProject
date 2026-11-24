@@ -406,8 +406,22 @@ def test_mysql_duplicate_onsite_submission_creates_only_one_reservation(receipt)
     body, quote = new_quote(ctx)
     key = str(uuid.uuid4())
     results = race(lambda _: submit(ctx, body, quote, key), [0, 1])
-    assert [r.status_code for r in results] == [200, 200]
-    assert len({r.json()["item"]["reservationId"] for r in results}) == 1
+    assert all(r.status_code in (200, 202) for r in results)
+    accepted = [r for r in results if r.status_code == 200]
+    assert accepted
+    for response in results:
+        if response.status_code == 202:
+            assert response.headers["Retry-After"] == "2"
+            pending = response.json()
+            assert pending["clientRequestId"] == key
+            assert pending["requestStatus"] == "PROCESSING"
+            assert pending["requestFinal"] is False and pending["retrySameRequest"] is True
+    final = ctx["client"].get(BASE + "/onsite/requests/" + key, headers=ctx["headers"])
+    assert final.status_code == 200, final.text
+    assert final.json()["requestStatus"] == "ACCEPTED" and final.json()["requestFinal"] is True
+    replay = submit(ctx, body, quote, key)
+    assert replay.status_code == 200, replay.text
+    assert len({r.json()["item"]["reservationId"] for r in [*accepted, final, replay]}) == 1
     assert count(ctx, "MSP_RESERVATION") == 1
 
 
