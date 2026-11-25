@@ -1,5 +1,7 @@
 # Nadree API 구현 안내
 
+2026-11-25 **인계 정책 동의 기록 로컬 추가·서버 미적용**: 인계에 `privacy_policy_agreed_at`·`terms_agreed_at` nullable 2컬럼과 고객 본인 POST `/api/v1/nadree/rental/handovers/{handover_id}/consents`를 추가했다. 서버 최초 동의 시각을 보존하며 두 항목을 함께/따로 저장한다. 기존 서명·렌트 시작 조건과 과거 행은 유지한다. 로컬 명세 106경로/112메서드, 인계37컬럼. [프론트 계약·서버 적용](docs/handover-policy-consents-2026-11-25.md). 아래 11월24일 서버 결과는 이 추가 배포의 근거가 아니다.
+
 2026-11-24 **후속 변경 서버 전환 완료**: `7217997`로 갱신하고 테스트 DB 전체 비공개 백업 후 마이그레이션 17개·재계획 0개·별도 `NADREE_HANDOVER_ENCRYPT_KEY` 최초 설정·API 전환을 완료했다. 기존 전화번호 키/암호문을 보존했고 Firebase 기존 7개 소스 28/28 일치, 무알림 보정 19건, lifecycle/maintenance 단일 타이머와 NO_RESPONSE 채팅 5건 종료를 확인했다. 로컬/공개 헬스·Swagger 정상, **105경로/111메서드**, 격리 고유 **979 passed**다. 실제 예약/Walk-in→인계→QR 반납과 무이력 간편대여를 포함한 **108개 검사 기록도 기대 결과를 충족**했고 시험 미완료 0건이다. 실제/격리/남은 미검증은 [최신 서버 결과](docs/backend-branch-feedback-server-verification-2026-11-24.md)를 따른다. 아래 배포 보류 보고는 별도 키 분리 승인 전 이력이다.
 
 2026-11-24 후속 프론트 요청 **로컬 구현·전체 956 passed / 23 skipped**. 종료일 포함·NO_RESPONSE/회수/OVERDUE, 09시 배치, 인계 무알림, SNS/동의 이력, 별도 인계 암호화 키, 직접 차량 수·최근 3건을 반영했다. **간편대여는 이력 저장 없이 실제 QR 반납 전까지 점유**한다. [프론트 전달](docs/backend-branch-feedback-handoff-2026-11-24.md), [이 파일만 보고 서버 적용](docs/backend-branch-feedback-server-apply-2026-11-24.md). 아래 서버 보고·초기 구현 내용은 각 시점의 기록이다.

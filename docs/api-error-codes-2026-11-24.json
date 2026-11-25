@@ -1,6 +1,6 @@
 {
-  "generated_at_utc": "2026-11-24T06:55:48.927825+00:00",
-  "git_base": "134cc08 plus local approved branch feedback implementation",
+  "generated_at_utc": "2026-11-25T06:11:50.975214+00:00",
+  "git_base": "c5c1bbb plus local handover policy consents (2026-11-25)",
   "provenance": "Static current-source definitions, preserving reviewed prior dynamic resolutions. Not a live endpoint error test.",
   "coverage": {
     "problem_calls": 608,
@@ -1308,7 +1308,7 @@
       "sources": [
         {
           "file": "app/handover.py",
-          "line": 499,
+          "line": 516,
           "function": "review",
           "scope": "HTTP",
           "source_kind": "Problem",
@@ -1320,7 +1320,7 @@
         },
         {
           "file": "app/handover.py",
-          "line": 471,
+          "line": 488,
           "function": "complete_signature",
           "scope": "HTTP",
           "source_kind": "Problem",
@@ -1332,7 +1332,7 @@
         },
         {
           "file": "app/handover.py",
-          "line": 579,
+          "line": 596,
           "function": "_media_write",
           "scope": "conditional",
           "source_kind": "Problem",
@@ -2990,7 +2990,7 @@
       "sources": [
         {
           "file": "app/handover.py",
-          "line": 399,
+          "line": 401,
           "function": "start",
           "scope": "HTTP",
           "source_kind": "Problem",
@@ -3013,7 +3013,7 @@
       "sources": [
         {
           "file": "app/handover.py",
-          "line": 487,
+          "line": 504,
           "function": "claim",
           "scope": "HTTP",
           "source_kind": "Problem",
@@ -3059,7 +3059,7 @@
       "sources": [
         {
           "file": "app/handover.py",
-          "line": 473,
+          "line": 490,
           "function": "complete_signature",
           "scope": "HTTP",
           "source_kind": "Problem",
@@ -3071,7 +3071,7 @@
         },
         {
           "file": "app/handover.py",
-          "line": 510,
+          "line": 527,
           "function": "review",
           "scope": "HTTP",
           "source_kind": "Problem",
@@ -3083,7 +3083,7 @@
         },
         {
           "file": "app/handover.py",
-          "line": 518,
+          "line": 535,
           "function": "review",
           "scope": "HTTP",
           "source_kind": "Problem",
@@ -3106,7 +3106,7 @@
       "sources": [
         {
           "file": "app/handover.py",
-          "line": 540,
+          "line": 557,
           "function": "respond",
           "scope": "HTTP",
           "source_kind": "Problem",
@@ -3118,7 +3118,7 @@
         },
         {
           "file": "app/handover.py",
-          "line": 518,
+          "line": 535,
           "function": "review",
           "scope": "HTTP",
           "source_kind": "Problem",
@@ -3130,7 +3130,7 @@
         },
         {
           "file": "app/handover.py",
-          "line": 520,
+          "line": 537,
           "function": "review",
           "scope": "HTTP",
           "source_kind": "Problem",
@@ -3142,7 +3142,7 @@
         },
         {
           "file": "app/handover.py",
-          "line": 536,
+          "line": 553,
           "function": "respond",
           "scope": "HTTP",
           "source_kind": "Problem",
@@ -3178,7 +3178,7 @@
         },
         {
           "file": "app/handover.py",
-          "line": 442,
+          "line": 444,
           "function": "update_form",
           "scope": "HTTP",
           "source_kind": "Problem",
@@ -3202,7 +3202,7 @@
         },
         {
           "file": "app/handover.py",
-          "line": 576,
+          "line": 593,
           "function": "_media_write",
           "scope": "conditional",
           "source_kind": "Problem",
@@ -3214,7 +3214,7 @@
         },
         {
           "file": "app/handover.py",
-          "line": 581,
+          "line": 598,
           "function": "_media_write",
           "scope": "conditional",
           "source_kind": "Problem",
@@ -3226,7 +3226,7 @@
         },
         {
           "file": "app/handover.py",
-          "line": 603,
+          "line": 620,
           "function": "prepare_media",
           "scope": "HTTP",
           "source_kind": "Problem",
@@ -3249,7 +3249,7 @@
       "sources": [
         {
           "file": "app/handover.py",
-          "line": 333,
+          "line": 335,
           "function": "start_rental",
           "scope": "conditional",
           "source_kind": "Problem",
@@ -3286,7 +3286,7 @@
         },
         {
           "file": "app/handover.py",
-          "line": 313,
+          "line": 315,
           "function": "start_rental",
           "scope": "conditional",
           "source_kind": "Problem",
@@ -3298,7 +3298,7 @@
         },
         {
           "file": "app/handover.py",
-          "line": 388,
+          "line": 390,
           "function": "start",
           "scope": "HTTP",
           "source_kind": "Problem",
@@ -3774,7 +3774,7 @@
       "sources": [
         {
           "file": "app/handover.py",
-          "line": 457,
+          "line": 459,
           "function": "submit_form",
           "scope": "HTTP",
           "source_kind": "Problem",
@@ -4924,7 +4924,7 @@
       "sources": [
         {
           "file": "app/handover.py",
-          "line": 506,
+          "line": 523,
           "function": "review",
           "scope": "HTTP",
           "source_kind": "Problem",
@@ -5100,7 +5100,7 @@
       "sources": [
         {
           "file": "app/handover.py",
-          "line": 592,
+          "line": 609,
           "function": "prepare_media",
           "scope": "HTTP",
           "source_kind": "Problem",
@@ -5148,7 +5148,7 @@
       "sources": [
         {
           "file": "app/handover.py",
-          "line": 590,
+          "line": 607,
           "function": "prepare_media",
           "scope": "HTTP",
           "source_kind": "Problem",
@@ -5232,7 +5232,7 @@
       "sources": [
         {
           "file": "app/handover.py",
-          "line": 625,
+          "line": 642,
           "function": "complete_media",
           "scope": "HTTP",
           "source_kind": "Problem",
@@ -5244,7 +5244,7 @@
         },
         {
           "file": "app/handover.py",
-          "line": 634,
+          "line": 651,
           "function": "complete_media",
           "scope": "HTTP",
           "source_kind": "Problem",
@@ -8747,7 +8747,7 @@
       "sources": [
         {
           "file": "app/handover.py",
-          "line": 572,
+          "line": 589,
           "function": "_media_write",
           "scope": "conditional",
           "source_kind": "Problem",
@@ -8759,7 +8759,7 @@
         },
         {
           "file": "app/handover.py",
-          "line": 628,
+          "line": 645,
           "function": "complete_media",
           "scope": "HTTP",
           "source_kind": "Problem",
@@ -10993,7 +10993,7 @@
         },
         {
           "file": "app/handover.py",
-          "line": 396,
+          "line": 398,
           "function": "start",
           "scope": "HTTP",
           "source_kind": "Problem",
@@ -11005,7 +11005,7 @@
         },
         {
           "file": "app/handover.py",
-          "line": 595,
+          "line": 612,
           "function": "prepare_media",
           "scope": "HTTP",
           "source_kind": "Problem",
@@ -11017,7 +11017,7 @@
         },
         {
           "file": "app/handover.py",
-          "line": 599,
+          "line": 616,
           "function": "prepare_media",
           "scope": "HTTP",
           "source_kind": "Problem",
@@ -11158,7 +11158,7 @@
         },
         {
           "file": "app/handover.py",
-          "line": 325,
+          "line": 327,
           "function": "start_rental",
           "scope": "conditional",
           "source_kind": "Problem",
@@ -11285,7 +11285,7 @@
       "sources": [
         {
           "file": "app/handover.py",
-          "line": 385,
+          "line": 387,
           "function": "start",
           "scope": "HTTP",
           "source_kind": "Problem",
@@ -11297,7 +11297,7 @@
         },
         {
           "file": "app/handover.py",
-          "line": 392,
+          "line": 394,
           "function": "start",
           "scope": "HTTP",
           "source_kind": "Problem",
@@ -11604,7 +11604,7 @@
         },
         {
           "file": "app/handover.py",
-          "line": 380,
+          "line": 382,
           "function": "start",
           "scope": "HTTP",
           "source_kind": "Problem",
@@ -12205,7 +12205,7 @@
         },
         {
           "file": "app/handover.py",
-          "line": 316,
+          "line": 318,
           "function": "start_rental",
           "scope": "conditional",
           "source_kind": "Problem",
@@ -12217,7 +12217,7 @@
         },
         {
           "file": "app/handover.py",
-          "line": 320,
+          "line": 322,
           "function": "start_rental",
           "scope": "conditional",
           "source_kind": "Problem",
@@ -14393,7 +14393,7 @@
         },
         {
           "file": "app/handover.py",
-          "line": 337,
+          "line": 339,
           "function": "start_rental",
           "scope": "conditional",
           "source_kind": "Problem",
@@ -14964,7 +14964,7 @@
       "sources": [
         {
           "file": "app/handover.py",
-          "line": 475,
+          "line": 492,
           "function": "complete_signature",
           "scope": "HTTP",
           "source_kind": "Problem",
@@ -15095,11 +15095,11 @@
     },
     {
       "file": "app/handover.py",
-      "sha256": "d1ae24497acf81162b20476781dfda837a6fd468f9451ee93c2537d2cb10c4b0"
+      "sha256": "c5f3b3131504652ba1e83d58bfae52d3ec59198eb5c4ef056a50552c86fda7ba"
     },
     {
       "file": "app/handover_inputs.py",
-      "sha256": "1b4c0a4256c3630eacf975084dba18b10f884f5458230caa5e2d27c696405c31"
+      "sha256": "c8364c223f5816438c02f865afeebf80ff65ffa7858dc307bc43bfdf99b98b43"
     },
     {
       "file": "app/handover_media.py",
@@ -15139,7 +15139,7 @@
     },
     {
       "file": "app/migrate.py",
-      "sha256": "a762984682be053f5fc67c65ec90aa931409cfaed743f9f29c65f08d32b0e05b"
+      "sha256": "4bba17b76ef206816139d5d2ba5309d61d358a33675ccc3d11d79e83c3d65c05"
     },
     {
       "file": "app/notifications.py",
@@ -15151,7 +15151,7 @@
     },
     {
       "file": "app/openapi_examples.py",
-      "sha256": "5e4dfb8bbd8d5f88a2d07a9497b73da43e6f09192729451f34f184103f2d46c0"
+      "sha256": "f6d23fb69f9a072f2cb7242e1ea1b48cebdb39aa1ad96786bed3b736970a26c4"
     },
     {
       "file": "app/passport.py",
@@ -15219,7 +15219,7 @@
     },
     {
       "file": "app/rental_schema.py",
-      "sha256": "1fc2b3c65d5d8d7c1fdda271c60c9faf71dc325d4e192d7bc0ed22f493093ff2"
+      "sha256": "8b9da5c92c3af1ad3fa291f86c78a12ef0f92e69cdac7df88508317abc67addc"
     },
     {
       "file": "app/rentals.py",
@@ -15231,7 +15231,7 @@
     },
     {
       "file": "app/responses.py",
-      "sha256": "197c699dafbf0587def21fc2b48815925ad71486c8905dce67644650aa3e819f"
+      "sha256": "cbdd751350720e228c539a435dc6afdd6f6bc9131c9dceceaf3ea35ae181fbe7"
     },
     {
       "file": "app/schema_check.py",

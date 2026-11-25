@@ -71,7 +71,8 @@ def migration_plan(db):
                 operations.append(("index " + index.name, str(CreateIndex(index).compile(dialect=mysql.dialect())), {}))
         else:
             columns = {row["name"] for row in inspector.get_columns(handover.name)}
-            optional = {"sns_snapshot_enc": "TEXT DEFAULT NULL", "signature_completed_at": "DATETIME DEFAULT NULL"}
+            optional = {"sns_snapshot_enc": "TEXT DEFAULT NULL", "signature_completed_at": "DATETIME DEFAULT NULL",
+                        "privacy_policy_agreed_at": "DATETIME DEFAULT NULL", "terms_agreed_at": "DATETIME DEFAULT NULL"}
             if set(handover.c.keys()) - columns - optional.keys():
                 raise ValueError("MSP_RENTAL_HANDOVER has an incompatible definition; manual migration required")
             for column, definition in optional.items():

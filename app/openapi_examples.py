@@ -874,6 +874,7 @@ _HANDOVER_ITEM = {
     "finalPrice": 75, "currency": "USD", "customerStatus": "SUBMITTED", "adminStatus": "REVIEWING",
     "signatureStatus": "NOT_STARTED", "handoverStatus": "IN_PROGRESS", "assignedAdminId": "test-admin",
     "signatureCompletedAt": None, "signatureActorUid": None, "signatureHandoverId": _TEST_HANDOVER_ID,
+    "privacyPolicyAgreedAt": None, "termsAgreedAt": None,
     "canReviewForm": True, "canStartRental": False,
     "startBlockedReasons": ["ADMIN_REVIEW_NOT_COMPLETED", "VIDEO_NOT_READY", "SIGNATURE_NOT_COMPLETED"],
     "form": _HANDOVER_FORM, "pendingChange": None,
@@ -885,6 +886,7 @@ _HANDOVER_ITEM = {
 OPENAPI_EXAMPLES.update({
     "StartHandover": {"clientRequestId": "00000000-0000-4000-8000-000000000401"},
     "EmptyCommand": {},
+    "HandoverConsents": {"privacyPolicyAgreed": True, "termsAgreed": True},
     "FormPatch": {"passportNumber": "TEST-PASSPORT", "accommodationLocation": "Test Hotel, Kuta",
                   "helmetCount": 0, "snsInfo": {"instagram": "test_customer"}},
     "ClaimHandover": {"trigger": "REVIEW_WITHOUT_PHOTOS"},
@@ -902,7 +904,8 @@ OPENAPI_EXAMPLES.update({
     "HandoverResult": {"status": "success", "item": _HANDOVER_ITEM},
     "HandoverList": {"status": "success", "items": [{key: value for key, value in _HANDOVER_ITEM.items()
         if key in {"handoverId", "reservationId", "vehicleId", "customerStatus", "adminStatus", "signatureStatus",
-        "handoverStatus", "assignedAdminId", "canReviewForm", "canStartRental", "startBlockedReasons"}}],
+        "handoverStatus", "assignedAdminId", "canReviewForm", "canStartRental", "startBlockedReasons",
+        "privacyPolicyAgreedAt", "termsAgreedAt"}}],
         "page": 1, "pageSize": 20, "totalCount": 1, "hasNext": False},
     "HandoverMediaResult": {"status": "success", "handoverId": _TEST_HANDOVER_ID, "items": [{
         "assetId": "00000000-0000-4000-8000-000000000501", "kind": "VEHICLE_VIDEO", "contentType": "video/mp4",
@@ -916,6 +919,8 @@ OPENAPI_EXAMPLES.update({
 })
 
 OPENAPI_RESPONSE_EXAMPLES.update({
+    ("POST", "/api/v1/nadree/rental/handovers/{handover_id}/consents"): {"status": "success", "item": {
+        **_HANDOVER_ITEM, "privacyPolicyAgreedAt": "2026-11-25T04:00:00Z", "termsAgreedAt": "2026-11-25T04:00:00Z"}},
     ("POST", "/nadreego/vehicle/qr/availability"): {"status": "success", "canRegister": False,
         "assignment": "OTHER_SHOP", "reasonCode": "QR_ALREADY_ISSUED"},
     ("POST", "/nadreego/vehicle/untracked-rent"): {"status": True, "errorCode": None, "message": "success",

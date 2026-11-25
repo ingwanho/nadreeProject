@@ -1,5 +1,5 @@
 """Public contract examples and conditional required values for the new flow."""
-from app.handover_inputs import (ClaimHandover, EmptyCommand, FormPatch, PrepareMedia,
+from app.handover_inputs import (ClaimHandover, EmptyCommand, FormPatch, HandoverConsents, PrepareMedia,
     ReplaceVehicle, RespondHandover, ReviewHandover, StartHandover, UntrackedRent)
 from app.openapi_examples import OPENAPI_EXAMPLES
 from app.responses import (AccommodationHistory, HandoverList, HandoverMediaResult,
@@ -7,7 +7,7 @@ from app.responses import (AccommodationHistory, HandoverList, HandoverMediaResu
 
 
 def test_handover_examples_follow_the_public_schema(client):
-    models = [ClaimHandover, EmptyCommand, FormPatch, PrepareMedia, ReplaceVehicle, RespondHandover,
+    models = [ClaimHandover, EmptyCommand, FormPatch, HandoverConsents, PrepareMedia, ReplaceVehicle, RespondHandover,
         ReviewHandover, StartHandover, UntrackedRent, AccommodationHistory, HandoverList,
         HandoverMediaResult, HandoverResult, HandoverUploadResult]
     for model in models:

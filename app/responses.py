@@ -48,6 +48,8 @@ class HandoverProgress(BaseModel):
     signatureCompletedAt: str | None = None
     signatureActorUid: str | None = None
     signatureHandoverId: str | None = None
+    privacyPolicyAgreedAt: str | None = None
+    termsAgreedAt: str | None = None
     handoverStatus: Literal["NOT_STARTED", "IN_PROGRESS", "WAITING_CUSTOMER", "READY", "STARTED", "CANCELED"]
     assignedAdminId: str | None
     canReviewForm: bool
