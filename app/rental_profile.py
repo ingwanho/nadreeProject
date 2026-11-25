@@ -14,6 +14,7 @@ DocumentNumber = Annotated[str, Field(strict=True, min_length=1, max_length=100,
 SnsInfo = dict[Annotated[str, Field(min_length=1, max_length=50)],
                Annotated[str, Field(strict=True, max_length=500)]]
 NUMBER_FIELDS = {"passportNumber": "passport_number_enc", "driverLicenseNumber": "driver_license_number_enc"}
+CONSENT_FIELDS = {"privacyPolicyAgreed": "privacy_policy_agreed_at", "termsAgreed": "terms_agreed_at"}
 
 
 def decrypt(settings, value):
@@ -55,9 +56,14 @@ def read_sns(value):
         raise Problem(503, "PROFILE_STORAGE_INVALID") from None
 
 
+def consent_view(user):
+    return {key + "At": user[column].isoformat() + "Z" if user.get(column) else None
+            for key, column in CONSENT_FIELDS.items()}
+
+
 def personal_view(settings, user):
     return {**{key: decrypt(settings, user.get(column)) for key, column in NUMBER_FIELDS.items()},
-            "snsInfo": read_sns(user.get("sns_info"))}
+            "snsInfo": read_sns(user.get("sns_info")), **consent_view(user)}
 
 
 def sync_personal(request, session, uid, fields):
@@ -66,10 +72,16 @@ def sync_personal(request, session, uid, fields):
               for key, column in NUMBER_FIELDS.items() if key in fields}
     if "snsInfo" in fields:
         values["sns_info"] = encode_sns(fields["snsInfo"])
-    if not values:
+    consents = {column for key, column in CONSENT_FIELDS.items() if fields.get(key) is True}
+    if not values and not consents:
         return
     users = request.app.state.db.table("MSP_RENTAL_USER")
-    if not session.execute(select(users.c.uid_token).where(users.c.uid_token == uid).with_for_update()).first():
+    require_columns(users, {**values, **{column: None for column in consents}})
+    user = session.execute(select(users).where(users.c.uid_token == uid).with_for_update()).mappings().first()
+    if not user:
         raise Problem(404, "RENTAL_USER_NOT_FOUND")
-    require_columns(users, values)
-    session.execute(update(users).where(users.c.uid_token == uid).values(**values, updated_at=now()))
+    at = now()
+    values.update({column: at.replace(microsecond=0) for column in consents if user[column] is None})
+    if values:
+        session.execute(update(users).where(users.c.uid_token == uid).values(**values, updated_at=at))
+    return {**user, **values}

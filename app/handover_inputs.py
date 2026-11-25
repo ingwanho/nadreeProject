@@ -2,7 +2,7 @@
 from datetime import date
 from typing import Annotated, Literal
 
-from pydantic import Field, SecretStr, StrictBool, model_validator
+from pydantic import Field, SecretStr, model_validator
 
 from app.rental_inputs import Address
 from app.rental_profile import DocumentNumber, SnsInfo
@@ -19,17 +19,6 @@ class StartHandover(Body):
 
 class EmptyCommand(Body):
     pass
-
-
-class HandoverConsents(Body):
-    privacyPolicyAgreed: StrictBool | None = None
-    termsAgreed: StrictBool | None = None
-
-    @model_validator(mode="after")
-    def agreed(self):
-        if not self.model_fields_set or any(getattr(self, key) is not True for key in self.model_fields_set):
-            raise ValueError("Supply at least one explicit true consent")
-        return self
 
 
 class FormPatch(Body):

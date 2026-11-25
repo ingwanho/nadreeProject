@@ -71,8 +71,7 @@ def migration_plan(db):
                 operations.append(("index " + index.name, str(CreateIndex(index).compile(dialect=mysql.dialect())), {}))
         else:
             columns = {row["name"] for row in inspector.get_columns(handover.name)}
-            optional = {"sns_snapshot_enc": "TEXT DEFAULT NULL", "signature_completed_at": "DATETIME DEFAULT NULL",
-                        "privacy_policy_agreed_at": "DATETIME DEFAULT NULL", "terms_agreed_at": "DATETIME DEFAULT NULL"}
+            optional = {"sns_snapshot_enc": "TEXT DEFAULT NULL", "signature_completed_at": "DATETIME DEFAULT NULL"}
             if set(handover.c.keys()) - columns - optional.keys():
                 raise ValueError("MSP_RENTAL_HANDOVER has an incompatible definition; manual migration required")
             for column, definition in optional.items():
@@ -301,6 +300,27 @@ def migration_plan(db):
             if column not in user_columns:
                 operations.append(("add MSP_RENTAL_USER." + column,
                     "ALTER TABLE MSP_RENTAL_USER ADD COLUMN " + column + " TEXT DEFAULT NULL", {}))
+        for column in ("privacy_policy_agreed_at", "terms_agreed_at"):
+            if column not in user_columns:
+                operations.append(("add MSP_RENTAL_USER." + column,
+                    "ALTER TABLE MSP_RENTAL_USER ADD COLUMN " + column + " DATETIME DEFAULT NULL", {}))
+        if "MSP_RENTAL_HANDOVER" in tables:
+            handover_columns = {row["name"] for row in inspector.get_columns("MSP_RENTAL_HANDOVER")}
+            for column in ("privacy_policy_agreed_at", "terms_agreed_at"):
+                if column not in handover_columns:
+                    continue
+                with db.engine.connect() as connection:
+                    orphan = connection.execute(text("SELECT 1 FROM MSP_RENTAL_HANDOVER h "
+                        "LEFT JOIN MSP_RENTAL_USER u ON u.uid_token = h.uid_token "
+                        f"WHERE h.{column} IS NOT NULL AND u.uid_token IS NULL LIMIT 1")).first()
+                if orphan:
+                    raise ValueError("Handover consent has no matching customer; restore the customer mapping before migration")
+                earliest = f"(SELECT MIN(h.{column}) FROM MSP_RENTAL_HANDOVER h WHERE h.uid_token = MSP_RENTAL_USER.uid_token)"
+                operations.append(("copy earliest consent to MSP_RENTAL_USER." + column,
+                    f"UPDATE MSP_RENTAL_USER SET {column} = {earliest} WHERE {earliest} IS NOT NULL "
+                    f"AND (MSP_RENTAL_USER.{column} IS NULL OR MSP_RENTAL_USER.{column} > {earliest})", {}))
+                operations.append(("drop retired MSP_RENTAL_HANDOVER." + column,
+                    "ALTER TABLE MSP_RENTAL_HANDOVER DROP COLUMN " + column, {}))
         if "passport_img_key" in user_columns:
             with db.engine.connect() as connection:
                 if connection.execute(text("SELECT 1 FROM MSP_RENTAL_USER WHERE passport_img_key IS NOT NULL LIMIT 1")).first():
@@ -349,6 +369,18 @@ def migration_plan(db):
     return operations
 
 
+def apply_operation(connection, label, sql, parameters):
+    for column in ("privacy_policy_agreed_at", "terms_agreed_at"):
+        if label == "drop retired MSP_RENTAL_HANDOVER." + column:
+            missing = connection.execute(text("SELECT 1 FROM MSP_RENTAL_HANDOVER h "
+                "LEFT JOIN MSP_RENTAL_USER u ON u.uid_token = h.uid_token "
+                f"WHERE h.{column} IS NOT NULL AND (u.uid_token IS NULL OR u.{column} IS NULL "
+                f"OR u.{column} > h.{column}) LIMIT 1")).first()
+            if missing:
+                raise ValueError("Handover consent copy is incomplete; refusing to drop the source column")
+    connection.execute(text(sql), parameters)
+
+
 def main():
     parser = argparse.ArgumentParser(description="W00-W02 shared MySQL migration. Read-only plan by default.")
     parser.add_argument("--apply", action="store_true")
@@ -371,7 +403,7 @@ def main():
                     print(("APPLY " if args.apply else "PENDING ") + label)
                     if args.apply:
                         with db.engine.begin() as conn:
-                            conn.execute(text(sql), parameters)
+                            apply_operation(conn, label, sql, parameters)
                 print("No pending changes." if not operations else "Applied." if args.apply else "Read-only plan; no database writes.")
             finally:
                 if args.apply:

@@ -4,7 +4,7 @@ from typing import Annotated, Literal
 from pydantic import Field, SecretStr, StrictBool, model_validator
 
 from app.schemas import Body, Identifier, Token
-from app.rental_profile import DocumentNumber, SnsInfo
+from app.rental_profile import CONSENT_FIELDS, DocumentNumber, SnsInfo
 
 Positive = Annotated[int, Field(strict=True, ge=1)]
 Money = Annotated[int, Field(strict=True, ge=0, le=2147483647)]
@@ -158,12 +158,23 @@ class ReservationCancel(Body):
     reason: Reason | None = None
 
 
-class NadriLogin(Body):
+class CustomerConsentFields(Body):
+    privacyPolicyAgreed: StrictBool | None = None
+    termsAgreed: StrictBool | None = None
+
+    @model_validator(mode="after")
+    def consent_flags(self):
+        if any(key in self.model_fields_set and getattr(self, key) is not True for key in CONSENT_FIELDS):
+            raise ValueError("Consent fields must be explicit true booleans")
+        return self
+
+
+class NadriLogin(CustomerConsentFields):
     UID: Uid
     fcmToken: Token | None = None
 
 
-class NadriProfile(Body):
+class NadriProfile(CustomerConsentFields):
     NAME: Annotated[str, Field(min_length=1, max_length=100)] | None = None
     Age: Annotated[int, Field(strict=True, ge=0, le=150)] | None = None
     GENDER: Literal["M", "F", "OTHER"] | None = None

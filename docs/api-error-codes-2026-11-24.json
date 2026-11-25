@@ -1,6 +1,6 @@
 {
-  "generated_at_utc": "2026-11-25T06:11:50.975214+00:00",
-  "git_base": "c5c1bbb plus local handover policy consents (2026-11-25)",
+  "generated_at_utc": "2026-11-25T09:56:14.025527+00:00",
+  "git_base": "7bb7503 plus local member policy consents; retired handover API/columns (2026-11-25)",
   "provenance": "Static current-source definitions, preserving reviewed prior dynamic resolutions. Not a live endpoint error test.",
   "coverage": {
     "problem_calls": 608,
@@ -1308,7 +1308,7 @@
       "sources": [
         {
           "file": "app/handover.py",
-          "line": 516,
+          "line": 499,
           "function": "review",
           "scope": "HTTP",
           "source_kind": "Problem",
@@ -1320,7 +1320,7 @@
         },
         {
           "file": "app/handover.py",
-          "line": 488,
+          "line": 471,
           "function": "complete_signature",
           "scope": "HTTP",
           "source_kind": "Problem",
@@ -1332,7 +1332,7 @@
         },
         {
           "file": "app/handover.py",
-          "line": 596,
+          "line": 579,
           "function": "_media_write",
           "scope": "conditional",
           "source_kind": "Problem",
@@ -2608,7 +2608,7 @@
       "sources": [
         {
           "file": "app/customer_rentals.py",
-          "line": 782,
+          "line": 788,
           "function": "nadree_request",
           "scope": "HTTP",
           "context": "http_handler",
@@ -2791,7 +2791,7 @@
       "sources": [
         {
           "file": "app/customer_rentals.py",
-          "line": 644,
+          "line": 648,
           "function": "nadree_profile",
           "scope": "HTTP",
           "context": "http_handler",
@@ -2990,7 +2990,7 @@
       "sources": [
         {
           "file": "app/handover.py",
-          "line": 401,
+          "line": 399,
           "function": "start",
           "scope": "HTTP",
           "source_kind": "Problem",
@@ -3013,7 +3013,7 @@
       "sources": [
         {
           "file": "app/handover.py",
-          "line": 504,
+          "line": 487,
           "function": "claim",
           "scope": "HTTP",
           "source_kind": "Problem",
@@ -3059,7 +3059,7 @@
       "sources": [
         {
           "file": "app/handover.py",
-          "line": 490,
+          "line": 473,
           "function": "complete_signature",
           "scope": "HTTP",
           "source_kind": "Problem",
@@ -3071,7 +3071,7 @@
         },
         {
           "file": "app/handover.py",
-          "line": 527,
+          "line": 510,
           "function": "review",
           "scope": "HTTP",
           "source_kind": "Problem",
@@ -3083,7 +3083,7 @@
         },
         {
           "file": "app/handover.py",
-          "line": 535,
+          "line": 518,
           "function": "review",
           "scope": "HTTP",
           "source_kind": "Problem",
@@ -3106,7 +3106,7 @@
       "sources": [
         {
           "file": "app/handover.py",
-          "line": 557,
+          "line": 540,
           "function": "respond",
           "scope": "HTTP",
           "source_kind": "Problem",
@@ -3118,7 +3118,7 @@
         },
         {
           "file": "app/handover.py",
-          "line": 535,
+          "line": 518,
           "function": "review",
           "scope": "HTTP",
           "source_kind": "Problem",
@@ -3130,7 +3130,7 @@
         },
         {
           "file": "app/handover.py",
-          "line": 537,
+          "line": 520,
           "function": "review",
           "scope": "HTTP",
           "source_kind": "Problem",
@@ -3142,7 +3142,7 @@
         },
         {
           "file": "app/handover.py",
-          "line": 553,
+          "line": 536,
           "function": "respond",
           "scope": "HTTP",
           "source_kind": "Problem",
@@ -3178,7 +3178,7 @@
         },
         {
           "file": "app/handover.py",
-          "line": 444,
+          "line": 442,
           "function": "update_form",
           "scope": "HTTP",
           "source_kind": "Problem",
@@ -3202,7 +3202,7 @@
         },
         {
           "file": "app/handover.py",
-          "line": 593,
+          "line": 576,
           "function": "_media_write",
           "scope": "conditional",
           "source_kind": "Problem",
@@ -3214,7 +3214,7 @@
         },
         {
           "file": "app/handover.py",
-          "line": 598,
+          "line": 581,
           "function": "_media_write",
           "scope": "conditional",
           "source_kind": "Problem",
@@ -3226,7 +3226,7 @@
         },
         {
           "file": "app/handover.py",
-          "line": 620,
+          "line": 603,
           "function": "prepare_media",
           "scope": "HTTP",
           "source_kind": "Problem",
@@ -3249,7 +3249,7 @@
       "sources": [
         {
           "file": "app/handover.py",
-          "line": 335,
+          "line": 333,
           "function": "start_rental",
           "scope": "conditional",
           "source_kind": "Problem",
@@ -3286,7 +3286,7 @@
         },
         {
           "file": "app/handover.py",
-          "line": 315,
+          "line": 313,
           "function": "start_rental",
           "scope": "conditional",
           "source_kind": "Problem",
@@ -3298,7 +3298,7 @@
         },
         {
           "file": "app/handover.py",
-          "line": 390,
+          "line": 388,
           "function": "start",
           "scope": "HTTP",
           "source_kind": "Problem",
@@ -3774,7 +3774,7 @@
       "sources": [
         {
           "file": "app/handover.py",
-          "line": 459,
+          "line": 457,
           "function": "submit_form",
           "scope": "HTTP",
           "source_kind": "Problem",
@@ -3810,7 +3810,7 @@
         },
         {
           "file": "app/rental_profile.py",
-          "line": 42,
+          "line": 43,
           "function": "encode_sns",
           "scope": "conditional",
           "source_kind": "Problem",
@@ -3870,7 +3870,7 @@
       "sources": [
         {
           "file": "app/customer_rentals.py",
-          "line": 677,
+          "line": 682,
           "function": "nadree_profile_view",
           "scope": "HTTP",
           "context": "http_handler",
@@ -3889,7 +3889,7 @@
         },
         {
           "file": "app/customer_rentals.py",
-          "line": 677,
+          "line": 682,
           "function": "nadree_profile_view",
           "scope": "HTTP",
           "context": "http_handler",
@@ -3913,7 +3913,7 @@
         },
         {
           "file": "app/customer_rentals.py",
-          "line": 725,
+          "line": 731,
           "function": "nadree_logout",
           "scope": "HTTP",
           "context": "http_handler",
@@ -3932,7 +3932,7 @@
         },
         {
           "file": "app/customer_rentals.py",
-          "line": 725,
+          "line": 731,
           "function": "nadree_logout",
           "scope": "HTTP",
           "context": "http_handler",
@@ -4263,44 +4263,6 @@
         },
         {
           "file": "app/customer_rentals.py",
-          "line": 620,
-          "function": "nadree_refresh",
-          "scope": "conditional",
-          "context": "shared_helper",
-          "source_kind": "Problem",
-          "expression": "Problem(401, 'INVALID_REFRESH_TOKEN')",
-          "notes": [
-            "Shared helper definition; applicability and propagation depend on its caller and current feature policy. No exhaustive endpoint call graph was computed."
-          ],
-          "http_status": 401,
-          "condition_assignments": {}
-        },
-        {
-          "file": "app/customer_rentals.py",
-          "line": 620,
-          "function": "nadree_refresh",
-          "scope": "HTTP",
-          "context": "http_handler",
-          "source_kind": "Problem",
-          "expression": "Problem(401, 'INVALID_REFRESH_TOKEN')",
-          "notes": [],
-          "route_decorators": [
-            {
-              "method": "POST",
-              "path_suffix": "/refresh",
-              "prefix_note": "Router prefix must be resolved separately; this is the source decorator path."
-            },
-            {
-              "method": "GET",
-              "path_suffix": "/refresh",
-              "prefix_note": "Router prefix must be resolved separately; this is the source decorator path."
-            }
-          ],
-          "http_status": 401,
-          "condition_assignments": {}
-        },
-        {
-          "file": "app/customer_rentals.py",
           "line": 623,
           "function": "nadree_refresh",
           "scope": "conditional",
@@ -4339,7 +4301,7 @@
         },
         {
           "file": "app/customer_rentals.py",
-          "line": 630,
+          "line": 626,
           "function": "nadree_refresh",
           "scope": "conditional",
           "context": "shared_helper",
@@ -4353,7 +4315,45 @@
         },
         {
           "file": "app/customer_rentals.py",
-          "line": 630,
+          "line": 626,
+          "function": "nadree_refresh",
+          "scope": "HTTP",
+          "context": "http_handler",
+          "source_kind": "Problem",
+          "expression": "Problem(401, 'INVALID_REFRESH_TOKEN')",
+          "notes": [],
+          "route_decorators": [
+            {
+              "method": "POST",
+              "path_suffix": "/refresh",
+              "prefix_note": "Router prefix must be resolved separately; this is the source decorator path."
+            },
+            {
+              "method": "GET",
+              "path_suffix": "/refresh",
+              "prefix_note": "Router prefix must be resolved separately; this is the source decorator path."
+            }
+          ],
+          "http_status": 401,
+          "condition_assignments": {}
+        },
+        {
+          "file": "app/customer_rentals.py",
+          "line": 633,
+          "function": "nadree_refresh",
+          "scope": "conditional",
+          "context": "shared_helper",
+          "source_kind": "Problem",
+          "expression": "Problem(401, 'INVALID_REFRESH_TOKEN')",
+          "notes": [
+            "Shared helper definition; applicability and propagation depend on its caller and current feature policy. No exhaustive endpoint call graph was computed."
+          ],
+          "http_status": 401,
+          "condition_assignments": {}
+        },
+        {
+          "file": "app/customer_rentals.py",
+          "line": 633,
           "function": "nadree_refresh",
           "scope": "HTTP",
           "context": "http_handler",
@@ -4924,7 +4924,7 @@
       "sources": [
         {
           "file": "app/handover.py",
-          "line": 523,
+          "line": 506,
           "function": "review",
           "scope": "HTTP",
           "source_kind": "Problem",
@@ -5100,7 +5100,7 @@
       "sources": [
         {
           "file": "app/handover.py",
-          "line": 609,
+          "line": 592,
           "function": "prepare_media",
           "scope": "HTTP",
           "source_kind": "Problem",
@@ -5148,7 +5148,7 @@
       "sources": [
         {
           "file": "app/handover.py",
-          "line": 607,
+          "line": 590,
           "function": "prepare_media",
           "scope": "HTTP",
           "source_kind": "Problem",
@@ -5232,7 +5232,7 @@
       "sources": [
         {
           "file": "app/handover.py",
-          "line": 642,
+          "line": 625,
           "function": "complete_media",
           "scope": "HTTP",
           "source_kind": "Problem",
@@ -5244,7 +5244,7 @@
         },
         {
           "file": "app/handover.py",
-          "line": 651,
+          "line": 634,
           "function": "complete_media",
           "scope": "HTTP",
           "source_kind": "Problem",
@@ -5737,7 +5737,7 @@
       "sources": [
         {
           "file": "app/customer_rentals.py",
-          "line": 1275,
+          "line": 1281,
           "function": "cancel_request",
           "scope": "HTTP",
           "context": "http_handler",
@@ -6639,7 +6639,7 @@
       "sources": [
         {
           "file": "app/customer_rentals.py",
-          "line": 880,
+          "line": 886,
           "function": "_ensure_payment_window",
           "scope": "conditional",
           "context": "shared_helper",
@@ -6690,7 +6690,7 @@
       "sources": [
         {
           "file": "app/customer_rentals.py",
-          "line": 1045,
+          "line": 1051,
           "function": "nadree_payment_order",
           "scope": "HTTP",
           "context": "http_handler",
@@ -6709,7 +6709,7 @@
         },
         {
           "file": "app/customer_rentals.py",
-          "line": 1002,
+          "line": 1008,
           "function": "nadree_payment_order",
           "scope": "HTTP",
           "context": "http_handler",
@@ -6877,138 +6877,6 @@
       "sources": [
         {
           "file": "app/customer_rentals.py",
-          "line": 1078,
-          "function": "nadree_payment_capture",
-          "scope": "HTTP",
-          "context": "http_handler",
-          "source_kind": "Problem",
-          "expression": "Problem(404, 'PAYMENT_NOT_FOUND')",
-          "notes": [],
-          "route_decorators": [
-            {
-              "method": "POST",
-              "path_suffix": "/payment/capture",
-              "prefix_note": "Router prefix must be resolved separately; this is the source decorator path."
-            }
-          ],
-          "http_status": 404,
-          "condition_assignments": {}
-        },
-        {
-          "file": "app/customer_rentals.py",
-          "line": 1078,
-          "function": "nadree_payment_capture",
-          "scope": "conditional",
-          "context": "shared_helper",
-          "source_kind": "Problem",
-          "expression": "Problem(404, 'PAYMENT_NOT_FOUND')",
-          "notes": [
-            "Shared helper definition; applicability and propagation depend on its caller and current feature policy. No exhaustive endpoint call graph was computed."
-          ],
-          "http_status": 404,
-          "condition_assignments": {}
-        },
-        {
-          "file": "app/customer_rentals.py",
-          "line": 1087,
-          "function": "nadree_payment_capture",
-          "scope": "HTTP",
-          "context": "http_handler",
-          "source_kind": "Problem",
-          "expression": "Problem(404, 'PAYMENT_NOT_FOUND')",
-          "notes": [],
-          "route_decorators": [
-            {
-              "method": "POST",
-              "path_suffix": "/payment/capture",
-              "prefix_note": "Router prefix must be resolved separately; this is the source decorator path."
-            }
-          ],
-          "http_status": 404,
-          "condition_assignments": {}
-        },
-        {
-          "file": "app/customer_rentals.py",
-          "line": 1087,
-          "function": "nadree_payment_capture",
-          "scope": "conditional",
-          "context": "shared_helper",
-          "source_kind": "Problem",
-          "expression": "Problem(404, 'PAYMENT_NOT_FOUND')",
-          "notes": [
-            "Shared helper definition; applicability and propagation depend on its caller and current feature policy. No exhaustive endpoint call graph was computed."
-          ],
-          "http_status": 404,
-          "condition_assignments": {}
-        },
-        {
-          "file": "app/customer_rentals.py",
-          "line": 1149,
-          "function": "_owned_customer_payment",
-          "scope": "HTTP",
-          "context": "http_handler",
-          "source_kind": "Problem",
-          "expression": "Problem(404, 'PAYMENT_NOT_FOUND')",
-          "notes": [],
-          "route_decorators": [
-            {
-              "method": "POST",
-              "path_suffix": "/payment/capture",
-              "prefix_note": "Router prefix must be resolved separately; this is the source decorator path."
-            }
-          ],
-          "http_status": 404,
-          "condition_assignments": {}
-        },
-        {
-          "file": "app/customer_rentals.py",
-          "line": 1149,
-          "function": "_owned_customer_payment",
-          "scope": "conditional",
-          "context": "shared_helper",
-          "source_kind": "Problem",
-          "expression": "Problem(404, 'PAYMENT_NOT_FOUND')",
-          "notes": [
-            "Shared helper definition; applicability and propagation depend on its caller and current feature policy. No exhaustive endpoint call graph was computed."
-          ],
-          "http_status": 404,
-          "condition_assignments": {}
-        },
-        {
-          "file": "app/customer_rentals.py",
-          "line": 1166,
-          "function": "_owned_customer_payment",
-          "scope": "HTTP",
-          "context": "http_handler",
-          "source_kind": "Problem",
-          "expression": "Problem(404, 'PAYMENT_NOT_FOUND')",
-          "notes": [],
-          "route_decorators": [
-            {
-              "method": "POST",
-              "path_suffix": "/payment/capture",
-              "prefix_note": "Router prefix must be resolved separately; this is the source decorator path."
-            }
-          ],
-          "http_status": 404,
-          "condition_assignments": {}
-        },
-        {
-          "file": "app/customer_rentals.py",
-          "line": 1166,
-          "function": "_owned_customer_payment",
-          "scope": "conditional",
-          "context": "shared_helper",
-          "source_kind": "Problem",
-          "expression": "Problem(404, 'PAYMENT_NOT_FOUND')",
-          "notes": [
-            "Shared helper definition; applicability and propagation depend on its caller and current feature policy. No exhaustive endpoint call graph was computed."
-          ],
-          "http_status": 404,
-          "condition_assignments": {}
-        },
-        {
-          "file": "app/customer_rentals.py",
           "line": 1084,
           "function": "nadree_payment_capture",
           "scope": "HTTP",
@@ -7029,6 +6897,138 @@
         {
           "file": "app/customer_rentals.py",
           "line": 1084,
+          "function": "nadree_payment_capture",
+          "scope": "conditional",
+          "context": "shared_helper",
+          "source_kind": "Problem",
+          "expression": "Problem(404, 'PAYMENT_NOT_FOUND')",
+          "notes": [
+            "Shared helper definition; applicability and propagation depend on its caller and current feature policy. No exhaustive endpoint call graph was computed."
+          ],
+          "http_status": 404,
+          "condition_assignments": {}
+        },
+        {
+          "file": "app/customer_rentals.py",
+          "line": 1093,
+          "function": "nadree_payment_capture",
+          "scope": "HTTP",
+          "context": "http_handler",
+          "source_kind": "Problem",
+          "expression": "Problem(404, 'PAYMENT_NOT_FOUND')",
+          "notes": [],
+          "route_decorators": [
+            {
+              "method": "POST",
+              "path_suffix": "/payment/capture",
+              "prefix_note": "Router prefix must be resolved separately; this is the source decorator path."
+            }
+          ],
+          "http_status": 404,
+          "condition_assignments": {}
+        },
+        {
+          "file": "app/customer_rentals.py",
+          "line": 1093,
+          "function": "nadree_payment_capture",
+          "scope": "conditional",
+          "context": "shared_helper",
+          "source_kind": "Problem",
+          "expression": "Problem(404, 'PAYMENT_NOT_FOUND')",
+          "notes": [
+            "Shared helper definition; applicability and propagation depend on its caller and current feature policy. No exhaustive endpoint call graph was computed."
+          ],
+          "http_status": 404,
+          "condition_assignments": {}
+        },
+        {
+          "file": "app/customer_rentals.py",
+          "line": 1155,
+          "function": "_owned_customer_payment",
+          "scope": "HTTP",
+          "context": "http_handler",
+          "source_kind": "Problem",
+          "expression": "Problem(404, 'PAYMENT_NOT_FOUND')",
+          "notes": [],
+          "route_decorators": [
+            {
+              "method": "POST",
+              "path_suffix": "/payment/capture",
+              "prefix_note": "Router prefix must be resolved separately; this is the source decorator path."
+            }
+          ],
+          "http_status": 404,
+          "condition_assignments": {}
+        },
+        {
+          "file": "app/customer_rentals.py",
+          "line": 1155,
+          "function": "_owned_customer_payment",
+          "scope": "conditional",
+          "context": "shared_helper",
+          "source_kind": "Problem",
+          "expression": "Problem(404, 'PAYMENT_NOT_FOUND')",
+          "notes": [
+            "Shared helper definition; applicability and propagation depend on its caller and current feature policy. No exhaustive endpoint call graph was computed."
+          ],
+          "http_status": 404,
+          "condition_assignments": {}
+        },
+        {
+          "file": "app/customer_rentals.py",
+          "line": 1172,
+          "function": "_owned_customer_payment",
+          "scope": "HTTP",
+          "context": "http_handler",
+          "source_kind": "Problem",
+          "expression": "Problem(404, 'PAYMENT_NOT_FOUND')",
+          "notes": [],
+          "route_decorators": [
+            {
+              "method": "POST",
+              "path_suffix": "/payment/capture",
+              "prefix_note": "Router prefix must be resolved separately; this is the source decorator path."
+            }
+          ],
+          "http_status": 404,
+          "condition_assignments": {}
+        },
+        {
+          "file": "app/customer_rentals.py",
+          "line": 1172,
+          "function": "_owned_customer_payment",
+          "scope": "conditional",
+          "context": "shared_helper",
+          "source_kind": "Problem",
+          "expression": "Problem(404, 'PAYMENT_NOT_FOUND')",
+          "notes": [
+            "Shared helper definition; applicability and propagation depend on its caller and current feature policy. No exhaustive endpoint call graph was computed."
+          ],
+          "http_status": 404,
+          "condition_assignments": {}
+        },
+        {
+          "file": "app/customer_rentals.py",
+          "line": 1090,
+          "function": "nadree_payment_capture",
+          "scope": "HTTP",
+          "context": "http_handler",
+          "source_kind": "Problem",
+          "expression": "Problem(404, 'PAYMENT_NOT_FOUND')",
+          "notes": [],
+          "route_decorators": [
+            {
+              "method": "POST",
+              "path_suffix": "/payment/capture",
+              "prefix_note": "Router prefix must be resolved separately; this is the source decorator path."
+            }
+          ],
+          "http_status": 404,
+          "condition_assignments": {}
+        },
+        {
+          "file": "app/customer_rentals.py",
+          "line": 1090,
           "function": "nadree_payment_capture",
           "scope": "conditional",
           "context": "shared_helper",
@@ -7118,7 +7118,7 @@
       "sources": [
         {
           "file": "app/customer_rentals.py",
-          "line": 888,
+          "line": 894,
           "function": "_revalidate_reservation_quote",
           "scope": "conditional",
           "context": "shared_helper",
@@ -7132,7 +7132,7 @@
         },
         {
           "file": "app/customer_rentals.py",
-          "line": 904,
+          "line": 910,
           "function": "_revalidate_reservation_quote",
           "scope": "conditional",
           "context": "shared_helper",
@@ -7158,7 +7158,7 @@
       "sources": [
         {
           "file": "app/customer_rentals.py",
-          "line": 1019,
+          "line": 1025,
           "function": "nadree_payment_order",
           "scope": "conditional",
           "context": "shared_helper",
@@ -7172,40 +7172,7 @@
         },
         {
           "file": "app/customer_rentals.py",
-          "line": 1019,
-          "function": "nadree_payment_order",
-          "scope": "HTTP",
-          "context": "http_handler",
-          "source_kind": "Problem",
-          "expression": "Problem(409, 'PAYMENT_QUOTE_UNAVAILABLE')",
-          "notes": [],
-          "route_decorators": [
-            {
-              "method": "POST",
-              "path_suffix": "/payment/order",
-              "prefix_note": "Router prefix must be resolved separately; this is the source decorator path."
-            }
-          ],
-          "http_status": 409,
-          "condition_assignments": {}
-        },
-        {
-          "file": "app/customer_rentals.py",
-          "line": 1022,
-          "function": "nadree_payment_order",
-          "scope": "conditional",
-          "context": "shared_helper",
-          "source_kind": "Problem",
-          "expression": "Problem(409, 'PAYMENT_QUOTE_UNAVAILABLE')",
-          "notes": [
-            "Shared helper definition; applicability and propagation depend on its caller and current feature policy. No exhaustive endpoint call graph was computed."
-          ],
-          "http_status": 409,
-          "condition_assignments": {}
-        },
-        {
-          "file": "app/customer_rentals.py",
-          "line": 1022,
+          "line": 1025,
           "function": "nadree_payment_order",
           "scope": "HTTP",
           "context": "http_handler",
@@ -7224,7 +7191,40 @@
         },
         {
           "file": "app/customer_rentals.py",
-          "line": 893,
+          "line": 1028,
+          "function": "nadree_payment_order",
+          "scope": "conditional",
+          "context": "shared_helper",
+          "source_kind": "Problem",
+          "expression": "Problem(409, 'PAYMENT_QUOTE_UNAVAILABLE')",
+          "notes": [
+            "Shared helper definition; applicability and propagation depend on its caller and current feature policy. No exhaustive endpoint call graph was computed."
+          ],
+          "http_status": 409,
+          "condition_assignments": {}
+        },
+        {
+          "file": "app/customer_rentals.py",
+          "line": 1028,
+          "function": "nadree_payment_order",
+          "scope": "HTTP",
+          "context": "http_handler",
+          "source_kind": "Problem",
+          "expression": "Problem(409, 'PAYMENT_QUOTE_UNAVAILABLE')",
+          "notes": [],
+          "route_decorators": [
+            {
+              "method": "POST",
+              "path_suffix": "/payment/order",
+              "prefix_note": "Router prefix must be resolved separately; this is the source decorator path."
+            }
+          ],
+          "http_status": 409,
+          "condition_assignments": {}
+        },
+        {
+          "file": "app/customer_rentals.py",
+          "line": 899,
           "function": "_revalidate_reservation_quote",
           "scope": "conditional",
           "context": "shared_helper",
@@ -7238,7 +7238,7 @@
         },
         {
           "file": "app/customer_rentals.py",
-          "line": 893,
+          "line": 899,
           "function": "_revalidate_reservation_quote",
           "scope": "HTTP",
           "context": "http_handler",
@@ -7257,7 +7257,7 @@
         },
         {
           "file": "app/customer_rentals.py",
-          "line": 902,
+          "line": 908,
           "function": "_revalidate_reservation_quote",
           "scope": "conditional",
           "context": "shared_helper",
@@ -7271,7 +7271,7 @@
         },
         {
           "file": "app/customer_rentals.py",
-          "line": 902,
+          "line": 908,
           "function": "_revalidate_reservation_quote",
           "scope": "HTTP",
           "context": "http_handler",
@@ -7302,7 +7302,7 @@
       "sources": [
         {
           "file": "app/customer_rentals.py",
-          "line": 1010,
+          "line": 1016,
           "function": "nadree_payment_order",
           "scope": "HTTP",
           "context": "http_handler",
@@ -7556,7 +7556,7 @@
       "sources": [
         {
           "file": "app/customer_rentals.py",
-          "line": 1085,
+          "line": 1091,
           "function": "nadree_payment_capture",
           "scope": "HTTP",
           "context": "http_handler",
@@ -7575,7 +7575,7 @@
         },
         {
           "file": "app/customer_rentals.py",
-          "line": 1097,
+          "line": 1103,
           "function": "nadree_payment_capture",
           "scope": "HTTP",
           "context": "http_handler",
@@ -7594,7 +7594,7 @@
         },
         {
           "file": "app/customer_rentals.py",
-          "line": 1121,
+          "line": 1127,
           "function": "nadree_payment_capture",
           "scope": "HTTP",
           "context": "http_handler",
@@ -7613,7 +7613,7 @@
         },
         {
           "file": "app/customer_rentals.py",
-          "line": 1126,
+          "line": 1132,
           "function": "nadree_payment_capture",
           "scope": "HTTP",
           "context": "http_handler",
@@ -7632,7 +7632,7 @@
         },
         {
           "file": "app/customer_rentals.py",
-          "line": 1108,
+          "line": 1114,
           "function": "nadree_payment_capture",
           "scope": "HTTP",
           "context": "http_handler",
@@ -7823,7 +7823,7 @@
       "sources": [
         {
           "file": "app/customer_rentals.py",
-          "line": 1062,
+          "line": 1068,
           "function": "nadree_payment_order",
           "scope": "HTTP",
           "context": "http_handler",
@@ -8095,7 +8095,7 @@
       "sources": [
         {
           "file": "app/customer_rentals.py",
-          "line": 992,
+          "line": 998,
           "function": "nadree_payment_order",
           "scope": "HTTP",
           "context": "http_handler",
@@ -8569,7 +8569,7 @@
       "sources": [
         {
           "file": "app/customer_rentals.py",
-          "line": 1055,
+          "line": 1061,
           "function": "nadree_payment_order",
           "scope": "HTTP",
           "context": "http_handler",
@@ -8747,7 +8747,7 @@
       "sources": [
         {
           "file": "app/handover.py",
-          "line": 589,
+          "line": 572,
           "function": "_media_write",
           "scope": "conditional",
           "source_kind": "Problem",
@@ -8759,7 +8759,7 @@
         },
         {
           "file": "app/handover.py",
-          "line": 645,
+          "line": 628,
           "function": "complete_media",
           "scope": "HTTP",
           "source_kind": "Problem",
@@ -8812,7 +8812,7 @@
       "sources": [
         {
           "file": "app/rental_profile.py",
-          "line": 27,
+          "line": 28,
           "function": "decrypt",
           "scope": "conditional",
           "source_kind": "Problem",
@@ -8835,7 +8835,7 @@
       "sources": [
         {
           "file": "app/rental_profile.py",
-          "line": 25,
+          "line": 26,
           "function": "decrypt",
           "scope": "conditional",
           "source_kind": "Problem",
@@ -8847,7 +8847,7 @@
         },
         {
           "file": "app/rental_profile.py",
-          "line": 36,
+          "line": 37,
           "function": "encrypt",
           "scope": "conditional",
           "source_kind": "Problem",
@@ -9192,7 +9192,7 @@
       "sources": [
         {
           "file": "app/rental_profile.py",
-          "line": 55,
+          "line": 56,
           "function": "read_sns",
           "scope": "conditional",
           "source_kind": "Problem",
@@ -10175,7 +10175,7 @@
       "sources": [
         {
           "file": "app/customer_rentals.py",
-          "line": 1252,
+          "line": 1258,
           "function": "contract_detail",
           "scope": "HTTP",
           "source_kind": "Problem",
@@ -10730,7 +10730,7 @@
       "sources": [
         {
           "file": "app/rental_profile.py",
-          "line": 73,
+          "line": 82,
           "function": "sync_personal",
           "scope": "conditional",
           "source_kind": "Problem",
@@ -10753,7 +10753,7 @@
       "sources": [
         {
           "file": "app/customer_rentals.py",
-          "line": 731,
+          "line": 737,
           "function": "nadree_logout",
           "scope": "HTTP",
           "context": "http_handler",
@@ -10993,7 +10993,7 @@
         },
         {
           "file": "app/handover.py",
-          "line": 398,
+          "line": 396,
           "function": "start",
           "scope": "HTTP",
           "source_kind": "Problem",
@@ -11005,7 +11005,7 @@
         },
         {
           "file": "app/handover.py",
-          "line": 612,
+          "line": 595,
           "function": "prepare_media",
           "scope": "HTTP",
           "source_kind": "Problem",
@@ -11017,7 +11017,7 @@
         },
         {
           "file": "app/handover.py",
-          "line": 616,
+          "line": 599,
           "function": "prepare_media",
           "scope": "HTTP",
           "source_kind": "Problem",
@@ -11139,7 +11139,7 @@
       "sources": [
         {
           "file": "app/customer_rentals.py",
-          "line": 1280,
+          "line": 1286,
           "function": "cancel_request",
           "scope": "HTTP",
           "context": "http_handler",
@@ -11158,7 +11158,7 @@
         },
         {
           "file": "app/handover.py",
-          "line": 327,
+          "line": 325,
           "function": "start_rental",
           "scope": "conditional",
           "source_kind": "Problem",
@@ -11285,7 +11285,7 @@
       "sources": [
         {
           "file": "app/handover.py",
-          "line": 387,
+          "line": 385,
           "function": "start",
           "scope": "HTTP",
           "source_kind": "Problem",
@@ -11297,7 +11297,7 @@
         },
         {
           "file": "app/handover.py",
-          "line": 394,
+          "line": 392,
           "function": "start",
           "scope": "HTTP",
           "source_kind": "Problem",
@@ -11334,7 +11334,7 @@
       "sources": [
         {
           "file": "app/customer_rentals.py",
-          "line": 846,
+          "line": 852,
           "function": "_reservation_for_payment",
           "scope": "conditional",
           "context": "shared_helper",
@@ -11436,7 +11436,7 @@
         },
         {
           "file": "app/customer_rentals.py",
-          "line": 831,
+          "line": 837,
           "function": "_owned_locked_reservation",
           "scope": "conditional",
           "context": "shared_helper",
@@ -11450,7 +11450,7 @@
         },
         {
           "file": "app/customer_rentals.py",
-          "line": 831,
+          "line": 837,
           "function": "_owned_locked_reservation",
           "scope": "HTTP",
           "context": "http_handler",
@@ -11469,7 +11469,7 @@
         },
         {
           "file": "app/customer_rentals.py",
-          "line": 831,
+          "line": 837,
           "function": "_owned_locked_reservation",
           "scope": "HTTP",
           "context": "http_handler",
@@ -11488,7 +11488,7 @@
         },
         {
           "file": "app/customer_rentals.py",
-          "line": 838,
+          "line": 844,
           "function": "_owned_locked_reservation",
           "scope": "conditional",
           "context": "shared_helper",
@@ -11502,7 +11502,7 @@
         },
         {
           "file": "app/customer_rentals.py",
-          "line": 838,
+          "line": 844,
           "function": "_owned_locked_reservation",
           "scope": "HTTP",
           "context": "http_handler",
@@ -11521,7 +11521,7 @@
         },
         {
           "file": "app/customer_rentals.py",
-          "line": 838,
+          "line": 844,
           "function": "_owned_locked_reservation",
           "scope": "HTTP",
           "context": "http_handler",
@@ -11540,7 +11540,7 @@
         },
         {
           "file": "app/customer_rentals.py",
-          "line": 1232,
+          "line": 1238,
           "function": "nadree_reservation_detail",
           "scope": "conditional",
           "context": "shared_helper",
@@ -11554,7 +11554,7 @@
         },
         {
           "file": "app/customer_rentals.py",
-          "line": 1232,
+          "line": 1238,
           "function": "nadree_reservation_detail",
           "scope": "HTTP",
           "context": "http_handler",
@@ -11573,7 +11573,7 @@
         },
         {
           "file": "app/customer_rentals.py",
-          "line": 1232,
+          "line": 1238,
           "function": "nadree_reservation_detail",
           "scope": "HTTP",
           "context": "http_handler",
@@ -11604,7 +11604,7 @@
         },
         {
           "file": "app/handover.py",
-          "line": 382,
+          "line": 380,
           "function": "start",
           "scope": "HTTP",
           "source_kind": "Problem",
@@ -11918,7 +11918,7 @@
       "sources": [
         {
           "file": "app/customer_rentals.py",
-          "line": 776,
+          "line": 782,
           "function": "nadree_request",
           "scope": "HTTP",
           "context": "http_handler",
@@ -11949,7 +11949,7 @@
       "sources": [
         {
           "file": "app/customer_rentals.py",
-          "line": 1273,
+          "line": 1279,
           "function": "cancel_request",
           "scope": "HTTP",
           "context": "http_handler",
@@ -12205,7 +12205,7 @@
         },
         {
           "file": "app/handover.py",
-          "line": 318,
+          "line": 316,
           "function": "start_rental",
           "scope": "conditional",
           "source_kind": "Problem",
@@ -12217,7 +12217,7 @@
         },
         {
           "file": "app/handover.py",
-          "line": 322,
+          "line": 320,
           "function": "start_rental",
           "scope": "conditional",
           "source_kind": "Problem",
@@ -13751,7 +13751,7 @@
         },
         {
           "file": "app/customer_rentals.py",
-          "line": 720,
+          "line": 726,
           "function": "nadree_logout",
           "scope": "HTTP",
           "context": "http_handler",
@@ -13775,7 +13775,7 @@
         },
         {
           "file": "app/customer_rentals.py",
-          "line": 729,
+          "line": 735,
           "function": "nadree_logout",
           "scope": "HTTP",
           "context": "http_handler",
@@ -14393,7 +14393,7 @@
         },
         {
           "file": "app/handover.py",
-          "line": 339,
+          "line": 337,
           "function": "start_rental",
           "scope": "conditional",
           "source_kind": "Problem",
@@ -14964,7 +14964,7 @@
       "sources": [
         {
           "file": "app/handover.py",
-          "line": 492,
+          "line": 475,
           "function": "complete_signature",
           "scope": "HTTP",
           "source_kind": "Problem",
@@ -15071,7 +15071,7 @@
     },
     {
       "file": "app/customer_rentals.py",
-      "sha256": "20bf35c0c7b9c2d8fd25c0440c15129edd3456df5224bef466def092e786d7c0"
+      "sha256": "311bd727bc5b1188e0ba0fe6993f75ac30db4947342951a61f94f4f9a4707c64"
     },
     {
       "file": "app/db.py",
@@ -15095,11 +15095,11 @@
     },
     {
       "file": "app/handover.py",
-      "sha256": "c5f3b3131504652ba1e83d58bfae52d3ec59198eb5c4ef056a50552c86fda7ba"
+      "sha256": "d1ae24497acf81162b20476781dfda837a6fd468f9451ee93c2537d2cb10c4b0"
     },
     {
       "file": "app/handover_inputs.py",
-      "sha256": "c8364c223f5816438c02f865afeebf80ff65ffa7858dc307bc43bfdf99b98b43"
+      "sha256": "1b4c0a4256c3630eacf975084dba18b10f884f5458230caa5e2d27c696405c31"
     },
     {
       "file": "app/handover_media.py",
@@ -15139,7 +15139,7 @@
     },
     {
       "file": "app/migrate.py",
-      "sha256": "4bba17b76ef206816139d5d2ba5309d61d358a33675ccc3d11d79e83c3d65c05"
+      "sha256": "79b82af3ac6024fe238c15fc38e44aa46489caf549eb24b13476aa22c210c663"
     },
     {
       "file": "app/notifications.py",
@@ -15151,7 +15151,7 @@
     },
     {
       "file": "app/openapi_examples.py",
-      "sha256": "f6d23fb69f9a072f2cb7242e1ea1b48cebdb39aa1ad96786bed3b736970a26c4"
+      "sha256": "b702cba7621032ab2e7f34d1f34008efe13d5d247d0d3427a39382a28dc7e8ab"
     },
     {
       "file": "app/passport.py",
@@ -15207,11 +15207,11 @@
     },
     {
       "file": "app/rental_inputs.py",
-      "sha256": "d1831cb1151bf172d06ddbc9641389d6a05c077739273a4e72179ac1f5e12bf2"
+      "sha256": "ee5c2a4840dfe4636d1e363d4d6c931bc886426ef340c7c2c3215cdd8b0b05f6"
     },
     {
       "file": "app/rental_profile.py",
-      "sha256": "1d2630480e80bb4629209bb60f0d8998d26cbb601d710b5a6f89a57852ff6509"
+      "sha256": "827e1f9463889dc6d43f1e05b40fa46f701e22e0ce263578443786a1a5009146"
     },
     {
       "file": "app/rental_reminders.py",
@@ -15219,7 +15219,7 @@
     },
     {
       "file": "app/rental_schema.py",
-      "sha256": "8b9da5c92c3af1ad3fa291f86c78a12ef0f92e69cdac7df88508317abc67addc"
+      "sha256": "f45902091a73d808e0325a647b3188fb6625a8fee4e16f368038d94d9b0c58ec"
     },
     {
       "file": "app/rentals.py",
@@ -15231,7 +15231,7 @@
     },
     {
       "file": "app/responses.py",
-      "sha256": "cbdd751350720e228c539a435dc6afdd6f6bc9131c9dceceaf3ea35ae181fbe7"
+      "sha256": "a8c34567e8bd6dacc40115373ecb8ef7e14c69b0ebe97593923211866606c339"
     },
     {
       "file": "app/schema_check.py",

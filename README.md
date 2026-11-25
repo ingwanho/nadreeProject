@@ -1,6 +1,8 @@
 # Nadree API 구현 안내
 
-2026-11-25 **인계별 개인정보처리방침·이용약관 동의 서버 반영 완료**: `2ccd9c0`, 테스트 DB 비공개 전체 백업 후 nullable DATETIME 2컬럼 적용·잔여 0개·API 재시작을 확인했다. 기존 인계 7건의 두 값은 NULL·나머지 필드는 동일하며 env/키/Firebase 변경은 없다. 관련 격리 **68 passed**, 실제 HTTP **50개 기대 결과 충족**, 로컬/공개 헬스·Swagger 정상·**106경로/112메서드**다. [실제 적용·미검증·프론트 안내](docs/handover-policy-consents-server-verification-2026-11-25.md).
+2026-11-25 **최종 정정·회원 정책 동의 로컬 구현·서버 미적용**: 두 동의 시각을 회원정보에 저장하도록 변경했다. 가입/로그인 POST `/api/v1/nadree/user/login`과 기존 PATCH/GET `/api/v1/nadree/user/profile`에서 처리한다. 인계용 consents API·인계 응답의 두 필드를 제거하고, 실제 기존 시각을 회원별 최초 값으로 이관 검증 후 인계2컬럼을 삭제한다. 회원15컬럼·인계35컬럼·로컬 105경로/111메서드다. [최신 프론트 계약·안전한 이관·서버 적용](docs/member-policy-consents-2026-11-25.md). 아래 인계 단위 배포 보고는 변경 이전의 이력이다.
+
+2026-11-25 **인계별 개인정보처리방침·이용약관 동의 서버 반영 완료**: `2ccd9c0`, 테스트 DB 비공개 전체 백업 후 nullable DATETIME 2컬럼 적용·잔여 0개·API 재시작을 확인했다. 기존 인계 7건의 두 값은 NULL·나머지 필드는 동일하며 env/키/Firebase 변경은 없다. 관련 격리 **68 passed**, 실제 HTTP **50개 기대 결과 충족**, 로컬/공개 헬스·Swagger 정상·**106경로/112메서드**다. [실제 적용·미검증](docs/handover-policy-consents-server-verification-2026-11-25.md), [프론트 전달용 문서](docs/frontend-handover-policy-consents-2026-11-25.md).
 
 2026-11-25 **인계 정책 동의 기록 로컬 추가·서버 미적용**: 인계에 `privacy_policy_agreed_at`·`terms_agreed_at` nullable 2컬럼과 고객 본인 POST `/api/v1/nadree/rental/handovers/{handover_id}/consents`를 추가했다. 서버 최초 동의 시각을 보존하며 두 항목을 함께/따로 저장한다. 기존 서명·렌트 시작 조건과 과거 행은 유지한다. 로컬 명세 106경로/112메서드, 인계37컬럼. [프론트 계약·서버 적용](docs/handover-policy-consents-2026-11-25.md). 아래 11월24일 서버 결과는 이 추가 배포의 근거가 아니다.
 

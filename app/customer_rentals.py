@@ -26,7 +26,7 @@ from app.refunds import prepare_booking_refund
 from app.payment_policy import payment_deadline
 from app.payment_attempts import attempts, guard_other_attempts, inspect_order, replay_allowed
 from app.pricing import daily_price, load_tiers
-from app.rental_profile import personal_view, sync_personal
+from app.rental_profile import CONSENT_FIELDS, personal_view, sync_personal
 from app.rental_common import contracts_for, day_end, fleet, iso, local_date, location_snapshot, lock_key, midnight
 from app.rental_inputs import (NadriAvailability, NadriLogin, NadriPaymentCapture,
                                NadriPaymentOrder, NadriProfile, NadriRentalRequest, ReservationCancel)
@@ -568,7 +568,7 @@ def _user_view(request, session, user):
 
 @user_router.post("/login", response_model=CustomerLogin,
                   summary="Sign in or create a Nadree customer account using Firebase authentication",
-                  description="Validates the Firebase ID token's UID, revocation status, and account status. An auth_time at or before account deletion or logout returns 401 FIREBASE_REAUTHENTICATION_REQUIRED. Firebase reauthentication is required; refreshing the token alone is insufficient. A valid new UID creates a customer account.")
+                  description="Validates the Firebase ID token's UID, revocation status, and account status. An auth_time at or before account deletion or logout returns 401 FIREBASE_REAUTHENTICATION_REQUIRED. Firebase reauthentication is required; refreshing the token alone is insufficient. A valid new UID creates a customer account. Optional privacyPolicyAgreed and termsAgreed must be explicit true booleans; each records the customer's first consent in server UTC seconds. Omitted flags remain unchanged and existing timestamps are preserved.")
 def nadree_login(body: NadriLogin, request: Request, session: Session = DB,
                  credentials: HTTPAuthorizationCredentials | None = Depends(firebase_id_token)):
     id_token = credentials.credentials if credentials is not None else None
@@ -601,6 +601,9 @@ def nadree_login(body: NadriLogin, request: Request, session: Session = DB,
         require_columns(table, values)
         session.execute(update(table).where(table.c.uid_token == body.UID).values(**values))
         user.update(values)
+    consent_fields = body.model_dump(include=set(CONSENT_FIELDS), exclude_unset=True)
+    if consent_fields:
+        user = sync_personal(request, session, body.UID, consent_fields)
     refresh_token = _issue_user_refresh(request, session, body.UID, current)
     return {"status": "success", "isNewUser": is_new,
             "refreshToken": refresh_token,
@@ -636,6 +639,7 @@ def nadree_refresh(request: Request, session: Session = DB):
 
 @user_router.patch("/profile", response_model=CustomerProfileResult,
                    summary="Update the Nadree customer profile",
+                   description="Updates only supplied fields for the authenticated customer. privacyPolicyAgreed and termsAgreed accept explicit true only and preserve the first server UTC acceptance time. They can be submitted together with passportNumber and driverLicenseNumber. Client timestamps and UIDs are not accepted. Omitted fields remain unchanged.",
                    dependencies=[Depends(customer_access_token)])
 def nadree_profile(body: NadriProfile, request: Request, session: Session = DB):
     user = user_principal(request, session)
@@ -644,13 +648,14 @@ def nadree_profile(body: NadriProfile, request: Request, session: Session = DB):
         raise Problem(422, "EMPTY_PROFILE_UPDATE")
     table = _db(request).table("MSP_RENTAL_USER")
     values = {}
+    lock_key(session, "nadri-user", user.uid_token)
+    user_principal(request, session)
     sync_personal(request, session, user.uid_token,
-                  {key: getattr(body, key) for key in fields if key in ("passportNumber", "driverLicenseNumber", "snsInfo")})
+                  {key: getattr(body, key) for key in fields if key in {"passportNumber", "driverLicenseNumber", "snsInfo", *CONSENT_FIELDS}})
     for source, target in (("NAME", "name"), ("Age", "age"), ("GENDER", "gender"), ("NATIONALITY", "nationality")):
         if source in fields:
             values[target] = getattr(body, source)
     if "fcmToken" in fields:
-        lock_key(session, "nadri-user", user.uid_token)
         account = session.execute(select(table).where(table.c.uid_token == user.uid_token).with_for_update()).mappings().one()
         user_principal(request, session)
         if body.fcmToken != account.get("fcm_token"):
@@ -695,6 +700,7 @@ def nadree_delete_account(request: Request, session: Session = DB):
     current = now()
     values = {"name": None, "age": None, "gender": None, "nationality": None,
               "passport_number_enc": None, "driver_license_number_enc": None, "sns_info": None,
+              "privacy_policy_agreed_at": None, "terms_agreed_at": None,
               "fcm_token": None, "fcm_token_updated_at": current,
               "user_access_revoked_at": current, "updated_at": current}
     require_columns(table, values)

@@ -10,7 +10,7 @@ from sqlalchemy.exc import NoSuchTableError
 from app.db import transaction
 from app.errors import Problem
 from app.fcm import _manager_recipients, _queue
-from app.handover_inputs import (ClaimHandover, EmptyCommand, FormPatch, HandoverConsents, PrepareMedia,
+from app.handover_inputs import (ClaimHandover, EmptyCommand, FormPatch, PrepareMedia,
                                  RespondHandover, ReviewHandover, StartHandover)
 from app.handover_media import MIME_EXTENSIONS, PHOTO_LIMIT
 from app.headers import bearer
@@ -210,8 +210,6 @@ def summary(row, *, admin_id=None):
         "signatureStatus": row["signature_status"], "signatureCompletedAt": (row["signature_completed_at"].isoformat() + "Z" if row.get("signature_completed_at") else None), "handoverStatus": row["handover_status"],
         "signatureActorUid": row["uid_token"] if row["signature_status"] == "COMPLETED" else None,
         "signatureHandoverId": row["handover_id"],
-        "privacyPolicyAgreedAt": row["privacy_policy_agreed_at"].isoformat() + "Z" if row.get("privacy_policy_agreed_at") else None,
-        "termsAgreedAt": row["terms_agreed_at"].isoformat() + "Z" if row.get("terms_agreed_at") else None,
         "assignedAdminId": row.get("assigned_admin_id"),
         "canReviewForm": bool(admin_id and admin_id == row.get("assigned_admin_id") and row.get("submitted_at")
             and row["admin_status"] == "REVIEWING" and row["handover_status"] not in CLOSED and photos_ready(row)),
@@ -461,21 +459,6 @@ def submit_form(handover_id: str, body: EmptyCommand, request: Request, session=
         sns = session.scalar(select(users.c.sns_info).where(users.c.uid_token == h["uid_token"]).with_for_update())
         save(request, session, h, customer_status="SUBMITTED", submitted_at=now(),
              sns_snapshot_enc=encrypt(request.app.state.settings, json.dumps(read_sns(sns))))
-    return {"status": "success", "item": resource(request, session, h)}
-
-
-@router.post("/api/v1/nadree/rental/handovers/{handover_id}/consents", response_model=HandoverResult,
-    summary="Record the customer's privacy policy and terms consent for this handover",
-    description="Customer access token required. Only the handover owner can record consents after starting the handover and before rental start or cancellation. Send one or both consent flags as explicit true booleans. The server records each first acceptance in UTC to whole seconds; retries preserve the original timestamps. Omitted flags remain unchanged. These records are independent of signature completion and do not add rental-start requirements. Historical handovers are not backfilled.")
-def record_consents(handover_id: str, body: HandoverConsents, request: Request, session=DB):
-    h, _ = _load(request, session, handover_id, write=True)
-    require_schema(request.app.state.db)
-    _open(h)
-    at = now().replace(microsecond=0)
-    columns = {"privacyPolicyAgreed": "privacy_policy_agreed_at", "termsAgreed": "terms_agreed_at"}
-    values = {columns[key]: at for key in body.model_fields_set if h.get(columns[key]) is None}
-    if values:
-        save(request, session, h, **values)
     return {"status": "success", "item": resource(request, session, h)}
 
 
