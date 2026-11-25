@@ -306,6 +306,7 @@ def migration_plan(db):
                     "ALTER TABLE MSP_RENTAL_USER ADD COLUMN " + column + " DATETIME DEFAULT NULL", {}))
         if "MSP_RENTAL_HANDOVER" in tables:
             handover_columns = {row["name"] for row in inspector.get_columns("MSP_RENTAL_HANDOVER")}
+            retired_consent_operations = []
             for column in ("privacy_policy_agreed_at", "terms_agreed_at"):
                 if column not in handover_columns:
                     continue
@@ -319,8 +320,9 @@ def migration_plan(db):
                 operations.append(("copy earliest consent to MSP_RENTAL_USER." + column,
                     f"UPDATE MSP_RENTAL_USER SET {column} = {earliest} WHERE {earliest} IS NOT NULL "
                     f"AND (MSP_RENTAL_USER.{column} IS NULL OR MSP_RENTAL_USER.{column} > {earliest})", {}))
-                operations.append(("drop retired MSP_RENTAL_HANDOVER." + column,
+                retired_consent_operations.append(("drop retired MSP_RENTAL_HANDOVER." + column,
                     "ALTER TABLE MSP_RENTAL_HANDOVER DROP COLUMN " + column, {}))
+            operations.extend(retired_consent_operations)
         if "passport_img_key" in user_columns:
             with db.engine.connect() as connection:
                 if connection.execute(text("SELECT 1 FROM MSP_RENTAL_USER WHERE passport_img_key IS NOT NULL LIMIT 1")).first():

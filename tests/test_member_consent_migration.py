@@ -96,6 +96,26 @@ def test_drop_guard_preserves_source_if_copy_did_not_complete(legacy):
     assert rows(ctx, "MSP_RENTAL_HANDOVER", "handover_id")["h-earlier"]["privacy_policy_agreed_at"] == datetime(2026, 11, 20)
 
 
+def test_second_copy_failure_preserves_both_source_columns_and_can_resume(legacy):
+    ctx = legacy
+    before = rows(ctx, "MSP_RENTAL_HANDOVER", "handover_id")
+    with pytest.raises(ValueError, match="simulated second consent copy failure"):
+        for operation in related(migration_plan(ctx["db"])):
+            if operation[0] == "copy earliest consent to MSP_RENTAL_USER.terms_agreed_at":
+                raise ValueError("simulated second consent copy failure")
+            apply(ctx, [operation])
+    assert set(COLS).issubset({c["name"] for c in inspect(ctx["engine"]).get_columns("MSP_RENTAL_HANDOVER")})
+    assert rows(ctx, "MSP_RENTAL_HANDOVER", "handover_id") == before
+    member = rows(ctx, "MSP_RENTAL_USER", "uid_token")["consent-one"]
+    assert member["privacy_policy_agreed_at"] == datetime(2026, 11, 20)
+    assert member["terms_agreed_at"] is None
+    apply(ctx, related(migration_plan(ctx["db"])))
+    member = rows(ctx, "MSP_RENTAL_USER", "uid_token")["consent-one"]
+    assert member["privacy_policy_agreed_at"] == datetime(2026, 11, 20)
+    assert member["terms_agreed_at"] == datetime(2026, 11, 22)
+    assert not related(migration_plan(ctx["db"]))
+
+
 def test_interrupted_migration_resumes_after_one_column_was_moved(legacy):
     ctx = legacy
     apply(ctx, [item for item in related(migration_plan(ctx["db"])) if COLS[0] in item[0]])
