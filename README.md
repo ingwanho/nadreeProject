@@ -1,5 +1,7 @@
 # Nadree API 구현 안내
 
+2026-11-26 **회원 번호 null 삭제 서버 반영 완료**: `d82a8c1` 적용·API 재시작. 프로필 번호 생략 유지/문자열 등록·변경/JSON null 삭제와 국제운전면허 필드 설명을 확인했다. 관련 격리 **67 passed**, 실제 HTTP **63개 기대 결과 충족**, 기존 인계8건/서명·회원 동의 보존 및 시험 후 원래 번호 복구를 확인했다. DB/env/키/Firebase/S3 변경 없음. 로컬/공개 헬스·Swagger 정상·105경로/111메서드. [서버 적용·검증·미검증 결과](docs/profile-numbers-server-verification-2026-11-26.md).
+
 2026-11-26 **회원 번호 null 삭제·로컬 구현·서버 적용 전**: PATCH `/api/v1/nadree/user/profile`의 여권번호/국제운전면허 번호를 생략하면 유지, 유효 문자열이면 등록·수정, JSON null이면 해당 회원 번호만 삭제한다. 기존 인계 당시 값·동의 시각은 보존한다. `driverLicenseNumber`는 국제운전면허 번호로 확정했고 정책 버전별 동의는 추후 작업이다. 관련 **71 passed**, Swagger·API 엑셀·통합 명세를 동기화했으며 DB/env 변경 없이 API 새 코드 적용·재시작이 필요하다. [최신 프론트 전달](docs/frontend-profile-numbers-handoff-2026-11-26.md).
 
 [최신 프론트 전달 — 회원가입·프로필의 정책 동의](docs/frontend-member-policy-consents-2026-11-25.md): 서버 적용 결과, 요청·응답, 인계용 API 제거와 앱 테스트 순서를 정리했다.
