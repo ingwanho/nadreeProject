@@ -1,6 +1,6 @@
 # 최종 변경 — 회원가입·회원정보의 개인정보처리방침/이용약관 동의
 
-> **2026-11-26 프로필 후속 변경·로컬 구현·서버 적용 전:** 여권·국제운전면허 번호는 PATCH에서 생략 시 유지, 문자열 시 변경, JSON null 시 해당 회원 번호 삭제로 확정했다. `driverLicenseNumber`는 국제운전면허 번호이며 정책 버전별 동의는 추후 작업이다. [프론트 전달](frontend-profile-numbers-handoff-2026-11-26.md). 아래 동의 시각 저장 계약과 11월25일 서버 적용 결과는 유지한다.
+> **2026-11-26 프로필 후속 변경·서버 적용 완료:** 여권·국제운전면허 번호는 PATCH에서 생략 시 유지, 문자열 시 변경, JSON null 시 해당 회원 번호 삭제로 확정·배포했다. `driverLicenseNumber`는 국제운전면허 번호이며 정책 버전별 동의는 추후 작업이다. 서버 격리67개·실제 HTTP63개 기록의 기대 결과 충족과 기존 인계8건/동의 시각 보존을 확인했다. [프론트 전달](frontend-profile-numbers-handoff-2026-11-26.md), [실제 서버 결과](profile-numbers-server-verification-2026-11-26.md). 아래 동의 시각 저장 계약과 11월25일 서버 적용 결과는 유지한다.
 
 > 서버 적용 완료: 2026-11-25 실제 이관·삭제 검증·API 전환, 관련 격리91/HTTP41 결과와 미검증은 [최종 서버 보고](member-policy-consents-server-verification-2026-11-25.md)를 따른다. 프론트에는 [서버 결과 포함 전달 문서](frontend-member-policy-consents-2026-11-25.md)를 제공한다.
 

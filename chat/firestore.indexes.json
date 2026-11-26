@@ -3,7 +3,18 @@
     {"collectionGroup": "chatRoomAccess", "queryScope": "COLLECTION", "fields": [{"fieldPath": "shopId", "order": "ASCENDING"}, {"fieldPath": "updatedAt", "order": "DESCENDING"}]},
     {"collectionGroup": "chatRoomAccess", "queryScope": "COLLECTION", "fields": [{"fieldPath": "customerUid", "order": "ASCENDING"}, {"fieldPath": "updatedAt", "order": "DESCENDING"}]},
     {"collectionGroup": "chatRoomAccess", "queryScope": "COLLECTION", "fields": [{"fieldPath": "shopId", "order": "ASCENDING"}, {"fieldPath": "customerUid", "order": "ASCENDING"}]},
-    {"collectionGroup": "chatRoomAccess", "queryScope": "COLLECTION", "fields": [{"fieldPath": "kind", "order": "ASCENDING"}, {"fieldPath": "status", "order": "ASCENDING"}, {"fieldPath": "expiresAt", "order": "ASCENDING"}]}
+    {"collectionGroup": "chatRoomAccess", "queryScope": "COLLECTION", "fields": [{"fieldPath": "kind", "order": "ASCENDING"}, {"fieldPath": "status", "order": "ASCENDING"}, {"fieldPath": "expiresAt", "order": "ASCENDING"}]},
+    {"collectionGroup": "chatRoomAccess", "queryScope": "COLLECTION", "fields": [{"fieldPath": "shopId", "order": "ASCENDING"}, {"fieldPath": "lastMessageAt", "order": "DESCENDING"}]},
+    {"collectionGroup": "chatRoomAccess", "queryScope": "COLLECTION", "fields": [{"fieldPath": "shopId", "order": "ASCENDING"}, {"fieldPath": "kind", "order": "ASCENDING"}, {"fieldPath": "lastMessageAt", "order": "DESCENDING"}]},
+    {"collectionGroup": "chatRoomAccess", "queryScope": "COLLECTION", "fields": [{"fieldPath": "shopId", "order": "ASCENDING"}, {"fieldPath": "status", "order": "ASCENDING"}, {"fieldPath": "lastMessageAt", "order": "DESCENDING"}]},
+    {"collectionGroup": "chatRoomAccess", "queryScope": "COLLECTION", "fields": [{"fieldPath": "shopId", "order": "ASCENDING"}, {"fieldPath": "kind", "order": "ASCENDING"}, {"fieldPath": "status", "order": "ASCENDING"}, {"fieldPath": "lastMessageAt", "order": "DESCENDING"}]},
+    {"collectionGroup": "chatRoomAccess", "queryScope": "COLLECTION", "fields": [{"fieldPath": "shopId", "order": "ASCENDING"}, {"fieldPath": "status", "order": "ASCENDING"}, {"fieldPath": "updatedAt", "order": "DESCENDING"}]},
+    {"collectionGroup": "chatRoomAccess", "queryScope": "COLLECTION", "fields": [{"fieldPath": "customerUid", "order": "ASCENDING"}, {"fieldPath": "kind", "order": "ASCENDING"}, {"fieldPath": "status", "order": "ASCENDING"}, {"fieldPath": "lastMessageAt", "order": "DESCENDING"}]},
+    {"collectionGroup": "chatRoomAccess", "queryScope": "COLLECTION", "fields": [{"fieldPath": "customerUid", "order": "ASCENDING"}, {"fieldPath": "kind", "order": "ASCENDING"}, {"fieldPath": "lastMessageAt", "order": "DESCENDING"}]},
+    {"collectionGroup": "chatRoomAccess", "queryScope": "COLLECTION", "fields": [{"fieldPath": "customerUid", "order": "ASCENDING"}, {"fieldPath": "status", "order": "ASCENDING"}, {"fieldPath": "lastMessageAt", "order": "DESCENDING"}]},
+    {"collectionGroup": "chatRoomAccess", "queryScope": "COLLECTION", "fields": [{"fieldPath": "customerUid", "order": "ASCENDING"}, {"fieldPath": "lastMessageAt", "order": "DESCENDING"}]},
+    {"collectionGroup": "chatRoomAccess", "queryScope": "COLLECTION", "fields": [{"fieldPath": "shopId", "order": "ASCENDING"}, {"fieldPath": "kind", "order": "ASCENDING"}, {"fieldPath": "updatedAt", "order": "DESCENDING"}]},
+    {"collectionGroup": "chatRoomAccess", "queryScope": "COLLECTION", "fields": [{"fieldPath": "shopId", "order": "ASCENDING"}, {"fieldPath": "kind", "order": "ASCENDING"}, {"fieldPath": "status", "order": "ASCENDING"}, {"fieldPath": "updatedAt", "order": "DESCENDING"}]}
   ],
   "fieldOverrides": []
 }
