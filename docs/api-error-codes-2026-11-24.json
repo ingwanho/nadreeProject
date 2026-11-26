@@ -1,6 +1,6 @@
 {
-  "generated_at_utc": "2026-11-25T09:56:14.025527+00:00",
-  "git_base": "7bb7503 plus local member policy consents; retired handover API/columns (2026-11-25)",
+  "generated_at_utc": "2026-11-26T00:33:48.997984+00:00",
+  "git_base": "18870c2 plus local profile document-number null deletion (2026-11-26)",
   "provenance": "Static current-source definitions, preserving reviewed prior dynamic resolutions. Not a live endpoint error test.",
   "coverage": {
     "problem_calls": 608,
@@ -15071,7 +15071,7 @@
     },
     {
       "file": "app/customer_rentals.py",
-      "sha256": "311bd727bc5b1188e0ba0fe6993f75ac30db4947342951a61f94f4f9a4707c64"
+      "sha256": "fa1f2f07c86f58692f5e019b3007b9495bfb8ccbf5470fb3dca81920c5ab4009"
     },
     {
       "file": "app/db.py",
@@ -15139,7 +15139,7 @@
     },
     {
       "file": "app/migrate.py",
-      "sha256": "79b82af3ac6024fe238c15fc38e44aa46489caf549eb24b13476aa22c210c663"
+      "sha256": "61fcceb20e03ec87457d6ed610a3d5033a18c2870ea9bac8efc58938cee2d7af"
     },
     {
       "file": "app/notifications.py",
@@ -15207,7 +15207,7 @@
     },
     {
       "file": "app/rental_inputs.py",
-      "sha256": "ee5c2a4840dfe4636d1e363d4d6c931bc886426ef340c7c2c3215cdd8b0b05f6"
+      "sha256": "c3768592881c53b412306bf8fff3396bc2969760aeb5b4a59dcfd609e3c74fa2"
     },
     {
       "file": "app/rental_profile.py",
@@ -15231,7 +15231,7 @@
     },
     {
       "file": "app/responses.py",
-      "sha256": "a8c34567e8bd6dacc40115373ecb8ef7e14c69b0ebe97593923211866606c339"
+      "sha256": "da72dfe859032172b1016e3e8b1d6627802d1beda9cbea3064ee9886ebdeff5f"
     },
     {
       "file": "app/schema_check.py",

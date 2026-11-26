@@ -270,6 +270,31 @@ def test_prepared_form_previews_owner_profile_without_copying_it_early(handover)
     assert detail.json()["item"]["form"]["passportNumber"] == "PROFILE-BEFORE-START"
 
 
+def test_profile_number_deletion_preserves_submitted_handover_and_admin_view(handover):
+    ctx = handover
+    begin(ctx)
+    assert form(ctx, passportNumber="TEST-PASSPORT", driverLicenseNumber="TEST-IDP",
+                accommodationLocation="Test hotel", helmetCount=0).status_code == 200
+    assert command(ctx, "/submit").status_code == 200
+    h = ctx["db"].table("MSP_RENTAL_HANDOVER")
+    with ctx["engine"].connect() as conn:
+        before = dict(conn.execute(select(h).where(h.c.handover_id == ctx["hid"])).mappings().one())
+    deleted = ctx["client"].patch("/api/v1/nadree/user/profile", headers=ctx["headers"],
+        json={"passportNumber": None, "driverLicenseNumber": None})
+    assert deleted.status_code == 200, deleted.text
+    for key in ("passportNumber", "driverLicenseNumber"):
+        assert deleted.json()["user"][key] is None
+    for prefix, headers in ((BASE + "/handovers/", ctx["headers"]), ("/nadreego/handovers/", ctx["admin"])):
+        detail = ctx["client"].get(prefix + ctx["hid"], headers=headers)
+        assert detail.status_code == 200, detail.text
+        assert detail.json()["item"]["form"]["passportNumber"] == "TEST-PASSPORT"
+        assert detail.json()["item"]["form"]["driverLicenseNumber"] == "TEST-IDP"
+    with ctx["engine"].connect() as conn:
+        assert dict(conn.execute(select(h).where(h.c.handover_id == ctx["hid"])).mappings().one()) == before
+    rejected = form(ctx, driverLicenseNumber=None)
+    assert rejected.status_code == 422
+
+
 @pytest.mark.parametrize("decision", ["ACCEPT", "REJECT"])
 def test_single_change_proposal_and_customer_decision(handover, decision):
     ctx = handover

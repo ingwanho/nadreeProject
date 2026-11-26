@@ -26,7 +26,7 @@ from app.refunds import prepare_booking_refund
 from app.payment_policy import payment_deadline
 from app.payment_attempts import attempts, guard_other_attempts, inspect_order, replay_allowed
 from app.pricing import daily_price, load_tiers
-from app.rental_profile import CONSENT_FIELDS, personal_view, sync_personal
+from app.rental_profile import CONSENT_FIELDS, NUMBER_FIELDS, personal_view, sync_personal
 from app.rental_common import contracts_for, day_end, fleet, iso, local_date, location_snapshot, lock_key, midnight
 from app.rental_inputs import (NadriAvailability, NadriLogin, NadriPaymentCapture,
                                NadriPaymentOrder, NadriProfile, NadriRentalRequest, ReservationCancel)
@@ -639,12 +639,12 @@ def nadree_refresh(request: Request, session: Session = DB):
 
 @user_router.patch("/profile", response_model=CustomerProfileResult,
                    summary="Update the Nadree customer profile",
-                   description="Updates only supplied fields for the authenticated customer. privacyPolicyAgreed and termsAgreed accept explicit true only and preserve the first server UTC acceptance time. They can be submitted together with passportNumber and driverLicenseNumber. Client timestamps and UIDs are not accepted. Omitted fields remain unchanged.",
+                   description="Updates only supplied fields for the authenticated customer. Omit passportNumber or driverLicenseNumber to keep its value, send a valid string to replace it, or send explicit JSON null to delete that profile number. driverLicenseNumber is the international driving permit number. Empty/whitespace-only strings are invalid. Other profile fields do not accept null. Existing handover document snapshots are preserved. privacyPolicyAgreed and termsAgreed accept explicit true only and preserve the first server UTC acceptance time. Client timestamps and UIDs are not accepted. Omitted fields remain unchanged.",
                    dependencies=[Depends(customer_access_token)])
 def nadree_profile(body: NadriProfile, request: Request, session: Session = DB):
     user = user_principal(request, session)
     fields = body.model_fields_set
-    if not fields or any(getattr(body, field) is None for field in fields):
+    if not fields or any(getattr(body, field) is None for field in fields if field not in NUMBER_FIELDS):
         raise Problem(422, "EMPTY_PROFILE_UPDATE")
     table = _db(request).table("MSP_RENTAL_USER")
     values = {}

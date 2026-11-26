@@ -240,8 +240,8 @@ class CustomerProfile(BaseModel):
     age: int | None = None
     gender: str | None = None
     nationality: str | None = None
-    passportNumber: str | None = None
-    driverLicenseNumber: str | None = None
+    passportNumber: str | None = Field(default=None, description="Current profile passport number; null when unset or explicitly deleted.")
+    driverLicenseNumber: str | None = Field(default=None, description="Current profile international driving permit number; null when unset or explicitly deleted.")
     snsInfo: dict[str, str] | None = None
     privacyPolicyAgreedAt: str | None = None
     termsAgreedAt: str | None = None

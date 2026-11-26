@@ -180,8 +180,12 @@ class NadriProfile(CustomerConsentFields):
     GENDER: Literal["M", "F", "OTHER"] | None = None
     NATIONALITY: Annotated[str, Field(min_length=2, max_length=2, pattern=r"^[A-Z]{2}$")] | None = None
     fcmToken: Token | None = None
-    passportNumber: DocumentNumber | None = None
-    driverLicenseNumber: DocumentNumber | None = None
+    passportNumber: DocumentNumber | None = Field(default=None,
+        description="Passport number. Omit to preserve, send a valid string to replace, or JSON null to delete only the profile value. Existing handover snapshots are preserved.",
+        examples=["TEST-PASSPORT", None])
+    driverLicenseNumber: DocumentNumber | None = Field(default=None,
+        description="International driving permit number. Omit to preserve, send a valid string to replace, or JSON null to delete only the profile value. Existing handover snapshots are preserved.",
+        examples=["TEST-IDP", None])
     snsInfo: SnsInfo | None = None
 
 

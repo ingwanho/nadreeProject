@@ -1,6 +1,6 @@
 # 프론트 요청 처리 결과 — 예약·Walk-in·인계
 
-> **2026-11-25 최종 정정·서버 적용 대기:** 두 정책 동의 시각은 인계가 아니라 회원정보에 저장한다. 가입/로그인 POST `/api/v1/nadree/user/login` 또는 기존 PATCH `/api/v1/nadree/user/profile`에 `privacyPolicyAgreed:true`·`termsAgreed:true`를 보내고 로그인/프로필 응답의 `user.privacyPolicyAgreedAt`·`user.termsAgreedAt`로 조회한다. 인계용 저장 API와 인계 응답의 두 필드는 제거하고, 기존 실제 시각을 회원별 최초 값으로 이관한 뒤 인계 컬럼을 삭제한다. [최신 전달·이관·적용](member-policy-consents-2026-11-25.md). 아래 인계 단위 적용 보고는 이전 계약의 이력이다.
+> **2026-11-25 최종 정정·서버 적용 완료:** 두 정책 동의 시각은 회원정보에 저장한다. 가입/로그인 POST `/api/v1/nadree/user/login` 또는 기존 PATCH `/api/v1/nadree/user/profile`에 `privacyPolicyAgreed:true`·`termsAgreed:true`를 보내고 로그인/프로필 응답의 `user.privacyPolicyAgreedAt`·`user.termsAgreedAt`로 조회한다. 기존 실제 시각 이관·보존 검증과 인계 컬럼 삭제, 구 인계 API 404·응답 필드 제거를 확인했다. 관련 격리91개·실제 HTTP41개 기록이 기대 결과를 충족했으며 실제 신규/NULL 회원 최초 저장은 격리 검증과 구분한다. [최신 프론트 전달·테스트 순서](frontend-member-policy-consents-2026-11-25.md), [실제 서버 결과](member-policy-consents-server-verification-2026-11-25.md). 아래 인계 단위 적용 보고는 이전 계약의 이력이다.
 
 > **2026-11-25 추가 — 서버 적용 완료:** 인계별 개인정보처리방침·이용약관 동의 시각과 고객 본인 POST `/api/v1/nadree/rental/handovers/{handover_id}/consents`를 배포했다. `privacyPolicyAgreed:true`·`termsAgreed:true` 중 하나 이상을 보내고 `privacyPolicyAgreedAt`·`termsAgreedAt`를 확인한다. 최초 서버 시각은 재요청 시 유지하며 고객 프로필·기존 서명·렌트 시작 조건은 유지한다. 기존 인계 7건의 두 시각은 NULL로 보존했다. 관련 격리 68건·실제 HTTP 50개 검사 기록의 기대 결과 충족을 확인했다. [프론트 전달·호출 순서·남은 확인](frontend-handover-policy-consents-2026-11-25.md), [서버 결과](handover-policy-consents-server-verification-2026-11-25.md). 아래 나머지 서버 결과는 11월24일 기준이며 검증 수를 합산하지 않는다.
 
