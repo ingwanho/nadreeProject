@@ -99,7 +99,7 @@ BOOKING_CHAT_SYNC_PENDING이면 예약을 다시 만들지 말고 같은 booking
 
 2026-11-06 보관 정리: 서버 전용 bookingChatAccess의 retentionDeletingAt/retentionDeletedAt은 삭제 재시도·재생성 방지 표시다. 앱이 직접 조회/쓰기하거나 TTL로 제거하지 않는다. 삭제 시작 직후 방 문서를 먼저 제거하고 하위 메시지/읽음을 배치로 정리한다. 기존 문의 무대화 168시간 read_only와 별개이며 예약방의 expiresAt을 TTL 삭제 기준으로 바꾸지 않는다.
 
-관리자 신규 목록 조회는 `where(shopId == 선택한 직접 지점)`과 선택 `kind`·`status` 일치 조건에 `orderBy(lastMessageAt, descending)`·`orderBy(documentId, descending)`·`limit(50)`을 사용한다. 다음 페이지는 마지막 문서의 `lastMessageAt`과 문서 ID를 함께 `startAfter` 커서로 전달한다. 같은 시각과 null에서도 문서 ID를 포함해 중복·누락을 방지한다. 신규 관리자 4개 복합 인덱스가 모두 READY인 것을 확인한 뒤 이 조회로 전환한다. 2026-11-26 정식 설정에는 병합했으나 운영 생성은 현재 서비스 계정의 403으로 미적용이다. [설정·검증·배포 안내](../docs/chat-last-message-indexes-2026-11-26.md)를 따른다.
+관리자 신규 목록 조회는 `where(shopId == 선택한 직접 지점)`과 선택 `kind`·`status` 일치 조건에 `orderBy(lastMessageAt, descending)`·`orderBy(documentId, descending)`·`limit(50)`을 사용한다. 다음 페이지는 마지막 문서의 `lastMessageAt`과 문서 ID를 함께 `startAfter` 커서로 전달한다. 같은 시각과 null에서도 문서 ID를 포함해 중복·누락을 방지한다. 2026-11-26 03:51:07 UTC 운영 신규4개 모두READY·전체15개READY를 확인했다. 승인된 대표/일반관리자의 실제 Firebase ID 토큰으로9개 조합과50건 페이지·타 지점 차단도 검증했다. [설정·검증·배포 안내](../docs/chat-last-message-indexes-2026-11-26.md), [실제 서버 결과·미검증](../docs/chat-last-message-indexes-server-verification-2026-11-26.md)를 따른다.
 
 `lastMessageAt`의 명시적 null은 정렬에 포함되며 내림차순에서 메시지가 있는 방 뒤에 온다. 필드가 아예 없는 문서는 정렬 조회에서 제외된다. 이번 변경은 모든 방에 필드가 있다는 사용자 가정에 따라 과거 문서 보완·시각 추정·데이터 이관을 하지 않는다. `updatedAt`은 기존 예약 동기화 때도 바뀌므로 새 관리자 목록의 메시지 정렬 기준으로 사용하지 않는다.
 

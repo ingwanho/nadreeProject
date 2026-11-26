@@ -1,5 +1,7 @@
 # 관리자 채팅 lastMessageAt 인덱스 — 병합·검증·서버 배포
 
+> 서버 적용 완료: 2026-11-26 03:51:07 UTC 신규4개 모두READY, 운영전체15 READY·기존11/fieldOverrides 보존. 실제 사용자 토큰18조합/권한/50건 페이지와 Admin SDK 결과는 [최종 서버 보고](chat-last-message-indexes-server-verification-2026-11-26.md)를 따른다. 아래 MISSING/권한 부족 표기는 최초 로컬 작업 당시 이력이다.
+
 **2026-11-26 정식 설정 병합·에뮬레이터 검증 완료, 운영 생성은 권한 부족으로 미적용이다.** 기존 서비스 계정으로 운영 인덱스 조회에는 성공했으나, 새 인덱스 생성은 **403 PERMISSION_DENIED**였다. 실제 생성 0개이며 요청 4개는 모두 MISSING이다. 실패 후 확인 시각은 **2026-11-26 02:55:26 UTC / 한국 11:55:26 / 발리 10:55:26**다.
 
 대상은 Firebase 프로젝트 **bail-472405**, Firestore **(default)**, 컬렉션 그룹 **chatRoomAccess**, 범위 **COLLECTION**이다. [요청 원본](../../backend-chat-last-message-index-request.md)과 [제안 JSON](../../manager-chat-indexes.json)을 기준으로 작업했다.

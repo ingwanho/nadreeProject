@@ -1,5 +1,7 @@
 # Nadree API 구현 안내
 
+2026-11-26 **관리자 lastMessageAt 인덱스 운영 적용 완료**: `27a78a7`, bail-472405/(default)/chatRoomAccess 신규4개 **READY**, 기존11개와 fieldOverrides 보존·전체15 READY. 정식15개 설정으로 인덱스만 배포했고 실제 Firebase 사용자 토큰의 대표/일반9조합씩·50+6/null 커서·타 지점403을 확인했다. 별도 Admin SDK9조합과 격리TAP24도 통과. API 재시작/DB마이그레이션/Functions·Rules·env·과거 데이터 보완·시험 메시지 없음. [실제 적용·인덱스 ID·조회 결과·미검증](docs/chat-last-message-indexes-server-verification-2026-11-26.md).
+
 2026-11-26 **관리자 채팅 lastMessageAt 인덱스 병합·운영 생성 권한 대기**: 요청 4개와 운영에서 확인한 기존 11개를 정식 chat/firestore.indexes.json 15개로 병합했다. 기존 고객/관리자 조회·Rules·함수·데이터는 보존한다. 에뮬레이터 TAP24개(상위6+하위18) 통과, 실제 운영 생성은 서비스 계정 403으로 신규0개/4개 MISSING이며 기존11개 READY 보존을 확인했다. 승인된 인덱스 배포 계정으로 인덱스만 적용·READY 확인·실제 앱 권한 조회가 필요하다. [설정·검증·서버 명령](docs/chat-last-message-indexes-2026-11-26.md).
 
 2026-11-26 **회원 번호 null 삭제 서버 반영 완료**: `d82a8c1` 적용·API 재시작. 프로필 번호 생략 유지/문자열 등록·변경/JSON null 삭제와 국제운전면허 필드 설명을 확인했다. 관련 격리 **67 passed**, 실제 HTTP **63개 기대 결과 충족**, 기존 인계8건/서명·회원 동의 보존 및 시험 후 원래 번호 복구를 확인했다. DB/env/키/Firebase/S3 변경 없음. 로컬/공개 헬스·Swagger 정상·105경로/111메서드. [서버 결과 포함 프론트 전달](docs/frontend-profile-numbers-handoff-2026-11-26.md), [서버 적용·검증·미검증 결과](docs/profile-numbers-server-verification-2026-11-26.md). 아래 로컬 적용 전 표시는 작성 당시 이력이다.
